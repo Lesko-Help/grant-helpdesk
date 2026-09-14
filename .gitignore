@@ -6,3 +6,4 @@ __pycache__/
 *.pyc
 false_classifications.csv
 lesko_helpdesk_v0.1_spec.md
+.claude/worktrees/
