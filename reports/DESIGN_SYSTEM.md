@@ -1,5 +1,15 @@
 # Lesko UI — Design System Spec
 
+> **September 2026 — look and feel is now Studiolo.** The layer structure below
+> still holds (tokens → base → components → Streamlit overrides → zone CSS), but
+> the values changed: four colours only (violet `#543ff8`, red `#ed1748`, green
+> `#20a375`, orange `#e47d17`, each with a deepened twin), neutral grey for
+> everything else, the system font at 14px, one visible hairline `#d5d8e0` on
+> every card, no shadows at rest. `lesko-ui/tokens.css` is the source of truth
+> and `tests/test_theme.py` fails the build on any colour outside that set. The
+> token values quoted in the sections below are the pre-Studiolo ones and are
+> kept for history.
+
 This document defines the building blocks for a unified CSS design system, shared across the grant-helpdesk app and all future Lesko apps.
 
 ---

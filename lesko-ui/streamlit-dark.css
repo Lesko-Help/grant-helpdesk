@@ -1,13 +1,13 @@
 /*
- * lesko-ui / streamlit-dark.css  —  Streamlit-only dark overrides
+ * lesko-ui / streamlit-dark.css  —  Streamlit-only dark overrides  (Studiolo)
  *
  * Streamlit renders its own DOM ([data-testid]/[data-baseweb] elements) that
- * design tokens alone can't reach. These rules retint that chrome for dark mode.
- * They are Streamlit-specific and are NOT consumed by the React portal.
+ * design tokens alone can't reach. These rules retint that chrome for dark
+ * mode. Injected by ui_theme.inject_dark_override() together with
+ * dark-tokens.css, only when the manual dark toggle is on.
  *
- * Injected by ui_theme.inject_dark_override() together with dark-tokens.css,
- * only when the manual dark toggle is on. Tuned for the warm-grey palette in
- * dark-tokens.css.
+ * Everything reads the dark tokens; the only literal is the pill background,
+ * which app.py's pill script compares against (see the note at section 6).
  */
 
 /* ── Page & main area ───────────────────────────────── */
@@ -21,63 +21,70 @@
 /* ── Sidebar ────────────────────────────────────────── */
 [data-testid="stSidebar"] {
     background-color: var(--color-surface) !important;
+    border-right:     1px solid var(--color-divider) !important;
 }
 
 /* ── Top header bar ─────────────────────────────────── */
 [data-testid="stHeader"] {
-    background-color: var(--color-surface) !important;
-    border-bottom: 1px solid var(--color-surface-2) !important;
+    background-color: var(--color-bg) !important;
+    border-bottom:    1px solid var(--color-divider) !important;
 }
 
-/* ── Tab bar ────────────────────────────────────────── */
-[data-testid="stTabs"] [data-baseweb="tab-list"] {
+/* ── Tabs ───────────────────────────────────────────── */
+button[data-baseweb="tab"] {
     background-color: var(--color-surface) !important;
+    border-color:     var(--color-divider) !important;
+    color:            var(--color-text-muted) !important;
+}
+
+button[data-baseweb="tab"][aria-selected="true"] {
+    background-color: var(--color-text) !important;
+    border-color:     var(--color-text) !important;
+    color:            var(--color-bg) !important;
 }
 
 /* ── Input fields & selectboxes ─────────────────────── */
 [data-baseweb="select"] > div,
 [data-baseweb="input"] > div,
 [data-baseweb="textarea"] > div {
-    background-color: var(--color-surface-2) !important;
-    border-color:     var(--color-surface-2) !important;
+    background-color: var(--color-surface) !important;
+    border-color:     var(--color-divider) !important;
     color:            var(--color-text) !important;
 }
 
-/* Raw <input> element inside the Member ID text field */
 [data-testid="stSidebar"] input {
-    background-color: var(--color-surface-2) !important;
+    background-color: var(--color-surface) !important;
     color:            var(--color-text) !important;
-    border-color:     var(--color-text-faint) !important;
+    border-color:     var(--color-divider) !important;
 }
 
-/* ── Pills (Date Range + Urgency) ───────────────────── */
-/* st.pills uses the ButtonGroup component in Streamlit 1.45 */
+/* ── Pills (st.pills) ───────────────────────────────── */
+/* Unselected: the dark surface. The pill script in app.py treats any pill
+   whose computed background is NOT this exact colour as the selected one and
+   paints it light; keep the two in step: #1c1f27 = rgb(28, 31, 39). */
 [data-testid="stSidebar"] [data-testid="stButtonGroup"] button,
 [data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button {
-    background-color: #4a4540 !important;
-    border-color:     #5a5550 !important;
-    color:            #c8c0b8 !important;
+    background-color: #1c1f27 !important;
+    border-color:     var(--color-divider) !important;
+    color:            var(--color-text-muted) !important;
 }
 
-/* Selected pill — white (try all possible Streamlit selected-state attributes) */
 [data-testid="stSidebar"] [data-testid="stButtonGroup"] button[aria-pressed="true"],
 [data-testid="stSidebar"] [data-testid="stButtonGroup"] button[aria-selected="true"],
 [data-testid="stSidebar"] [data-testid="stButtonGroup"] button[aria-checked="true"],
 [data-testid="stSidebar"] [data-testid="stButtonGroup"] button[data-selected="true"],
-[data-testid="stSidebar"] [data-testid="stButtonGroup"] button[data-active="true"],
-[data-testid="stSidebar"] [data-testid="stButtonGroup"] button[data-highlighted="true"],
 [data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button[aria-pressed="true"],
 [data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button[aria-checked="true"],
-[data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button[data-selected="true"],
-[data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button[data-active="true"] {
-    background-color: #ffffff !important;
-    border-color:     #ffffff !important;
-    color:            #1c1c1e !important;
+[data-testid="stSidebar"] [data-testid="stButtonGroupContainer"] button[data-selected="true"] {
+    background-color: var(--color-text) !important;
+    border-color:     var(--color-text) !important;
+    color:            var(--color-bg) !important;
 }
 
 /* ── Selectbox dropdown menu ────────────────────────── */
 [data-baseweb="popover"] [data-baseweb="menu"] {
     background-color: var(--color-surface) !important;
+    border-color:     var(--color-divider) !important;
 }
 
 [data-baseweb="option"] {
@@ -95,50 +102,66 @@
     color: var(--color-text) !important;
 }
 
-/* ── Dividers ───────────────────────────────────────── */
-hr {
-    border-color: var(--color-surface-2) !important;
-}
+/* Text sitting on a coloured wash keeps its own colour — these outrank the
+   blanket `.stApp span` rule above so badges, pills and KPI numbers do not
+   flatten to white. */
+.stApp span.badge-open          { color: var(--on-tint-info)    !important; }
+.stApp span.badge-answered,
+.stApp span.badge-closed        { color: var(--on-tint-success) !important; }
+.stApp span.badge-cancelled     { color: var(--on-tint-danger)  !important; }
+.stApp span.badge-flagged       { color: var(--on-tint-warning) !important; }
+.stApp span.urg-normal          { color: var(--on-tint-success) !important; }
+.stApp span.urg-urgent          { color: var(--on-tint-warning) !important; }
+.stApp span.urg-critical        { color: var(--on-tint-danger)  !important; }
+.stApp span.answered-badge      { color: var(--on-tint-success) !important; }
+.stApp .kpi-open .kpi-value     { color: var(--kpi-fg-open)     !important; }
+.stApp .kpi-normal .kpi-value   { color: var(--kpi-fg-normal)   !important; }
+.stApp .kpi-urgent .kpi-value   { color: var(--kpi-fg-urgent)   !important; }
+.stApp .kpi-critical .kpi-value { color: var(--kpi-fg-critical) !important; }
+.stApp .mem-avatar-violet, .stApp .mem-avatar-indigo, .stApp .mem-avatar-blue { color: var(--chip-violet-fg) !important; }
+.stApp .mem-avatar-red                                                        { color: var(--chip-red-fg)    !important; }
+.stApp .mem-avatar-green                                                      { color: var(--chip-green-fg)  !important; }
+.stApp .mem-avatar-orange, .stApp .mem-avatar-yellow                          { color: var(--chip-orange-fg) !important; }
+.stApp .ticket-meta-link        { color: var(--color-link) !important; }
+.stApp .inbox-hero, .stApp .inbox-hero * { color: #ffffff !important; }
 
-/* ── Ticket divider ─────────────────────────────────── */
-.ticket-divider {
-    background: var(--color-surface-2) !important;
-}
+/* ── Dividers ───────────────────────────────────────── */
+hr { border-color: var(--color-divider) !important; }
+.ticket-divider { background: var(--color-divider) !important; }
 
 /* ── Section cards ──────────────────────────────────── */
-.section-card {
-    background: var(--color-surface) !important;
-}
+.section-card { background: var(--color-surface) !important; }
 
 /* ── Dialogs / modals ───────────────────────────────── */
+[data-testid="stDialog"] > div > div,
 [data-testid="stModal"] > div {
     background-color: var(--color-surface) !important;
+    border-color:     var(--color-divider) !important;
 }
 
-/* ── Secondary buttons (default Streamlit style) ────── */
+/* ── Secondary (ghost) buttons ──────────────────────── */
+button[data-testid="baseButton-secondary"],
 [data-testid="stBaseButton-secondary"],
 [data-testid="stBaseButton-secondaryFormSubmit"] {
-    background-color: var(--color-surface-2) !important;
-    border-color:     var(--color-text-faint) !important;
+    background-color: var(--color-surface) !important;
+    border-color:     var(--color-divider) !important;
     color:            var(--color-text) !important;
 }
 
+button[data-testid="baseButton-secondary"]:hover,
 [data-testid="stBaseButton-secondary"]:hover,
 [data-testid="stBaseButton-secondaryFormSubmit"]:hover {
-    background-color: #4a4a4e !important;
-    border-color:     var(--color-text-muted) !important;
+    background-color: var(--color-surface-2) !important;
+    border-color:     var(--color-text-faint) !important;
+}
+
+/* ── Expanders ──────────────────────────────────────── */
+[data-testid="stExpander"] {
+    background:   var(--color-surface) !important;
+    border-color: var(--color-divider) !important;
 }
 
 /* ── Answered ticket rows ───────────────────────────── */
-/* tickets.css tints answered rows pale green (#f0faf4) for light
-   mode; under dark mode's off-white text that's unreadable, so
-   retint to a dark green. The badge text needs higher specificity
-   than the blanket `.stApp span` !important rule above to win. */
 div[data-testid="stHorizontalBlock"]:has(.answered-row-marker) {
-    background: #20382a !important;
-}
-
-.stApp span.answered-badge {
-    background: #1f4030 !important;
-    color:      #74e2a0 !important;
+    background: color-mix(in srgb, var(--brand-green) 10%, var(--color-surface)) !important;
 }

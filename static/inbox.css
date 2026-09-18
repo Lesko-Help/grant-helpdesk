@@ -1,49 +1,40 @@
 /*
- * grant-helpdesk / static / inbox.css  —  Team Inbox tab
- *
- * Styles for the Team Inbox section where coaches submit
- * feedback, reviews, and suggestions to the admin.
+ * grant-helpdesk / static / inbox.css  —  Team Inbox tab  (Studiolo)
  *
  * DEPENDS ON: tokens.css
  */
 
-
-/* ═════════════════════════════════════════════
-   HERO BANNER
-   The gradient header at the top of the inbox tab.
-═════════════════════════════════════════════ */
+/* Hero banner — a cover block: violet into its own deeper twin. */
 .inbox-hero {
-    background:    linear-gradient(135deg, var(--color-primary) 0%, var(--color-info) 100%);
-    border-radius: var(--radius-lg);
+    background:    var(--gradient-header);
+    border-radius: var(--radius-xl);
     padding:       var(--space-8);
     margin-bottom: var(--space-6);
-    color:         white;
+    color:         #ffffff;
 }
 
 .inbox-hero-title {
-    font-size:     var(--font-xl);
-    font-weight:   700;
-    margin-bottom: var(--space-2);
+    font-size:      var(--font-xl);
+    font-weight:    600;
+    letter-spacing: -0.02em;
+    margin-bottom:  var(--space-2);
+    color:          #ffffff;
 }
 
 .inbox-hero-body {
     font-size:   var(--font-md);
     line-height: 1.6;
-    opacity:     0.92;
+    opacity:     0.9;
+    max-width:   68ch;
 }
 
-
-/* ═════════════════════════════════════════════
-   FEEDBACK STATUS BADGE
-   The small pill showing open / noted / done.
-   Color is set inline (dynamic per status) but
-   shape and text are controlled here.
-═════════════════════════════════════════════ */
+/* Feedback status badge: open / noted / done. Colour is set inline per status. */
 .feedback-badge {
-    display:       inline-block;
-    padding:       var(--space-1) var(--space-3);
+    display:       inline-flex;
+    align-items:   center;
+    padding:       var(--space-1) 10px;
     border-radius: var(--radius-pill);
-    font-weight:   600;
-    font-size:     var(--font-xs);
+    font-weight:   500;
+    font-size:     var(--font-sm);
     margin-bottom: var(--space-2);
 }

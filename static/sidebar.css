@@ -1,66 +1,41 @@
 /*
- * grant-helpdesk / static / sidebar.css  —  Zone 1: Sidebar Filter Panel
+ * grant-helpdesk / static / sidebar.css  —  Zone 1: Sidebar Filter Panel  (Studiolo)
  *
- * This file styles the left-hand filter panel.
- * Compact, utilitarian, low visual weight — it supports the content,
- * it does not compete with it.
- *
- * NOTE: Streamlit's sidebar background, input fields, and label styles
- * are already handled by lesko-ui/streamlit.css. This file only adds
- * grant-helpdesk-specific layout and frame elements inside the sidebar.
+ * Compact, utilitarian, low visual weight. Streamlit's sidebar background,
+ * inputs and labels are handled in lesko-ui/streamlit.css; this file adds the
+ * grant-helpdesk-specific frames and labels inside it.
  *
  * DEPENDS ON: tokens.css (loaded first by ui_theme.inject())
  */
 
-
-/* ─────────────────────────────────────────────
-   FILTER FRAME
-   A slightly off-white rounded box that groups
-   related filter controls together visually.
-   Used to wrap a set of related inputs, e.g.
-   "Status filters" or "Date range".
-
-   Usage:  <div class="sidebar-filter-frame"> … </div>
-───────────────────────────────────────────── */
+/* A quiet grey box grouping related controls. */
 .sidebar-filter-frame {
     background:    var(--color-surface-2);
-    border-radius: var(--radius-lg);
+    border:        1px solid var(--color-divider);
+    border-radius: var(--radius-md);
     padding:       var(--space-3) var(--space-4) var(--space-2);
     margin-bottom: var(--space-3);
 }
 
-
-/* ─────────────────────────────────────────────
-   SECTION LABEL
-   The small uppercase label that introduces a
-   group of filters (e.g. "FILTERS", "DATE RANGE").
-   Sits above a filter-frame or a set of controls.
-
-   Usage:  <p class="sidebar-section-label">Filters</p>
-───────────────────────────────────────────── */
-/* ─────────────────────────────────────────────
-   USER IDENTITY BLOCK
-   The user's name + email shown at the top of
-   the sidebar above the sign-out button.
-───────────────────────────────────────────── */
+/* User identity block at the top of the sidebar. */
 .sidebar-user-name {
-    font-weight: 700;
+    font-weight: 500;
     font-size:   var(--font-base);
     color:       var(--color-text);
 }
 
 .sidebar-user-email {
-    font-size: var(--font-xs);
+    font-size: var(--font-sm);
     color:     var(--color-text-faint);
 }
 
-
+/* The eyebrow that introduces a group of filters: FILTERS, DATE RANGE. */
 .sidebar-section-label {
     font-family:    var(--font-family);
     font-size:      var(--font-xs);
     font-weight:    600;
-    color:          var(--color-text-faint);
+    color:          var(--color-text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     margin-bottom:  var(--space-2);
 }

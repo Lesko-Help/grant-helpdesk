@@ -1,173 +1,187 @@
 /*
- * grant-helpdesk / static / header.css  —  Zone 2 + 3: Header & Tab Navigation
+ * grant-helpdesk / static / header.css  —  Zone 2 + 3: Header & Tab Navigation  (Studiolo)
  *
- * Zone 2: The app header bar — logo, app name, subtitle, user pill.
- *         Appears once at the top of the page. Sets the brand tone.
- *
- * Zone 3: The tab navigation row — Tickets / Reports / etc.
- *         Streamlit tab overrides live in lesko-ui/streamlit.css.
- *         This file only adds the outer container wrapper if needed.
+ * Zone 2: the app header — mark, app name, subtitle, user pill.
+ * Zone 3: the tab row. Streamlit tab overrides live in lesko-ui/streamlit.css.
+ * Also: the login page and the first-login onboarding card.
  *
  * DEPENDS ON: tokens.css (loaded first by ui_theme.inject())
- *
- * HTML STRUCTURE (Zone 2):
- *
- *   <div class="lesko-header-card">
- *     <div class="header-logo">L</div>
- *     <div>
- *       <span class="header-app-name">Grant Helpdesk</span>
- *       <span class="header-sub">Grant support queue</span>
- *     </div>
- *     <div class="header-user-pill">
- *       <div class="header-user-avatar">ML</div>
- *       <span class="header-user-name">Martin</span>
- *     </div>
- *   </div>
  */
 
 
 /* ═════════════════════════════════════════════
    LOGIN PAGE
-   Shown before the user authenticates.
-   Full-screen centered card with logo + buttons.
 ═════════════════════════════════════════════ */
 .login-page {
     display:         flex;
     flex-direction:  column;
     align-items:     center;
     justify-content: center;
-    min-height:      70vh;
+    min-height:      60vh;
     gap:             var(--space-3);
 }
 
 .login-card {
     background:    var(--color-surface);
+    border:        1px solid var(--color-divider);
     border-radius: var(--radius-xl);
     padding:       var(--space-10) var(--space-8);
     text-align:    center;
     max-width:     420px;
-    box-shadow:    var(--shadow-modal);
 }
 
 .login-logo {
-    width:           64px;
-    height:          64px;
-    border-radius:   var(--radius-lg);
-    background:      var(--color-primary);
+    width:           48px;
+    height:          48px;
+    border-radius:   var(--radius-md);
+    background:      var(--color-text);
+    color:           var(--color-surface);
     display:         inline-flex;
     align-items:     center;
     justify-content: center;
-    font-size:       var(--font-xl);
-    color:           white;
-    font-weight:     800;
+    font-size:       var(--font-lg);
+    font-weight:     700;
     margin-bottom:   var(--space-4);
 }
 
 .login-title {
-    margin:      0 0 var(--space-2);
-    color:       var(--color-text);
-    font-size:   var(--font-xl);
-    font-weight: 700;
+    margin:         0 0 var(--space-2);
+    color:          var(--color-text);
+    font-size:      var(--font-xl);
+    font-weight:    600;
+    letter-spacing: -0.02em;
 }
 
 .login-sub {
-    color:         var(--color-text-faint);
-    font-size:     var(--font-base);
-    margin:        0 0 var(--space-8);
+    color:     var(--color-text-muted);
+    font-size: var(--font-base);
+    margin:    0 0 var(--space-8);
+}
+
+.login-hint {
+    text-align: center;
+    color:      var(--color-text-muted);
+    font-size:  var(--font-base);
+    margin:     14px 0 6px;
 }
 
 
-/* ─────────────────────────────────────────────
+/* ═════════════════════════════════════════════
+   ONBOARDING CARD — first login, profile not linked
+═════════════════════════════════════════════ */
+.onboarding-card {
+    max-width:     480px;
+    margin:        80px auto 0;
+    background:    var(--color-surface);
+    border:        1px solid var(--color-divider);
+    border-radius: var(--radius-xl);
+    padding:       var(--space-10) 36px;
+}
+
+.onboarding-wave {
+    font-size:     2rem;
+    margin-bottom: var(--space-2);
+}
+
+.onboarding-title {
+    font-size:      var(--font-lg);
+    font-weight:    600;
+    letter-spacing: -0.01em;
+    color:          var(--color-text);
+    margin-bottom:  6px;
+}
+
+.onboarding-body {
+    font-size:     var(--font-md);
+    color:         var(--color-text-muted);
+    margin-bottom: 28px;
+    line-height:   1.6;
+}
+
+
+/* ═════════════════════════════════════════════
    HEADER CARD  (Zone 2)
-   The white pill-shaped bar across the top.
-   Uses flexbox so the logo, title, and user pill
-   sit in a horizontal row with space between them.
-───────────────────────────────────────────── */
+   White card, one hairline, 16px corners.
+═════════════════════════════════════════════ */
 .lesko-header-card {
     background:    var(--color-surface);
+    border:        1px solid var(--color-divider);
     border-radius: var(--radius-xl);
-    padding:       var(--space-4) var(--space-6);
+    padding:       var(--space-3) var(--space-5);
     display:       flex;
     align-items:   center;
-    gap:           var(--space-4);
+    gap:           var(--space-3);
     margin-bottom: var(--space-3);
-    box-shadow:    var(--shadow-card);
 }
 
 
 /* ─────────────────────────────────────────────
-   LOGO BLOCK
-   The small indigo square with the "L" letter.
-   flex-shrink:0 prevents it from squishing when
-   the window is narrow.
+   THE MARK — near-black square, white letter
+   (Studiolo's own sidebar mark, at 32px)
 ───────────────────────────────────────────── */
 .header-logo {
-    width:           40px;
-    height:          40px;
-    background:      var(--color-primary);
-    border-radius:   var(--radius-lg);
+    width:           32px;
+    height:          32px;
+    background:      var(--color-text);
+    border-radius:   var(--radius-xs);
     display:         inline-flex;
     align-items:     center;
     justify-content: center;
-    color:           white;
-    font-weight:     500;
-    font-size:       var(--font-lg);
+    color:           var(--color-surface);
+    font-weight:     700;
+    font-size:       var(--font-base);
     flex-shrink:     0;
 }
 
 
 /* ─────────────────────────────────────────────
    APP NAME + SUBTITLE
-   Two lines stacked vertically inside the header.
-   display:block makes each span sit on its own line.
 ───────────────────────────────────────────── */
 .header-app-name {
-    display:     block;
-    font-size:   var(--font-md);
-    font-weight: 500;
-    color:       var(--color-text);
-    line-height: 1.2;
+    display:        block;
+    font-size:      var(--font-row);
+    font-weight:    600;
+    letter-spacing: -0.01em;
+    color:          var(--color-text);
+    line-height:    1.2;
 }
 
 .header-sub {
-    display:     block;
-    font-size:   var(--font-xs);
-    color:       var(--color-text-muted);
-    margin-top:  2px;
+    display:    block;
+    font-size:  var(--font-sm);
+    color:      var(--color-text-muted);
+    margin-top: 2px;
 }
 
 
 /* ─────────────────────────────────────────────
-   USER PILL
-   The avatar + first name pill on the right side.
-   margin-left:auto pushes it all the way to the
-   right edge of the header card.
+   USER PILL — quiet grey, violet initials chip
 ───────────────────────────────────────────── */
 .header-user-pill {
-    display:     inline-flex;
-    align-items: center;
-    gap:         var(--space-2);
-    background:  var(--color-surface-2);
-    padding:     var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+    display:       inline-flex;
+    align-items:   center;
+    gap:           var(--space-2);
+    background:    var(--color-surface-3);
+    padding:       var(--space-1) var(--space-3) var(--space-1) var(--space-1);
     border-radius: var(--radius-pill);
-    margin-left: auto;   /* pushes the pill to the far right */
+    margin-left:   auto;
 }
 
 .header-user-avatar {
     width:           28px;
     height:          28px;
     border-radius:   var(--radius-pill);
-    background:      var(--color-warning);
-    color:           #5a4400;             /* dark text on yellow */
+    background:      var(--chip-violet-bg);
+    color:           var(--chip-violet-fg);
     display:         inline-flex;
     align-items:     center;
     justify-content: center;
-    font-size:       var(--font-xs);
-    font-weight:     500;
+    font-size:       var(--font-sm);
+    font-weight:     600;
 }
 
 .header-user-name {
-    font-size:   var(--font-sm);
+    font-size:   var(--font-base);
     font-weight: 500;
     color:       var(--color-text);
 }

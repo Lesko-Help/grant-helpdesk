@@ -1,103 +1,124 @@
 /*
- * lesko-ui / tokens.css  —  Layer 1: Design Tokens
+ * lesko-ui / tokens.css  —  Layer 1: Design Tokens  (Studiolo)
  *
  * This is the SINGLE SOURCE OF TRUTH for every visual decision.
- * Every color, every size, every shadow lives here as a named variable.
+ * Every colour, every size, every shadow lives here as a named variable.
+ * Component CSS uses var(--…) only — no magic numbers.
  *
- * HOW TO USE:
- *   Instead of writing:  color: #4a52a3
- *   You write:           color: var(--color-primary)
+ * The look and feel is Studiolo's, and it rests on three rules:
  *
- * WHY:
- *   If we ever want to change the brand color, we change ONE line here
- *   and it updates everywhere in the entire app automatically.
+ *   1. Four colours, and no others. Everything else is neutral grey.
+ *   2. Colour is decoration, never meaning on its own — a word or icon always
+ *      sits next to it. Green means done, orange means urgent or late, red
+ *      means critical or destructive, violet is the primary action.
+ *   3. Lines are visible. Structure you cannot see is not structure: every
+ *      card and divider is one hairline, and cards cast no shadow at rest.
  *
- * RULE: No magic numbers anywhere in component CSS. Only var(--…) references.
+ * tests/test_theme.py fails the build on any hex value outside this set.
  */
 
 :root {
 
     /* ─────────────────────────────────────────────
-       BRAND COLORS
-       The raw palette — what the colors ARE.
-       Do not use these directly in components.
-       Use the semantic colors below instead.
+       THE FOUR
+       Each has a deepened twin, used as the second
+       stop of a gradient so depth never smuggles in
+       a fifth colour.
     ───────────────────────────────────────────── */
-    --color-indigo:  #445fb6;   /* brand indigo — matches the Support Desk header */
-    --color-yellow:  #f5c520;
-    --color-green:   #2e9b2e;
-    --color-blue:    #2d6ee0;
-    --color-red:     #e03c3c;
-    --color-amber:   #ef9c1a;   /* warm amber — high-priority accents */
+    --brand-violet:      #543ff8;
+    --brand-violet-deep: #3b2ac9;
+    --brand-red:         #ed1748;
+    --brand-red-deep:    #bd0f36;
+    --brand-green:       #20a375;
+    --brand-green-deep:  #17805b;
+    --brand-orange:      #e47d17;
+    --brand-orange-deep: #b86111;
+
+    /* Older names still referenced by zone CSS — folded onto the four. */
+    --color-indigo:  var(--brand-violet);
+    --color-blue:    var(--brand-violet);
+    --color-yellow:  var(--brand-orange);
+    --color-amber:   var(--brand-orange);
+    --color-green:   var(--brand-green);
+    --color-red:     var(--brand-red);
 
     /* ─────────────────────────────────────────────
-       SEMANTIC COLORS
-       What the color MEANS, not what it looks like.
-       Use these in components — e.g. "this is a
-       danger state" not "this is red".
+       SEMANTIC COLOURS
+       What the colour MEANS, not what it looks like.
     ───────────────────────────────────────────── */
-    --color-primary:    var(--color-indigo);
-    --color-success:    var(--color-green);
-    --color-warning:    var(--color-yellow);
-    --color-danger:     var(--color-red);
-    --color-info:       var(--color-blue);
+    --color-primary:      var(--brand-violet);
+    --color-primary-deep: var(--brand-violet-deep);
+    --color-success:      var(--brand-green);
+    --color-warning:      var(--brand-orange);
+    --color-danger:       var(--brand-red);
+    --color-info:         var(--brand-violet);
+    --color-link:         var(--brand-violet);
+
+    /* Header / hero gradient: one colour into its own deeper twin. */
+    --gradient-header: linear-gradient(135deg, var(--brand-violet), var(--brand-violet-deep));
+
+    /* Priority dots in the branded email/ticket views. */
+    --color-priority-urgent: var(--brand-red);
+    --color-priority-high:   var(--brand-orange);
+    --color-priority-normal: var(--brand-violet);
+    --color-priority-low:    var(--color-text-faint);
 
     /* ─────────────────────────────────────────────
-       SUPPORT DESK — the branded email/ticket views.
-       The header is a subtle indigo gradient; priority
-       maps to a traffic-light of dot colors.
+       SURFACES
+       canvas → the page behind the cards
+       surface → the cards themselves (white)
+       surface-2 → hover rows, quiet fills (grey-50)
+       surface-3 → selected sidebar item, tags (grey-100)
+       divider → every border, deliberately not faint
     ───────────────────────────────────────────── */
-    --gradient-header: linear-gradient(100deg, #4d67c4 0%, #445fb6 55%, #3f57ab 100%);
-    --color-priority-urgent: var(--color-danger);   /* red   */
-    --color-priority-high:   var(--color-amber);     /* amber */
-    --color-priority-normal: var(--color-info);      /* blue  */
-    --color-priority-low:    var(--color-text-faint);/* grey  */
+    --color-bg:           #f6f7f9;
+    --color-surface:      #ffffff;
+    --color-surface-2:    #f8fafc;
+    --color-surface-3:    #f1f5f9;
+    --color-primary-tint: color-mix(in srgb, var(--brand-violet) 8%, #ffffff);
+    --color-divider:      #d5d8e0;
+    --color-hairline:     var(--color-divider);
+
+    /* Tinted washes for badges and pills: 12% of the hue over white, with the
+       full hue as the text on top — exactly how Studiolo's status badges read. */
+    --tint-danger:      color-mix(in srgb, var(--brand-red)    12%, #ffffff);
+    --on-tint-danger:   var(--brand-red);
+    --tint-warning:     color-mix(in srgb, var(--brand-orange) 12%, #ffffff);
+    --on-tint-warning:  var(--brand-orange);
+    --tint-success:     color-mix(in srgb, var(--brand-green)  12%, #ffffff);
+    --on-tint-success:  var(--brand-green);
+    --tint-info:        color-mix(in srgb, var(--brand-violet) 12%, #ffffff);
+    --on-tint-info:     var(--brand-violet);
+    --tint-neutral:     var(--color-surface-3);
+    --on-tint-neutral:  var(--color-text-muted);
+
+    /* The soft square behind an icon or initials — the signature element. */
+    --chip-violet-bg: color-mix(in srgb, var(--brand-violet) 10%, #ffffff);
+    --chip-red-bg:    color-mix(in srgb, var(--brand-red)    10%, #ffffff);
+    --chip-green-bg:  color-mix(in srgb, var(--brand-green)  10%, #ffffff);
+    --chip-orange-bg: color-mix(in srgb, var(--brand-orange) 10%, #ffffff);
+    --chip-violet-fg: var(--brand-violet);
+    --chip-red-fg:    var(--brand-red);
+    --chip-green-fg:  var(--brand-green);
+    --chip-orange-fg: var(--brand-orange);
 
     /* ─────────────────────────────────────────────
-       SURFACE COLORS
-       Backgrounds for different layers of the UI.
-       Think of surfaces like sheets of paper stacked
-       on top of each other — bg is the desk, surface
-       is a sheet of paper, surface-2 is a sticky note.
+       TEXT
+       ink → body text, titles
+       soft → secondary body text, ghost-button labels
+       muted → the quiet line under a title, labels
+       faint → placeholders, counts, dates
+       ghost → disabled, drag handles
     ───────────────────────────────────────────── */
-    --color-bg:           #e8eef6;   /* page background — the "desk" */
-    --color-surface:      #ffffff;   /* cards, sidebar, header — "paper" */
-    --color-surface-2:    #f5f7fb;   /* input fields, hover rows — "sticky note" */
-    --color-primary-tint: #f0f4ff;   /* very light indigo — post cards, reply blocks */
-    --color-divider:      #e0e6f0;   /* hairlines, <hr>, row separators */
-
-    /* ── Semantic tints: a pale wash of a semantic colour, for badge and pill
-       backgrounds. Each is paired with an --on-tint-* text colour, because the
-       full-strength semantic colour (e.g. --color-danger #e03c3c) does NOT have
-       enough contrast on its own tint for 12px text. Always use them together:
-           background: var(--tint-danger); color: var(--on-tint-danger);
-       Added 2026-07-30: portal.css had been referencing --tint-danger/-warning/
-       -success for months and they were defined nowhere, so those pills
-       rendered with a transparent background (an undefined var() is invalid at
-       computed-value time and falls back to the initial value, silently). */
-    --tint-danger:     #fdeaea;
-    --on-tint-danger:  #a12626;
-    --tint-warning:    #fdf3d7;
-    --on-tint-warning: #7a5f00;
-    --tint-success:    #e7f6e7;
-    --on-tint-success: #1f6a1f;
-    --tint-info:       #e8f0fd;
-    --on-tint-info:    #1d4ed8;
+    --color-text:       #14161c;
+    --color-text-soft:  #334155;
+    --color-text-muted: #64748b;
+    --color-text-faint: #94a3b8;
+    --color-text-ghost: #cbd5e1;
+    --color-on-primary: #ffffff;
 
     /* ─────────────────────────────────────────────
-       TEXT COLORS
-       Three levels of emphasis.
-       Use muted for labels, faint for dates/metadata.
-    ───────────────────────────────────────────── */
-    --color-text:       #111827;   /* primary text — full strength */
-    --color-text-muted: #6b7280;   /* labels, captions — medium strength */
-    --color-text-faint: #9ca3af;   /* placeholders, dates — low strength */
-
-    /* ─────────────────────────────────────────────
-       SPACING SCALE
-       Based on a 4px grid. Every gap, padding, and
-       margin in the app should be a multiple of 4px.
-       Use these names — never write px values directly.
+       SPACING SCALE — 4px grid
     ───────────────────────────────────────────── */
     --space-1:   4px;
     --space-2:   8px;
@@ -110,62 +131,65 @@
 
     /* ─────────────────────────────────────────────
        BORDER RADIUS
-       Controls how rounded corners are.
-       sm = subtle rounding (chips, metric cards)
-       md = moderate (comments, inner frames)
-       lg = noticeable (buttons, sidebar frames)
-       xl = large (section cards, header card)
-       pill = fully round ends (badges, avatars)
+       16px containers, 12px controls, 10px chips,
+       8px small chips, pills for badges.
     ───────────────────────────────────────────── */
-    --radius-sm:   8px;
+    --radius-xs:   8px;
+    --radius-sm:   10px;
     --radius-md:   12px;
-    --radius-lg:   16px;
-    --radius-xl:   20px;
-    --radius-pill: 999px;
+    --radius-lg:   12px;
+    --radius-xl:   16px;
+    --radius-pill: 9999px;
 
     /* ─────────────────────────────────────────────
        TYPOGRAPHY
-       Font sizes using rem units.
-       1rem = 14px (set in base.css).
-       So 0.82rem ≈ 11.5px, 1.3rem ≈ 18px, etc.
+       System font. Scale 26 / 19 / 15 / 14 / 13 / 12 / 11 —
+       nothing in between.
     ───────────────────────────────────────────── */
-    --font-family:  "Inter", "Helvetica Neue", Arial, sans-serif;
+    --font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto,
+                   "Helvetica Neue", Arial, sans-serif;
+    --font-mono:   ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-    --font-xs:   0.68rem;   /* uppercase labels, tiny metadata  ~9.5px */
-    --font-sm:   0.82rem;   /* captions, secondary info        ~11.5px */
-    --font-base: 0.9rem;    /* body text, ticket content          ~13px */
-    --font-md:   1rem;      /* card titles, tab labels            ~14px */
-    --font-lg:   1.3rem;    /* dialog headings                  ~18.2px */
-    --font-xl:   1.5rem;    /* page headings                      ~21px */
+    --font-xs:   11px;   /* eyebrows, uppercase labels */
+    --font-sm:   12px;   /* badges, dates, counts */
+    --font-base: 13px;   /* the quiet line, captions, labels */
+    --font-md:   14px;   /* body, buttons, inputs */
+    --font-row:  15px;   /* the thing itself, in a list */
+    --font-lg:   19px;   /* section titles, dialog headings */
+    --font-xl:   26px;   /* page title — once per page */
 
-    /* KPI numbers — these are the big numbers on the dashboard cards */
-    --font-kpi-lg: 2.4rem;  /* primary KPI value               ~33.6px */
-    --font-kpi-md: 2rem;    /* secondary KPI value               ~28px */
+    --font-kpi-lg: 26px;
+    --font-kpi-md: 19px;
 
     /* ─────────────────────────────────────────────
        SHADOWS
-       card = subtle lift, used on cards and panels
-       modal = stronger lift, used on dialogs/popups
+       Cards cast none at rest; a hoverable card
+       sharpens its edge and lifts slightly. Dialogs
+       get a real shadow.
     ───────────────────────────────────────────── */
-    --shadow-card:  0 4px 24px rgba(68, 95, 182, 0.10);
-    --shadow-modal: 0 8px 32px rgba(68, 95, 182, 0.18);
+    --shadow-card:  none;
+    --shadow-hover: 0 6px 24px -12px rgb(20 22 28 / 0.22);
+    --shadow-modal: 0 20px 25px -5px rgb(20 22 28 / 0.10), 0 8px 10px -6px rgb(20 22 28 / 0.10);
+
+    /* Focus ring and text selection. */
+    --focus-ring:     0 0 0 4px color-mix(in srgb, var(--brand-violet) 10%, transparent);
+    --focus-border:   color-mix(in srgb, var(--brand-violet) 60%, #ffffff);
+    --selection-bg:   color-mix(in srgb, var(--brand-violet) 22%, #ffffff);
 
     /* ─────────────────────────────────────────────
-       KPI CARD COLORS
-       Used by kpi_card() via CSS vars so dark mode
-       can flip them without touching Python.
+       KPI CARD COLOURS
+       open → violet · normal → green · urgent → orange
+       · critical → red. A wash behind, the deep twin
+       as the number.
     ───────────────────────────────────────────── */
-    --kpi-bg-open:     #e1edfb;   --kpi-fg-open:     #1d4e8c;
-    --kpi-bg-normal:   #e6f4e6;   --kpi-fg-normal:   #1f6a1f;
-    --kpi-bg-urgent:   #fdf3d4;   --kpi-fg-urgent:   #7a5f00;
-    --kpi-bg-critical: #fde0e0;   --kpi-fg-critical: #8a1f1f;
+    --kpi-bg-open:     color-mix(in srgb, var(--brand-violet) 10%, #ffffff);  --kpi-fg-open:     var(--brand-violet-deep);
+    --kpi-bg-normal:   color-mix(in srgb, var(--brand-green)  12%, #ffffff);  --kpi-fg-normal:   var(--brand-green-deep);
+    --kpi-bg-urgent:   color-mix(in srgb, var(--brand-orange) 12%, #ffffff);  --kpi-fg-urgent:   var(--brand-orange-deep);
+    --kpi-bg-critical: color-mix(in srgb, var(--brand-red)    10%, #ffffff);  --kpi-fg-critical: var(--brand-red-deep);
 
 }
 
 /* ═══════════════════════════════════════════════════════════
-   DARK MODE lives in dark-tokens.css (Layer 1b), applied via an
-   explicit theme toggle — NOT the OS `prefers-color-scheme`.
-   Both Lesko apps switch themes manually, so auto-detection is
-   deliberately absent here to avoid an OS-dark machine forcing
-   dark chrome while the app still thinks it's in light mode.
+   DARK MODE lives in dark-tokens.css (Layer 1b), applied via the
+   app's manual toggle — NOT the OS `prefers-color-scheme`.
 ═══════════════════════════════════════════════════════════ */

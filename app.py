@@ -30,14 +30,8 @@ if _DEV_USER:
 st.set_page_config(page_title=config.APP_NAME, layout="wide", page_icon="🎯")
 
 # ── Brand palette (kept for login screen and urg dot colors) ──────────────────
-INDIGO  = "#4a52a3"
-YELLOW  = "#f5c520"
-GREEN   = "#2e9b2e"
-BLUE    = "#2d6ee0"
-RED     = "#e03c3c"
-BG      = "#e8eef6"
-CARD_BG = "#ffffff"
-ROW_BG  = "#f7f9fc"
+# Colours live in lesko-ui/tokens.css — nothing in this file names a colour
+# directly; HTML rendered here uses class names and var(--…) tokens only.
 
 _STATIC = os.path.join(os.path.dirname(__file__), "static")
 ui_theme.inject()
@@ -99,7 +93,9 @@ def _initials(name: str) -> str:
     return "".join(p[0].upper() for p in parts[:2]) if parts else "?"
 
 def _avatar_class(name: str) -> str:
-    colors = ["mem-avatar-green", "mem-avatar-blue", "mem-avatar-red", "mem-avatar-yellow", ""]
+    # Rotate the four accents so neighbouring rows differ. Colour is
+    # decoration here, never meaning.
+    colors = ["mem-avatar-violet", "mem-avatar-red", "mem-avatar-green", "mem-avatar-orange"]
     return colors[hash(name or "") % len(colors)]
 
 @st.cache_data
@@ -120,30 +116,18 @@ def inject_paste_links() -> None:
     _components.html(f"<script>{_paste_links_js()}</script>", height=0)
 
 
-_KPI_COLORS = {
-    # variant: (light_bg, light_fg, dark_bg, dark_fg)
-    "open":     ("#e1edfb", "#1d4e8c", "#1a2f4a", "#7db8f7"),
-    "normal":   ("#e6f4e6", "#1f6a1f", "#1a3a1a", "#6dbd6d"),
-    "urgent":   ("#fdf3d4", "#7a5f00", "#3a2d10", "#f0c060"),
-    "critical": ("#fde0e0", "#8a1f1f", "#3a1a1a", "#f77d7d"),
-}
+_KPI_VARIANTS = {"open", "normal", "urgent", "critical"}
 
 def kpi_card(label: str, value, variant: str = "") -> str:
+    """One KPI tile. `variant` picks the status wash (.kpi-open …) defined in
+    static/kpi.css; light and dark colours both come from the tokens, so this
+    function never names a colour."""
     formatted = f"{value:,}" if isinstance(value, int) else str(value)
-    if variant and variant in _KPI_COLORS:
-        dark = st.session_state.get("dark_mode", False)
-        light_bg, light_fg, dark_bg, dark_fg = _KPI_COLORS[variant]
-        bg    = dark_bg  if dark else light_bg
-        color = dark_fg  if dark else light_fg
-        card_style  = f' style="background:{bg}"'
-        value_style = f' style="color:{color}"'
-    else:
-        card_style  = ""
-        value_style = ""
+    variant_class = f" kpi-{variant}" if variant in _KPI_VARIANTS else ""
     return f"""
-    <div class="kpi-card"{card_style}>
+    <div class="kpi-card{variant_class}">
       <div class="kpi-label">{label}</div>
-      <div class="kpi-value"{value_style}>{formatted}</div>
+      <div class="kpi-value">{formatted}</div>
     </div>"""
 
 
@@ -174,8 +158,7 @@ if not st.user.is_logged_in:
             use_container_width=True,
         )
         st.markdown(
-            "<p style='text-align:center;color:#6b7280;font-size:0.85rem;margin:14px 0 6px'>"
-            "New here?</p>",
+            "<p class='login-hint'>New here?</p>",
             unsafe_allow_html=True,
         )
         st.button(
@@ -213,13 +196,12 @@ if current_user and current_user not in _ADMIN_EMAILS:
 
     if not st.session_state._coach_verified:
         st.markdown(f"""
-        <div style="max-width:480px;margin:80px auto 0;background:#fff;border-radius:20px;
-                    padding:40px 36px;box-shadow:0 8px 32px rgba(74,82,163,0.12);">
-          <div style="font-size:2rem;margin-bottom:8px">👋</div>
-          <div style="font-size:1.3rem;font-weight:700;color:#1a1a2e;margin-bottom:6px">
+        <div class="onboarding-card">
+          <div class="onboarding-wave">👋</div>
+          <div class="onboarding-title">
             Welcome to Lesko Help Desk
           </div>
-          <div style="font-size:0.9rem;color:#6b7280;margin-bottom:28px;line-height:1.6">
+          <div class="onboarding-body">
             It looks like this is your first time logging in with
             <strong>{current_user}</strong>.<br>
             Select your grant coach profile below to link your account.
@@ -303,12 +285,14 @@ if st.session_state.dark_mode:
                 var buttons = group.querySelectorAll('button');
                 buttons.forEach(function(btn) {
                     var bg = window.parent.getComputedStyle(btn).backgroundColor;
-                    // If background is NOT our brown (#4a4540 = rgb(74,69,64)), it's selected
-                    var isBrown = (bg === 'rgb(74, 69, 64)');
-                    if (!isBrown) {
-                        btn.style.setProperty('background-color', '#ffffff', 'important');
-                        btn.style.setProperty('border-color', '#ffffff', 'important');
-                        btn.style.setProperty('color', '#1c1c1e', 'important');
+                    // Unselected pills carry the dark surface set in
+                    // lesko-ui/streamlit-dark.css (#1c1f27 = rgb(28, 31, 39)).
+                    // Anything else is the selected pill: paint it light on ink.
+                    var isSurface = (bg === 'rgb(28, 31, 39)');
+                    if (!isSurface) {
+                        btn.style.setProperty('background-color', '#f1f5f9', 'important');
+                        btn.style.setProperty('border-color', '#f1f5f9', 'important');
+                        btn.style.setProperty('color', '#14161c', 'important');
                     }
                 });
             });
@@ -609,8 +593,6 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
 
     # Header card
     _urg        = (ticket.get("urgency") or "normal").lower()
-    _urg_colors = {"normal": ("#d6f0d6","#1f6a1f"), "urgent": ("#fdf3d4","#7a5f00"), "critical": ("#fde0e0","#8a1f1f")}
-    _urg_bg, _urg_fg = _urg_colors.get(_urg, _urg_colors["normal"])
     _status     = (ticket.get("ticket_status") or "open").lower()
     _domain_str = f"{domain_icon} {ticket.get('domain')}" if domain_icon else ""
     _space_txt  = space_label(ticket.get("space_id"), load_space_names())
@@ -906,9 +888,9 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
         else:
             for _, h in history.iterrows():
                 h_icon = STATUS_ICON.get(h["ticket_status"], "⚪")
-                h_link = f'&nbsp;<a href="{h["permalink"]}" target="_blank" style="font-size:0.75rem;color:#4a52a3">↗ MN</a>' if h.get("permalink") else ""
+                h_link = f'&nbsp;<a href="{h["permalink"]}" target="_blank" style="font-size:0.75rem;color:var(--color-link)">↗ MN</a>' if h.get("permalink") else ""
                 st.markdown(
-                    f'{h_icon} <span style="font-size:0.8rem;color:#6b7280">`{str(h["created_at"])[:10]}`</span>'
+                    f'{h_icon} <span style="font-size:0.8rem;color:var(--color-text-muted)">`{str(h["created_at"])[:10]}`</span>'
                     f' — {h["body_preview"]}{h_link}',
                     unsafe_allow_html=True,
                 )
@@ -924,12 +906,6 @@ def _cached_member_thread(thread_id: str, member_id: str):
 
 @st.dialog("Member Thread", width="large")
 def show_group_dialog(thread_id: str, member_id: str, member_name: str):
-    _URG_COLORS = {
-        "normal":   ("#d6f0d6", "#1f6a1f"),
-        "urgent":   ("#fdf3d4", "#7a5f00"),
-        "critical": ("#fde0e0", "#8a1f1f"),
-    }
-
     group_tix = _cached_member_thread(thread_id, member_id)
     if group_tix.empty:
         st.warning("No tickets found.")
@@ -1019,7 +995,6 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
         st.markdown(f"**Open comments ({len(open_tix)})**")
         for _, t in open_tix.iterrows():
             urg = (t.get("urgency") or "normal").lower()
-            urg_bg, urg_fg = _URG_COLORS.get(urg, _URG_COLORS["normal"])
             st.markdown(f"""
 <div class="comment-card">
   <div class="comment-card-meta">
@@ -1442,7 +1417,7 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             _ca = row.get("assigned_to")
             _ca = _ca.strip() if isinstance(_ca, str) else ""  # NULL → NaN float in pandas
             c6.markdown(
-                f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
+                f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:var(--color-text-soft);padding-top:6px">'
                 f'{"·" if not _ca else _initials(_ca)}</div>',
                 unsafe_allow_html=True,
             )
@@ -1494,7 +1469,7 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             _ca = row.get("assigned_to")
             _ca = _ca.strip() if isinstance(_ca, str) else ""  # NULL → NaN float in pandas
             c6.markdown(
-                f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:#4a52a3;padding-top:6px">'
+                f'<div style="text-align:center;font-size:0.85rem;font-weight:600;color:var(--color-text-soft);padding-top:6px">'
                 f'{"·" if not _ca else _initials(_ca)}</div>',
                 unsafe_allow_html=True,
             )
@@ -1510,7 +1485,7 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             st.session_state._ticket_pages[lane] -= 1
             st.rerun()
         _nc2.markdown(
-            f'<div style="text-align:center;font-size:0.82rem;color:#6b7280;padding-top:8px">'
+            f'<div style="text-align:center;font-size:0.82rem;color:var(--color-text-muted);padding-top:8px">'
             f'Page {_page + 1} of {_total_pages} &nbsp;·&nbsp; {_total_rows} tickets</div>',
             unsafe_allow_html=True,
         )
@@ -1826,12 +1801,12 @@ with tab_train:
                 with _c1:
                     st.markdown(
                         f"{ticon} **{name}** &nbsp;·&nbsp; "
-                        f"<span style='color:#6b7280;font-size:0.85rem'>{ctype} · {posted}</span>"
-                        + (f"&nbsp;&nbsp;<a href='{link}' target='_blank' style='font-size:0.8rem;color:#4a52a3'>↗ MN</a>" if link else ""),
+                        f"<span style='color:var(--color-text-muted);font-size:0.85rem'>{ctype} · {posted}</span>"
+                        + (f"&nbsp;&nbsp;<a href='{link}' target='_blank' style='font-size:0.8rem;color:var(--color-link)'>↗ MN</a>" if link else ""),
                         unsafe_allow_html=True,
                     )
                     st.markdown(
-                        f"<div style='color:#374151;font-size:0.9rem;margin-top:2px'>{preview}</div>",
+                        f"<div style='color:var(--color-text-soft);font-size:0.9rem;margin-top:2px'>{preview}</div>",
                         unsafe_allow_html=True,
                     )
                 with _c2:
@@ -2160,24 +2135,25 @@ with tab_admin:
     if _log_df.empty:
         st.info("No log entries found.")
     else:
-        _LEVEL_COLOR = {"ERROR": "#8a1f1f", "WARNING": "#7a5f00", "INFO": "#1f4f8a"}
-        _LEVEL_BG    = {"ERROR": "#fde0e0", "WARNING": "#fdf3d4", "INFO": "#ddeeff"}
+        # ERROR → red, WARNING → orange, INFO → violet; anything else grey.
+        _LEVEL_COLOR = {"ERROR": "var(--on-tint-danger)", "WARNING": "var(--on-tint-warning)", "INFO": "var(--on-tint-info)"}
+        _LEVEL_BG    = {"ERROR": "var(--tint-danger)",    "WARNING": "var(--tint-warning)",    "INFO": "var(--tint-info)"}
         for _, row in _log_df.iterrows():
             _lvl = str(row.get("level") or "INFO")
-            _fg  = _LEVEL_COLOR.get(_lvl, "#333")
-            _bg  = _LEVEL_BG.get(_lvl, "#f5f5f5")
+            _fg  = _LEVEL_COLOR.get(_lvl, "var(--color-text-soft)")
+            _bg  = _LEVEL_BG.get(_lvl, "var(--tint-neutral)")
             _ts  = str(row.get("created_at", ""))[:19].replace("T", " ")
             _src = str(row.get("source") or "")
             _msg = str(row.get("message") or "")
             _det = str(row.get("detail") or "")
             st.markdown(f"""
-<div style="background:{_bg};border-left:4px solid {_fg};border-radius:6px;
+<div style="background:{_bg};border:1px solid var(--color-divider);border-radius:var(--radius-md);
             padding:8px 12px;margin-bottom:6px;font-size:0.82rem;line-height:1.5">
-  <span style="color:{_fg};font-weight:700">{_lvl}</span>
-  <span style="color:#888;margin-left:10px">{_ts}</span>
-  <span style="color:#555;margin-left:10px;font-family:monospace">{_src}</span>
-  <div style="color:#222;margin-top:3px">{_msg}</div>
-  {f'<div style="color:#888;font-size:0.78rem;margin-top:2px;white-space:pre-wrap">{_det[:300]}</div>' if _det and _det != "None" else ""}
+  <span style="color:{_fg};font-weight:600">{_lvl}</span>
+  <span style="color:var(--color-text-muted);margin-left:10px">{_ts}</span>
+  <span style="color:var(--color-text-muted);margin-left:10px;font-family:var(--font-mono)">{_src}</span>
+  <div style="color:var(--color-text);margin-top:3px">{_msg}</div>
+  {f'<div style="color:var(--color-text-muted);font-size:0.78rem;margin-top:2px;white-space:pre-wrap">{_det[:300]}</div>' if _det and _det != "None" else ""}
 </div>""", unsafe_allow_html=True)
 
 
@@ -2187,10 +2163,12 @@ _FEEDBACK_TYPES = {
     "problem":    ("🔴", "Problem",    "Something is broken, confusing, or getting in your way. Tell me exactly what happened."),
     "suggestion": ("💡", "Suggestion", "An idea, improvement, or feature you'd like to see. No idea is too small."),
 }
+# Studiolo's four: orange = in progress, violet = primary, green = done.
+# The badge takes a 12% wash of the hue behind and the hue as text.
 _FEEDBACK_STATUS_COLORS = {
-    "open":  "#f5c520",
-    "noted": "#4a52a3",
-    "done":  "#2e9b2e",
+    "open":  "#e47d17",
+    "noted": "#543ff8",
+    "done":  "#20a375",
 }
 
 
@@ -2278,7 +2256,7 @@ def render_inbox(current_user):
 
             for _, row in rows.iterrows():
                 icon, label, _ = _FEEDBACK_TYPES.get(row["feedback_type"], ("📝", row["feedback_type"], ""))
-                status_color   = _FEEDBACK_STATUS_COLORS.get(row["status"], "#aaa")
+                status_color   = _FEEDBACK_STATUS_COLORS.get(row["status"], "#94a3b8")
                 date_str       = str(row["created_at"])[:10]
 
                 with st.expander(
@@ -2286,7 +2264,7 @@ def render_inbox(current_user):
                     expanded=False,
                 ):
                     st.markdown(
-                        f'<span class="feedback-badge" style="background:{status_color}22;color:{status_color}">'
+                        f'<span class="feedback-badge" style="background:{status_color}1f;color:{status_color}">'
                         f'{row["status"].upper()}</span>',
                         unsafe_allow_html=True,
                     )

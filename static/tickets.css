@@ -1,222 +1,179 @@
 /*
- * grant-helpdesk / static / tickets.css  —  Zone 5 + 6: Ticket Table & Rows
+ * grant-helpdesk / static / tickets.css  —  Zone 5 + 6: Ticket Table & Rows  (Studiolo)
  *
- * Zone 5: .section-card — the white container wrapping the entire ticket list
+ * Zone 5: .section-card — the card wrapping the entire ticket list
  * Zone 6: individual ticket row elements — member name, date, question text,
- *         domain circle, table column headers, hover state, tooltip
+ *         domain circle, column headers, hover state, tooltip, dialogs
  *
- * This is the most-used zone in the app — it's what coaches look at all day.
- * Scannable and structured: every column has a clear purpose and visual weight.
+ * The most-used zone in the app. Hierarchy in a row: initials chip, then the
+ * title, then one quiet grey line holding everything else.
  *
- * DEPENDS ON: tokens.css (loaded first by ui_theme.inject())
+ * DEPENDS ON: tokens.css
  * ALSO USES:  .badge, .urg-pill, .avatar, .assign-pill, .open-btn
  *             from lesko-ui/components.css
- *
- * HTML STRUCTURE:
- *
- *   <div class="section-card">
- *     <div class="section-card-title">
- *       Tickets <span class="section-card-count">(42)</span>
- *     </div>
- *
- *     <!-- column headers row -->
- *     <div class="tbl-header"> … </div>
- *
- *     <!-- one per ticket -->
- *     <div class="ticket-row">
- *       <div class="mem-avatar mem-avatar-green">ML</div>
- *       <div class="member-name">Martin L.</div>
- *       <div class="ticket-date">May 11</div>
- *       <div class="ticket-question"> … </div>
- *       <div class="domain-circle">💰</div>
- *       <span class="badge badge-open">open</span>
- *       <span class="urg-pill urg-urgent">urgent</span>
- *       <span class="assign-pill">ML</span>
- *       <div class="open-btn">›</div>
- *     </div>
- *   </div>
  */
 
 
 /* ═════════════════════════════════════════════
    ZONE 5 — SECTION CARD (ticket list container)
-   The white card that wraps the entire ticket list.
 ═════════════════════════════════════════════ */
 .section-card {
     background:    var(--color-surface);
+    border:        1px solid var(--color-divider);
     border-radius: var(--radius-xl);
     padding:       var(--space-5) var(--space-5) var(--space-3);
     margin-top:    var(--space-4);
-    box-shadow:    var(--shadow-card);
 }
 
-/* Title row at the top of the section card */
 .section-card-title {
-    font-size:     var(--font-md);
-    font-weight:   500;
-    color:         var(--color-text);
-    margin-bottom: var(--space-4);
+    font-size:      var(--font-row);
+    font-weight:    600;
+    letter-spacing: -0.01em;
+    color:          var(--color-text);
+    margin-bottom:  var(--space-4);
 }
 
-/* The ticket count in brackets — muted, lighter weight */
 .section-card-count {
     color:       var(--color-text-muted);
     font-weight: 400;
+    font-variant-numeric: tabular-nums;
 }
 
 
 /* ═════════════════════════════════════════════
-   TABLE COLUMN HEADERS
-   The small uppercase labels above each column.
-   Low visual weight — they label the data without
-   competing with it.
+   TABLE COLUMN HEADERS — eyebrows over a hairline
 ═════════════════════════════════════════════ */
 .tbl-header {
     font-size:      var(--font-xs);
     font-weight:    600;
-    color:          var(--color-text-faint);
+    color:          var(--color-text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     padding:        0 var(--space-1) var(--space-2);
-    border-bottom:  1px solid var(--color-bg);
+    border-bottom:  1px solid var(--color-divider);
     margin-bottom:  var(--space-2);
 }
 
 
 /* ═════════════════════════════════════════════
    ZONE 6 — TICKET ROW
-   One row per ticket. On hover the background
-   lightens to give clear feedback.
 ═════════════════════════════════════════════ */
 .ticket-row {
     display:        flex;
     align-items:    center;
     gap:            var(--space-3);
-    padding:        var(--space-3) var(--space-1);
-    border-bottom:  1px solid var(--color-surface-2);
-    border-radius:  var(--radius-sm);
-    transition:     background 0.1s;
+    padding:        10px var(--space-1);
+    border-bottom:  1px solid var(--color-divider);
+    border-radius:  var(--radius-xs);
+    transition:     background 100ms;
 }
 
 .ticket-row:hover {
     background: var(--color-surface-2);
 }
 
-/* Last row — no bottom border */
 .ticket-row:last-child {
     border-bottom: none;
 }
 
 
 /* ─────────────────────────────────────────────
-   MEMBER AVATAR (within ticket row)
-   Slightly smaller than the standard .avatar —
-   square corners to feel more "data table" than
-   "social profile".
+   MEMBER AVATAR — the small icon chip
+   Rotates violet → red → green → orange so no two
+   neighbours match. Legacy names fold onto the four.
 ───────────────────────────────────────────── */
 .mem-avatar {
-    width:           24px;
-    height:          24px;
-    border-radius:   var(--radius-sm);
-    background:      var(--color-primary);
-    color:           white;
+    width:           28px;
+    height:          28px;
+    border-radius:   var(--radius-xs);
+    background:      var(--chip-violet-bg);
+    color:           var(--chip-violet-fg);
     display:         inline-flex;
     align-items:     center;
     justify-content: center;
-    font-size:       0.6rem;
-    font-weight:     500;
+    font-size:       var(--font-xs);
+    font-weight:     600;
     flex-shrink:     0;
 }
 
-/* Colour variants — one per brand colour */
-.mem-avatar-green  { background: var(--color-green);  color: white; }
-.mem-avatar-blue   { background: var(--color-blue);   color: white; }
-.mem-avatar-red    { background: var(--color-red);    color: white; }
-.mem-avatar-yellow { background: var(--color-yellow); color: #5a4400; }
+.mem-avatar-violet, .mem-avatar-indigo, .mem-avatar-blue { background: var(--chip-violet-bg); color: var(--chip-violet-fg); }
+.mem-avatar-red                                          { background: var(--chip-red-bg);    color: var(--chip-red-fg); }
+.mem-avatar-green                                        { background: var(--chip-green-bg);  color: var(--chip-green-fg); }
+.mem-avatar-orange, .mem-avatar-yellow                   { background: var(--chip-orange-bg); color: var(--chip-orange-fg); }
 
 
 /* ─────────────────────────────────────────────
    MEMBER NAME + DATE
-   Two lines stacked: bold name on top, faint date below.
 ───────────────────────────────────────────── */
 .member-name {
-    font-size:   var(--font-base);
-    font-weight: 500;
+    font-size:   var(--font-row);
+    font-weight: 600;
     color:       var(--color-text);
-    line-height: 1.2;
+    line-height: 1.25;
 }
 
 .ticket-date {
-    font-size: var(--font-xs);
+    font-size: var(--font-sm);
     color:     var(--color-text-faint);
 }
 
 
 /* ─────────────────────────────────────────────
-   QUESTION TEXT PREVIEW
-   Truncated to one line. Full text appears in
-   the tooltip (.tip-wrap / .tip-box) on hover.
+   QUESTION TEXT PREVIEW — ink, one line
 ───────────────────────────────────────────── */
 .ticket-question {
-    font-size:    var(--font-base);
-    color:        var(--color-primary);
-    overflow:     hidden;
-    white-space:  nowrap;
+    font-size:     var(--font-md);
+    color:         var(--color-text);
+    overflow:      hidden;
+    white-space:   nowrap;
     text-overflow: ellipsis;
-    flex:         1;   /* takes up remaining horizontal space */
+    flex:          1;
 }
 
 
 /* ─────────────────────────────────────────────
-   DOMAIN ICON CIRCLE
-   A small circle showing the grant domain emoji.
+   DOMAIN ICON CIRCLE — a quiet grey chip
 ───────────────────────────────────────────── */
 .domain-circle {
     width:           26px;
     height:          26px;
-    border-radius:   var(--radius-pill);
-    background:      var(--color-success);
+    border-radius:   var(--radius-xs);
+    background:      var(--color-surface-3);
     display:         inline-flex;
     align-items:     center;
     justify-content: center;
-    font-size:       var(--font-base);
+    font-size:       var(--font-md);
     flex-shrink:     0;
 }
 
 
 /* ─────────────────────────────────────────────
-   TOOLTIP (question text preview on hover)
-   A dark popover that appears below the question
-   text when the user hovers over it.
-
-   .tip-wrap  — the invisible wrapper around the text
-   .tip-box   — the dark tooltip box (hidden by default)
+   TOOLTIP — ink popover under the question text
 ───────────────────────────────────────────── */
 .tip-wrap {
-    position:   relative;
-    display:    inline-block;
-    max-width:  100%;
+    position:  relative;
+    display:   inline-block;
+    max-width: 100%;
 }
 
-/* Hidden by default — appears on hover */
 .tip-wrap .tip-box {
-    display:       none;
-    position:      absolute;
-    top:           calc(100% + var(--space-2));
-    left:          0;
-    z-index:       9999;
-    background:    #1a1a2e;
-    color:         #f0f2f8;
-    font-size:     var(--font-sm);
-    line-height:   1.55;
-    padding:       var(--space-3) var(--space-4);
-    border-radius: var(--radius-sm);
-    width:         420px;
-    max-width:     90vw;
-    box-shadow:    var(--shadow-modal);
-    white-space:   pre-wrap;
-    word-break:    break-word;
-    pointer-events: none;   /* tooltip doesn't block mouse events */
+    display:        none;
+    position:       absolute;
+    top:            calc(100% + var(--space-2));
+    left:           0;
+    z-index:        9999;
+    background:     var(--color-text);
+    color:          var(--color-surface);
+    font-size:      var(--font-base);
+    line-height:    1.55;
+    padding:        var(--space-3) var(--space-4);
+    border-radius:  var(--radius-md);
+    width:          420px;
+    max-width:      90vw;
+    box-shadow:     var(--shadow-modal);
+    white-space:    pre-wrap;
+    word-break:     break-word;
+    pointer-events: none;
 }
 
 .tip-wrap:hover .tip-box {
@@ -226,41 +183,38 @@
 
 /* ═════════════════════════════════════════════
    TICKET DIALOG — header bar
-   The strip at the top of the ticket detail view.
-   Contains member name, status badge, urgency,
-   domain, and meta fields (state/city/member id).
+   Quiet grey band under a hairline.
 ═════════════════════════════════════════════ */
 .ticket-dialog-header {
     margin:        -1rem -1rem 0 -1rem;
     padding:       var(--space-4) var(--space-5);
     background:    var(--color-surface-2);
-    border-bottom: 1px solid var(--color-bg);
+    border-bottom: 1px solid var(--color-divider);
 }
 
 .ticket-dialog-name {
-    font-size:   var(--font-lg);
-    font-weight: 700;
-    color:       var(--color-text);
+    font-size:      var(--font-lg);
+    font-weight:    600;
+    letter-spacing: -0.01em;
+    color:          var(--color-text);
 }
 
-/* Row of badge + pills + meta in the dialog header */
 .ticket-dialog-badge-row {
-    display:     flex;
-    align-items: center;
-    gap:         var(--space-3);
-    flex-wrap:   wrap;
+    display:       flex;
+    align-items:   center;
+    gap:           var(--space-3);
+    flex-wrap:     wrap;
     margin-bottom: var(--space-3);
 }
 
-/* The small meta info row: State · City · Member ID · Posted */
 .ticket-meta-row {
-    display:  flex;
-    gap:      var(--space-6);
+    display:   flex;
+    gap:       var(--space-6);
     flex-wrap: wrap;
 }
 
 .ticket-meta-item {
-    font-size: var(--font-sm);
+    font-size: var(--font-base);
     color:     var(--color-text-muted);
 }
 
@@ -270,8 +224,9 @@
 }
 
 .ticket-meta-link {
-    font-size:       var(--font-sm);
-    color:           var(--color-primary);
+    font-size:       var(--font-base);
+    font-weight:     500;
+    color:           var(--color-link);
     text-decoration: none;
     margin-left:     auto;
 }
@@ -282,42 +237,42 @@
 
 
 /* ═════════════════════════════════════════════
-   POST CARD — original post in ticket dialog
-   Light indigo tint card with a left accent border.
-   Used to show the thread's root post.
+   POST CARD — the thread's root post
+   A violet wash inside a hairline. No accent bar:
+   the line is the structure.
 ═════════════════════════════════════════════ */
 .post-card {
     background:    var(--color-primary-tint);
-    border-left:   4px solid var(--color-primary);
+    border:        1px solid var(--color-divider);
     border-radius: var(--radius-md);
     padding:       var(--space-4);
     margin-bottom: var(--space-4);
 }
 
 .post-card-author {
-    font-weight:   700;
-    font-size:     var(--font-base);
+    font-weight:   600;
+    font-size:     var(--font-md);
     color:         var(--color-text);
     margin-bottom: 2px;
 }
 
 .post-card-date {
-    font-size:     var(--font-xs);
+    font-size:     var(--font-sm);
     color:         var(--color-text-muted);
     margin-bottom: var(--space-3);
 }
 
 .post-card-body {
-    font-size:   var(--font-base);
+    font-size:   var(--font-md);
     color:       var(--color-text);
     line-height: 1.55;
 }
 
-/* "this ticket" badge inside post card */
 .this-ticket-badge {
     font-size:     var(--font-xs);
-    background:    var(--color-primary);
-    color:         white;
+    font-weight:   600;
+    background:    var(--brand-violet);
+    color:         var(--color-on-primary);
     padding:       2px var(--space-2);
     border-radius: var(--radius-pill);
 }
@@ -326,11 +281,9 @@
 /* ═════════════════════════════════════════════
    COMMENT CARDS — group dialog open/done tickets
 ═════════════════════════════════════════════ */
-
-/* Open comment card */
 .comment-card {
     background:    var(--color-surface);
-    border:        1px solid var(--color-bg);
+    border:        1px solid var(--color-divider);
     border-radius: var(--radius-md);
     padding:       var(--space-3) var(--space-4);
     margin-bottom: var(--space-2);
@@ -344,28 +297,27 @@
 }
 
 .comment-date {
-    font-size: var(--font-xs);
+    font-size: var(--font-sm);
     color:     var(--color-text-faint);
 }
 
 .comment-body {
-    font-size:   var(--font-sm);
+    font-size:   var(--font-base);
     color:       var(--color-text);
     line-height: 1.55;
 }
 
-/* Done (handled) comment card — same shape but greyed out */
 .done-comment-card {
     background:    var(--color-surface-2);
-    border:        1px solid #f0f0f0;
-    border-radius: var(--radius-sm);
+    border:        1px solid var(--color-divider);
+    border-radius: var(--radius-md);
     padding:       var(--space-3) var(--space-4);
     margin-bottom: var(--space-2);
     opacity:       0.6;
 }
 
 .done-comment-body {
-    font-size:   var(--font-sm);
+    font-size:   var(--font-base);
     color:       var(--color-text-muted);
     line-height: 1.5;
 }
@@ -373,19 +325,17 @@
 
 /* ═════════════════════════════════════════════
    REPLY BLOCK — admin reply inside feedback items
-   Indented block with a left accent border,
-   showing who replied and when.
 ═════════════════════════════════════════════ */
 .reply-block {
     background:    var(--color-primary-tint);
-    border-left:   3px solid var(--color-primary);
+    border:        1px solid var(--color-divider);
     padding:       var(--space-3) var(--space-4);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    border-radius: var(--radius-md);
     margin-top:    var(--space-1);
 }
 
 .reply-meta {
-    font-size:     var(--font-xs);
+    font-size:     var(--font-sm);
     color:         var(--color-text-muted);
     margin-bottom: var(--space-1);
 }
@@ -393,90 +343,57 @@
 
 /* ─────────────────────────────────────────────
    GROUP ROW (thread summary)
-   When multiple tickets belong to a thread, the
-   row shows "N comments in thread · N open" instead
-   of a question text preview.
 ───────────────────────────────────────────── */
 .ticket-group-label {
-    font-size:   var(--font-sm);
-    color:       var(--color-text-muted);
-    font-style:  italic;
+    font-size:  var(--font-base);
+    color:      var(--color-text-muted);
+    font-style: italic;
 }
 
 
 /* ═════════════════════════════════════════════
-   TICKET ROW DIVIDERS
-   Adds a thin separator line between each ticket row.
-   Targets consecutive stHorizontalBlock elements inside
-   the tab panel — each st.columns() call renders as one.
-   The adjacent-sibling selector (+) skips the very first
-   row (the column header) so it doesn't double-border it.
-═════════════════════════════════════════════ */
-
-
-/* ═════════════════════════════════════════════
-   TICKET ROW DIVIDER
-   Thin separator between ticket rows.
-   The wrapping stMarkdownContainer needs its
-   padding zeroed out so no extra gap appears.
+   TICKET ROW DIVIDER — one hairline between rows
 ═════════════════════════════════════════════ */
 .ticket-divider {
     height:     1px;
-    background: #d1d9e6;
+    background: var(--color-divider);
     margin:     0;
     padding:    0;
 }
 
-/* Kill the Streamlit markdown wrapper padding around the divider */
 [data-testid="stMarkdownContainer"]:has(.ticket-divider) {
-    padding:    0 !important;
-    margin:     0 !important;
+    padding:     0 !important;
+    margin:      0 !important;
     line-height: 0 !important;
 }
 
 
 /* ═════════════════════════════════════════════
-   ANSWERED ROW TINT
-   Tickets with status "answered" get a soft green
-   background so coaches can instantly see which
-   threads already have a reply vs. which still need
-   attention. Uses :has() to target the whole row
-   container from a hidden marker element inside c0.
+   ANSWERED ROW TINT — a faint green wash, plus a
+   "✓ Answered" badge so the state is never colour alone.
 ═════════════════════════════════════════════ */
-
-/* Zero-size marker — just a CSS hook, invisible */
 .answered-row-marker {
     display: none;
 }
 
-/* Tint the entire columns row when an answered marker is present */
 div[data-testid="stHorizontalBlock"]:has(.answered-row-marker) {
-    background:    #f0faf4;
-    border-radius: 6px;
+    background:    color-mix(in srgb, var(--brand-green) 5%, var(--color-surface));
+    border-radius: var(--radius-xs);
     padding:       2px 6px;
     margin:        0 -6px;
 }
 
-/* Mute body text slightly so answered rows feel quieter */
 div[data-testid="stHorizontalBlock"]:has(.answered-row-marker) .answered-body {
     opacity: 0.72;
 }
 
-/* Small "✓ Answered" pill */
 .answered-badge {
-    display:       inline-block;
-    font-size:     0.68rem;
-    font-weight:   600;
-    color:         #1a7a3f;
-    background:    #d4f0e0;
-    border-radius: 99px;
-    padding:       1px 7px;
+    display:        inline-block;
+    font-size:      var(--font-xs);
+    font-weight:    600;
+    color:          var(--on-tint-success);
+    background:     var(--tint-success);
+    border-radius:  var(--radius-pill);
+    padding:        1px 7px;
     letter-spacing: 0.02em;
-}
-
-
-/* ── Dark mode overrides ─────────────────────────── */
-@media (prefers-color-scheme: dark) {
-    .mem-avatar-yellow        { color: #f0c060; }
-    .done-comment-card        { border-color: #30363d; }
 }

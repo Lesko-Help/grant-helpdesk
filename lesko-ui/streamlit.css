@@ -1,51 +1,36 @@
 /*
- * lesko-ui / streamlit.css  —  Layer 4: Streamlit Widget Overrides
+ * lesko-ui / streamlit.css  —  Layer 4: Streamlit Widget Overrides  (Studiolo)
  *
- * WHAT THIS FILE IS FOR:
- *   Streamlit generates its own HTML with its own class names and
- *   data-testid attributes. We have no control over that HTML — we
- *   can't add our own class names to Streamlit's buttons or sidebar.
- *   So instead, we TARGET Streamlit's own selectors and override
- *   their styles to match our design tokens.
+ * Streamlit renders its own HTML with its own class names and data-testid
+ * attributes. We target those selectors and override them to match the
+ * tokens. Where Streamlit renamed a test id between versions, both names are
+ * listed so the rule holds on either.
  *
- * WHY IT'S A SEPARATE FILE:
- *   These selectors are Streamlit-specific and will never appear in
- *   a non-Streamlit app. Keeping them isolated means if we ever move
- *   to a different framework, we just delete this one file.
- *
- * HOW STREAMLIT INJECTS CSS:
- *   Streamlit only allows CSS injection via st.markdown with a style block.
- *   The ui_theme.py file (Step 5) handles that injection — it reads all
- *   CSS files and injects them in one call. You never need to write
- *   <style> blocks in app.py again.
- *
- * IMPORTANT: Load this file AFTER tokens.css — it uses var(--…) tokens.
+ * Load AFTER tokens.css — it uses var(--…) tokens.
  *
  * TABLE OF CONTENTS:
  *   1. Page background
  *   2. Sidebar
- *   3. Tabs
+ *   3. Tabs — rendered as chips
  *   4. Buttons
  *   5. Input fields
- *   6. Metric containers (reports tab)
+ *   6. Pills (st.pills) — chips
+ *   7. Expanders, dialogs, metric containers
  */
 
 
 /* ═════════════════════════════════════════════
-   1. PAGE BACKGROUND
-   .stApp is Streamlit's root wrapper element.
-   We set the background to our --color-bg token
-   so the whole page has the light blue-grey tint.
+   1. PAGE BACKGROUND — the canvas behind the cards
 ═════════════════════════════════════════════ */
 .stApp {
     background-color: var(--color-bg) !important;
+    color: var(--color-text);
 }
 
 section[data-testid="stMain"] > div {
     background-color: var(--color-bg) !important;
 }
 
-/* Reduce the default top/bottom padding Streamlit adds to the main content area */
 .main .block-container {
     padding-top:    var(--space-4) !important;
     padding-bottom: var(--space-8) !important;
@@ -53,172 +38,287 @@ section[data-testid="stMain"] > div {
 
 
 /* ═════════════════════════════════════════════
-   2. SIDEBAR
-   Streamlit's sidebar is identified by the
-   data-testid="stSidebar" attribute.
-
-   We override:
-   - Background colour → white (our --color-surface)
-   - Right border → subtle separator
-   - All text → --color-text
-   - Labels on filters → small, uppercase, muted
-   - Section headings → --color-text
-   - Input field backgrounds → --color-surface-2
+   2. SIDEBAR — white, one hairline on the right
 ═════════════════════════════════════════════ */
 [data-testid="stSidebar"] {
     background-color: var(--color-surface) !important;
-    border-right:     1px solid var(--color-bg) !important;
+    border-right:     1px solid var(--color-divider) !important;
 }
 
-/* All text inside the sidebar defaults to our primary text colour */
 [data-testid="stSidebar"] * {
     color: var(--color-text) !important;
 }
 
-/* Filter labels (the text above each selectbox / input / radio) —
-   small, uppercase, muted — like a form field label */
+/* Field labels: 13px, medium, ink-soft — sentence case, like a form. */
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stTextInput label,
+[data-testid="stSidebar"] .stDateInput label,
 [data-testid="stSidebar"] .stRadio label,
-[data-testid="stSidebar"] .stPills label {
-    color:          var(--color-text-muted) !important;
-    font-size:      var(--font-xs) !important;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight:    500;
+[data-testid="stSidebar"] .stPills label,
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+    color:       var(--color-text-soft) !important;
+    font-size:   var(--font-base) !important;
+    font-weight: 500;
 }
 
-/* Headings inside the sidebar */
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
     color: var(--color-text) !important;
 }
 
-/* Divider lines inside the sidebar */
 [data-testid="stSidebar"] hr {
-    border-color: var(--color-bg) !important;
+    border-color: var(--color-divider) !important;
 }
 
-/* Muted paragraph text (e.g. helper text below filters) */
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
     color: var(--color-text-muted) !important;
 }
 
-/* Input field and select box backgrounds — slightly off-white, no border, rounded */
-[data-testid="stSidebar"] [data-baseweb="select"] > div,
-[data-testid="stSidebar"] [data-baseweb="input"] > div {
-    background-color: var(--color-surface-2) !important;
-    border-radius:    var(--radius-md) !important;
-    border:           none !important;
-}
-
 
 /* ═════════════════════════════════════════════
-   3. TABS
-   Streamlit renders tabs as <button> elements with
-   data-baseweb="tab". We restyle the whole tab bar
-   to look like a pill container with a highlighted
-   active tab.
-
-   Default tab:  muted text, no background
-   Active tab:   primary colour background, white text
-   Tab bar:      white pill container with padding
+   3. TABS — rendered as chips
+   A row of white pills with a hairline; the
+   selected one goes near-black, not brand.
 ═════════════════════════════════════════════ */
-
-/* The tab bar container */
 [data-baseweb="tab-list"] {
-    background:    var(--color-surface) !important;
-    border-radius: var(--radius-pill) !important;
-    padding:       var(--space-1) !important;
-    gap:           var(--space-1) !important;
+    background:    transparent !important;
+    border-radius: 0 !important;
+    padding:       0 !important;
+    gap:           var(--space-2) !important;
     margin-bottom: var(--space-3) !important;
+    flex-wrap:     wrap;
 }
 
-/* Individual tab button — default state */
 button[data-baseweb="tab"] {
-    font-weight:   500 !important;
+    background:    var(--color-surface) !important;
+    border:        1px solid var(--color-divider) !important;
+    border-radius: var(--radius-pill) !important;
     color:         var(--color-text-muted) !important;
-    border-radius: var(--radius-lg) !important;
-    padding:       var(--space-2) var(--space-5) !important;
-    font-size:     var(--font-sm) !important;
-    transition:    all 0.15s;
+    font-size:     var(--font-base) !important;
+    font-weight:   500 !important;
+    padding:       6px var(--space-3) !important;
+    transition:    border-color 150ms, color 150ms;
 }
 
-/* Active (selected) tab */
+button[data-baseweb="tab"] p,
+button[data-baseweb="tab"] span {
+    color:     inherit !important;
+    font-size: inherit !important;
+}
+
+button[data-baseweb="tab"]:hover {
+    border-color: var(--color-text-faint) !important;
+    color:        var(--color-text) !important;
+}
+
 button[data-baseweb="tab"][aria-selected="true"] {
-    background-color: var(--color-primary) !important;
-    color:            white !important;
-    border-bottom:    none !important;
+    background-color: var(--color-text) !important;
+    border-color:     var(--color-text) !important;
+    color:            var(--color-surface) !important;
 }
 
-/* Hide Streamlit's default tab underline indicators — we don't need them */
 [data-baseweb="tab-highlight"] { display: none !important; }
 [data-baseweb="tab-border"]    { display: none !important; }
 
 
 /* ═════════════════════════════════════════════
    4. BUTTONS
-   Streamlit has two button types: primary and secondary.
-   We restyle both to match our design system.
-
-   Primary button:   indigo background, pill shape
-   Secondary button: light indigo tint, indigo text
+   Primary: violet, 12px corners.
+   Secondary (ghost): white with a hairline.
 ═════════════════════════════════════════════ */
-button[data-testid="baseButton-primary"] {
-    background-color: var(--color-primary) !important;
-    color:            white !important;
-    border:           none !important;
-    border-radius:    var(--radius-pill) !important;
+button[data-testid="baseButton-primary"],
+button[data-testid="stBaseButton-primary"],
+[data-testid="stBaseButton-primaryFormSubmit"] {
+    background-color: var(--brand-violet) !important;
+    color:            var(--color-on-primary) !important;
+    border:           1px solid var(--brand-violet) !important;
+    border-radius:    var(--radius-md) !important;
     font-weight:      500 !important;
+    transition:       background-color 150ms;
 }
 
-button[data-testid="baseButton-primary"]:hover {
-    background-color: #3a4193 !important;   /* slightly darker indigo on hover */
+button[data-testid="baseButton-primary"] p,
+button[data-testid="stBaseButton-primary"] p,
+[data-testid="stBaseButton-primaryFormSubmit"] p {
+    color: var(--color-on-primary) !important;
 }
 
-button[data-testid="baseButton-secondary"] {
-    background-color: #eef0fb !important;
-    color:            var(--color-primary) !important;
-    border:           none !important;
-    border-radius:    var(--radius-pill) !important;
+button[data-testid="baseButton-primary"]:hover,
+button[data-testid="stBaseButton-primary"]:hover,
+[data-testid="stBaseButton-primaryFormSubmit"]:hover {
+    background-color: var(--brand-violet-deep) !important;
+    border-color:     var(--brand-violet-deep) !important;
+}
+
+button[data-testid="baseButton-secondary"],
+button[data-testid="stBaseButton-secondary"],
+[data-testid="stBaseButton-secondaryFormSubmit"] {
+    background-color: var(--color-surface) !important;
+    color:            var(--color-text-soft) !important;
+    border:           1px solid var(--color-divider) !important;
+    border-radius:    var(--radius-md) !important;
     font-weight:      500 !important;
+    transition:       border-color 150ms, background-color 150ms;
 }
 
-button[data-testid="baseButton-secondary"]:hover {
-    background-color: #dde0f5 !important;
+button[data-testid="baseButton-secondary"]:hover,
+button[data-testid="stBaseButton-secondary"]:hover,
+[data-testid="stBaseButton-secondaryFormSubmit"]:hover {
+    border-color:     var(--color-text-faint) !important;
+    background-color: var(--color-surface-2) !important;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor:  not-allowed;
 }
 
 
 /* ═════════════════════════════════════════════
-   5. INPUT FIELDS (global, outside sidebar)
-   Rounds the corners of all text inputs and
-   select boxes in the main content area too.
+   5. INPUT FIELDS
+   White, one hairline, 12px corners. Focus adds a
+   soft violet ring instead of a hard outline.
 ═════════════════════════════════════════════ */
 [data-baseweb="select"] > div,
-[data-baseweb="input"] > div {
+[data-baseweb="input"] > div,
+[data-baseweb="textarea"] > div,
+[data-baseweb="base-input"] {
+    background-color: var(--color-surface) !important;
+    border:           1px solid var(--color-divider) !important;
+    border-radius:    var(--radius-md) !important;
+    color:            var(--color-text) !important;
+    transition:       border-color 150ms, box-shadow 150ms;
+}
+
+[data-baseweb="select"] > div:focus-within,
+[data-baseweb="input"] > div:focus-within,
+[data-baseweb="textarea"] > div:focus-within {
+    border-color: var(--focus-border) !important;
+    box-shadow:   var(--focus-ring) !important;
+}
+
+[data-baseweb="input"] input::placeholder,
+[data-baseweb="textarea"] textarea::placeholder {
+    color: var(--color-text-faint) !important;
+}
+
+[data-baseweb="popover"] [data-baseweb="menu"] {
+    background-color: var(--color-surface) !important;
+    border:           1px solid var(--color-divider) !important;
+    border-radius:    var(--radius-md) !important;
+}
+
+[data-baseweb="option"] {
+    background-color: var(--color-surface) !important;
+    color:            var(--color-text) !important;
+}
+
+[data-baseweb="option"]:hover {
+    background-color: var(--color-surface-2) !important;
+}
+
+
+/* ═════════════════════════════════════════════
+   6. PILLS (st.pills) — chips
+   Same treatment as the tabs: white hairline pills,
+   the selected one near-black.
+═════════════════════════════════════════════ */
+[data-testid="stButtonGroup"] button,
+[data-testid="stButtonGroupContainer"] button {
+    background-color: var(--color-surface) !important;
+    border:           1px solid var(--color-divider) !important;
+    border-radius:    var(--radius-pill) !important;
+    color:            var(--color-text-muted) !important;
+    font-size:        var(--font-base) !important;
+    font-weight:      500 !important;
+}
+
+[data-testid="stButtonGroup"] button p,
+[data-testid="stButtonGroupContainer"] button p {
+    color: inherit !important;
+}
+
+[data-testid="stButtonGroup"] button:hover,
+[data-testid="stButtonGroupContainer"] button:hover {
+    border-color: var(--color-text-faint) !important;
+    color:        var(--color-text) !important;
+}
+
+[data-testid="stButtonGroup"] button[aria-pressed="true"],
+[data-testid="stButtonGroup"] button[aria-checked="true"],
+[data-testid="stButtonGroup"] button[aria-selected="true"],
+[data-testid="stButtonGroup"] button[data-selected="true"],
+[data-testid="stButtonGroupContainer"] button[aria-pressed="true"],
+[data-testid="stButtonGroupContainer"] button[aria-checked="true"],
+[data-testid="stButtonGroupContainer"] button[aria-selected="true"],
+[data-testid="stButtonGroupContainer"] button[data-selected="true"] {
+    background-color: var(--color-text) !important;
+    border-color:     var(--color-text) !important;
+    color:            var(--color-surface) !important;
+}
+
+
+/* ═════════════════════════════════════════════
+   7. EXPANDERS, DIALOGS, METRIC CONTAINERS
+   Every container is a card: white, hairline, 16px.
+═════════════════════════════════════════════ */
+[data-testid="stExpander"] {
+    background:    var(--color-surface);
+    border:        1px solid var(--color-divider) !important;
+    border-radius: var(--radius-xl) !important;
+}
+
+[data-testid="stExpander"] details,
+[data-testid="stExpander"] summary {
+    border: none !important;
+    border-radius: var(--radius-xl) !important;
+}
+
+[data-testid="stExpander"] summary:hover {
+    background: var(--color-surface-2);
+}
+
+[data-testid="stDialog"] > div > div,
+[data-testid="stModal"] > div {
+    background:    var(--color-surface) !important;
+    border:        1px solid var(--color-divider) !important;
+    border-radius: var(--radius-xl) !important;
+    box-shadow:    var(--shadow-modal) !important;
+}
+
+[data-testid="metric-container"],
+[data-testid="stMetric"] {
+    background:    var(--color-surface);
+    border:        1px solid var(--color-divider);
+    border-radius: var(--radius-xl);
+    padding:       var(--space-4) var(--space-5) !important;
+}
+
+[data-testid="metric-container"] label,
+[data-testid="stMetric"] label,
+[data-testid="stMetricLabel"] p {
+    color:     var(--color-text-muted) !important;
+    font-size: var(--font-base) !important;
+}
+
+[data-testid="metric-container"] [data-testid="stMetricValue"],
+[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    color:       var(--color-text) !important;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* st.info / st.warning / st.error / st.success boxes */
+[data-testid="stAlert"] {
     border-radius: var(--radius-md) !important;
 }
 
-
-/* ═════════════════════════════════════════════
-   6. METRIC CONTAINERS (reports tab)
-   st.metric() renders with data-testid="metric-container".
-   We style it as a card with a left accent border.
-═════════════════════════════════════════════ */
-[data-testid="metric-container"] {
-    background:    var(--color-surface);
-    border-left:   4px solid var(--color-primary);
-    border-radius: var(--radius-sm);
-    padding:       var(--space-3) var(--space-4) !important;
+/* Section headings rendered by st.subheader / #### */
+.stApp h2, .stApp h3, .stApp h4 {
+    color:          var(--color-text);
+    font-weight:    600;
+    letter-spacing: -0.01em;
 }
-
-[data-testid="metric-container"] label {
-    color:     var(--color-text-muted) !important;
-    font-size: var(--font-sm) !important;
-}
-
-[data-testid="metric-container"] [data-testid="stMetricValue"] {
-    color:       var(--color-text) !important;
-    font-weight: 500;
-}
+.stApp h3 { font-size: var(--font-lg) !important; }
+.stApp h4 { font-size: var(--font-row) !important; }

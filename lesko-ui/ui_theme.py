@@ -12,8 +12,9 @@ import streamlit as st
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
+# Studiolo uses the system font stack (see tokens.css), so no webfont is
+# self-hosted or fetched — the old fonts.css (base64 Inter) is gone.
 _CORE_FILES = [
-    "fonts.css",       # self-hosted Inter (base64) — first, so @font-face is ready
     "tokens.css",
     "base.css",
     "components.css",

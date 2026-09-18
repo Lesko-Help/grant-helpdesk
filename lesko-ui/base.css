@@ -1,44 +1,35 @@
 /*
- * lesko-ui / base.css  —  Layer 2: Reset + Global Defaults
+ * lesko-ui / base.css  —  Layer 2: Reset + Global Defaults  (Studiolo)
  *
- * This file does two things:
- *   1. RESET — cancels out the browser's own default styles so every
- *      browser (Chrome, Firefox, Safari) starts from the same clean slate.
- *   2. GLOBAL DEFAULTS — sets the font and background that everything
- *      in the app inherits automatically.
+ * Sets the system font, the 14px base, and the few global states Studiolo
+ * cares about: the focus ring, text selection, hairline dividers.
  *
- * WHY THIS FILE EXISTS:
- *   Without a reset, Chrome might add 8px of margin around the body,
- *   Firefox might render headings at a different size, Safari might use
- *   a different default font. This file makes all of that consistent.
- *
- * IMPORTANT: This file must be loaded AFTER tokens.css — it uses
- *   var(--…) references that are defined there.
- *
- * IMPORTANT: This file must be loaded BEFORE components.css and all
- *   zone CSS files — it sets the baseline everything else builds on.
+ * IMPORTANT: load AFTER tokens.css, BEFORE components.css and zone CSS.
  */
 
-/* ─────────────────────────────────────────────
-   GLOBAL FONT
-   Sets Inter as the font for every single element
-   in the page. The * selector means "everything".
-   font-size: 14px makes 1rem = 14px throughout the
-   app — so all our rem values in tokens.css are
-   calculated from this base.
-───────────────────────────────────────────── */
+/* System font everywhere. 14px makes 1rem = 14px throughout the app. */
 html, body, * {
     font-family: var(--font-family);
     font-size: 14px;
 }
 
-/* ─────────────────────────────────────────────
-   DIVIDERS
-   The <hr> element is a horizontal line used as a
-   divider. By default browsers render it as a grey
-   line — we override it to use our surface color
-   so it feels like part of the design.
-───────────────────────────────────────────── */
+body {
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+    background: var(--selection-bg);
+}
+
+/* Keyboard focus is always visible, and always violet. */
+:focus-visible {
+    outline: 2px solid var(--brand-violet);
+    outline-offset: 2px;
+}
+
+/* Every divider is one hairline. */
 hr {
-    border-color: var(--color-divider);
+    border: 0;
+    border-top: 1px solid var(--color-divider);
 }

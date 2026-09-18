@@ -1,4 +1,13 @@
-/* Gap between KPI columns */
+/*
+ * grant-helpdesk / static / kpi.css  —  Zone 4: KPI cards  (Studiolo)
+ *
+ * A white card with a hairline; the four status cards carry a wash of their
+ * hue and the number in the deep twin. Colour never stands alone — the label
+ * names the state.
+ *
+ * DEPENDS ON: tokens.css
+ */
+
 [data-testid="stColumns"]:has(.kpi-card),
 [data-testid="stColumns"]:has(.kpi-goal-card) {
     gap: var(--space-3) !important;
@@ -7,24 +16,40 @@
 
 .kpi-card {
     background:    var(--color-surface);
+    border:        1px solid var(--color-divider);
     border-radius: var(--radius-xl);
-    padding:       var(--space-5) var(--space-6);
-    box-shadow:    var(--shadow-card);
-    min-height:    90px;
+    padding:       var(--space-4) var(--space-5);
+    min-height:    84px;
 }
 
 .kpi-label {
-    font-size:     var(--font-sm);
+    font-size:     var(--font-base);
     color:         var(--color-text-muted);
     font-weight:   500;
     margin-bottom: var(--space-2);
 }
 
 .kpi-value {
-    font-size:   var(--font-kpi-lg);
-    font-weight: 600;
-    color:       var(--color-text);
-    line-height: 1;
+    font-size:      var(--font-kpi-lg);
+    font-weight:    600;
+    letter-spacing: -0.02em;
+    color:          var(--color-text);
+    line-height:    1;
+    font-variant-numeric: tabular-nums;
 }
 
+/* Status variants — set by kpi_card(label, value, variant) in app.py. */
+.kpi-open     { background: var(--kpi-bg-open);     border-color: transparent; }
+.kpi-normal   { background: var(--kpi-bg-normal);   border-color: transparent; }
+.kpi-urgent   { background: var(--kpi-bg-urgent);   border-color: transparent; }
+.kpi-critical { background: var(--kpi-bg-critical); border-color: transparent; }
 
+.kpi-open .kpi-value     { color: var(--kpi-fg-open); }
+.kpi-normal .kpi-value   { color: var(--kpi-fg-normal); }
+.kpi-urgent .kpi-value   { color: var(--kpi-fg-urgent); }
+.kpi-critical .kpi-value { color: var(--kpi-fg-critical); }
+
+.kpi-open .kpi-label,
+.kpi-normal .kpi-label,
+.kpi-urgent .kpi-label,
+.kpi-critical .kpi-label { color: var(--color-text-soft); }

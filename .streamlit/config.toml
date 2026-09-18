@@ -3,10 +3,11 @@ port = 8501
 
 # Keep these in sync with lesko-ui/tokens.css — this styles Streamlit's own
 # chrome before the injected CSS loads, so mismatches cause a flash of off-brand.
+# tests/test_theme.py checks the four values below against the tokens.
 [theme]
 base            = "light"
-primaryColor    = "#445fb6"        # --color-primary (brand indigo)
-backgroundColor = "#e8eef6"        # --color-bg
-secondaryBackgroundColor = "#ffffff"  # --color-surface
-textColor       = "#111827"        # --color-text
-font            = "Inter, sans-serif"  # self-hosted via lesko-ui/fonts.css
+primaryColor    = "#543ff8"        # --brand-violet (primary action)
+backgroundColor = "#f6f7f9"        # --color-bg (canvas)
+secondaryBackgroundColor = "#ffffff"  # --color-surface (cards)
+textColor       = "#14161c"        # --color-text (ink)
+font            = "sans serif"     # system font stack, see tokens.css
