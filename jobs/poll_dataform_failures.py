@@ -6,9 +6,17 @@ since the last time this job ran, and writes one ERROR row per failure into
 grant_helpdesk.app_logs — the same table the portal already uses for all errors.
 
 Source field format: dataform.<repository-name>
+
+app_logs is a BigQuery table nobody watches in real time, which is exactly
+the kind of alert the global CLAUDE.md rule "Unattended code reports its own
+failure" warns about — so any action named in ALERTED_ACTIONS (currently just
+grant_ticket_labels, per the dedupe-ticket-tables brief) also gets a
+raillog.alert() call and this job exits non-zero for the run that found it.
+Every other action's failure still only reaches app_logs, same as before.
 """
 
 import os
+import sys
 import uuid
 from datetime import datetime, timezone, timedelta
 
@@ -16,6 +24,8 @@ import requests
 from google.auth import default
 from google.auth.transport.requests import Request
 from google.cloud import bigquery
+
+import raillog
 
 PROJECT     = os.environ.get("GOOGLE_CLOUD_PROJECT", "bigtribebuilders")
 REGION      = os.environ.get("DATAFORM_REGION", "europe-west1")
@@ -26,6 +36,14 @@ REPOSITORIES = [
     "grant-helpdesk",
     "community-manager-dashboard",
 ]
+
+# Dataform actions that page someone when they fail, per the brief's
+# "grant_ticket_labels's runnable has a BTB_ALERT alert" requirement. Add a
+# name here to alert on it too — everything else still lands in app_logs as
+# before, it just doesn't ring anyone's phone.
+ALERTED_ACTIONS = {
+    "grant_ticket_labels",
+}
 
 DATAFORM_BASE = f"https://dataform.googleapis.com/v1beta1/projects/{PROJECT}/locations/{REGION}/repositories"
 
@@ -103,6 +121,32 @@ def get_dataform_error(token: str, repo: str, inv_id: str) -> str:
         return f"(could not fetch detail: {e})"
 
 
+def get_failed_action_names(token: str, repo: str, inv_id: str) -> list[str]:
+    """Return the target names of this invocation's actions that themselves FAILED.
+
+    An invocation can report state=FAILED overall while only one action in it
+    actually broke — this is how we tell whether THIS failure was
+    grant_ticket_labels or something else in the same run. Like joining a
+    child "actions" table on the parent invocation and filtering to the
+    failed rows, except the join is a second API call, not a WHERE clause.
+    Best-effort: an empty list here just means we couldn't narrow it down, not
+    that nothing failed.
+    """
+    url = f"{DATAFORM_BASE}/{repo}/workflowInvocations/{inv_id}:query?pageSize=200"
+    try:
+        resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+        if not resp.ok:
+            return []
+        actions = resp.json().get("workflowInvocationActions", [])
+        return [
+            a["target"]["name"]
+            for a in actions
+            if a.get("state") == "FAILED" and "target" in a
+        ]
+    except Exception:
+        return []
+
+
 def log_failure(bq: bigquery.Client, repo: str, inv_id: str, start_at: datetime,
                 tags: list, detail: str) -> None:
     tags_str = ", ".join(tags) if tags else "—"
@@ -123,7 +167,8 @@ def main():
     bq    = bigquery.Client(project=PROJECT)
     token = get_token()
 
-    total_logged = 0
+    total_logged  = 0
+    alerted_names = []  # ALERTED_ACTIONS members seen failing this run, for the exit code
 
     for repo in REPOSITORIES:
         print(f"\n--- {repo} ---")
@@ -143,7 +188,18 @@ def main():
             print(f"  Logged: {inv['inv_id'][:20]}... | {detail[:80]}")
             total_logged += 1
 
+            failed_names = get_failed_action_names(token, repo, inv["inv_id"])
+            for name in ALERTED_ACTIONS.intersection(failed_names):
+                raillog.alert(
+                    name, "SOURCE_FAILED",
+                    f"Dataform action failed in {repo}, invocation {inv['inv_id']}: {detail}"
+                )
+                alerted_names.append(name)
+
     print(f"\nDone — {total_logged} failure(s) logged to app_logs.")
+    if alerted_names:
+        print(f"[ALERT] {len(alerted_names)} alerted action failure(s): {', '.join(alerted_names)}")
+        sys.exit(1)  # failure looks like failure — see the global CLAUDE.md rule
 
 
 if __name__ == "__main__":
