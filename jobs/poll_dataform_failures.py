@@ -129,22 +129,24 @@ def get_failed_action_names(token: str, repo: str, inv_id: str) -> list[str]:
     grant_ticket_labels or something else in the same run. Like joining a
     child "actions" table on the parent invocation and filtering to the
     failed rows, except the join is a second API call, not a WHERE clause.
-    Best-effort: an empty list here just means we couldn't narrow it down, not
-    that nothing failed.
+
+    Raises on any lookup failure instead of returning []. grant_ticket_labels
+    only gets its BTB_ALERT because this function named it — a silent []
+    here (the previous behaviour) would mean a real grant_ticket_labels
+    failure never alerts anyone, which is exactly the "caught an error and
+    exited 0" case the global CLAUDE.md rule forbids. The caller in main()
+    lets this propagate up to the outer try/except, which turns it into a
+    BTB_ALERT UNEXPECTED and a non-zero exit instead.
     """
     url = f"{DATAFORM_BASE}/{repo}/workflowInvocations/{inv_id}:query?pageSize=200"
-    try:
-        resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
-        if not resp.ok:
-            return []
-        actions = resp.json().get("workflowInvocationActions", [])
-        return [
-            a["target"]["name"]
-            for a in actions
-            if a.get("state") == "FAILED" and "target" in a
-        ]
-    except Exception:
-        return []
+    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+    resp.raise_for_status()
+    actions = resp.json().get("workflowInvocationActions", [])
+    return [
+        a["target"]["name"]
+        for a in actions
+        if a.get("state") == "FAILED" and "target" in a
+    ]
 
 
 def log_failure(bq: bigquery.Client, repo: str, inv_id: str, start_at: datetime,
@@ -167,8 +169,9 @@ def main():
     bq    = bigquery.Client(project=PROJECT)
     token = get_token()
 
-    total_logged  = 0
-    alerted_names = []  # ALERTED_ACTIONS members seen failing this run, for the exit code
+    total_logged     = 0
+    alerted_names    = []   # ALERTED_ACTIONS members seen failing this run, for the exit code
+    any_fetch_failed = False  # a repo we couldn't even list invocations for, also for the exit code
 
     for repo in REPOSITORIES:
         print(f"\n--- {repo} ---")
@@ -179,16 +182,29 @@ def main():
             failed = get_failed_invocations(token, repo, since)
         except Exception as e:
             print(f"  [ERROR] Could not fetch invocations: {e}")
+            # Was `continue` with only a print — the run then exited 0 and
+            # nobody saw it. A repo we can't even list failures for is
+            # itself something raillog.alert() exists to report.
+            raillog.alert(
+                "poll_dataform_failures", "SOURCE_FAILED",
+                f"Could not fetch Dataform invocations for {repo}: {e}"
+            )
+            any_fetch_failed = True
             continue
 
         print(f"Found {len(failed)} new failure(s)")
         for inv in failed:
             detail = get_dataform_error(token, repo, inv["inv_id"])
+            # Computed BEFORE log_failure: log_failure's row is what moves
+            # next run's watermark (last_logged_at), so if this lookup
+            # raises, the invocation is never marked logged and gets
+            # re-checked next run instead of silently skipping its alert.
+            failed_names = get_failed_action_names(token, repo, inv["inv_id"])
+
             log_failure(bq, repo, inv["inv_id"], inv["start_at"], inv["tags"], detail)
             print(f"  Logged: {inv['inv_id'][:20]}... | {detail[:80]}")
             total_logged += 1
 
-            failed_names = get_failed_action_names(token, repo, inv["inv_id"])
             for name in ALERTED_ACTIONS.intersection(failed_names):
                 raillog.alert(
                     name, "SOURCE_FAILED",
@@ -199,8 +215,17 @@ def main():
     print(f"\nDone — {total_logged} failure(s) logged to app_logs.")
     if alerted_names:
         print(f"[ALERT] {len(alerted_names)} alerted action failure(s): {', '.join(alerted_names)}")
+    if alerted_names or any_fetch_failed:
         sys.exit(1)  # failure looks like failure — see the global CLAUDE.md rule
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        # Anything that escapes main() (get_token, the BQ query,
+        # get_failed_action_names, ...) still exits non-zero on its own —
+        # this adds the BTB_ALERT line that a plain traceback doesn't carry,
+        # then re-raises so the exit code and the traceback are unchanged.
+        raillog.alert("poll_dataform_failures", "UNEXPECTED", repr(e))
+        raise
