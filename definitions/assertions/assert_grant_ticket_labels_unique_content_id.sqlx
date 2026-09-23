@@ -1,0 +1,11 @@
+config {
+  type: "assertion",
+  name: "assert_grant_ticket_labels_unique_content_id",
+  tags: ["helpdesk"],
+  description: "Fails if grant_ticket_labels has more than one row for the same content_id. Proven red 2026-09-14/23 against live data: 32 duplicate groups, 82 extra rows, still growing before the QUALIFY guards landed in grant_question_classifier and grant_ticket_labels. Goes green only after the approved one-time dedupe runs."
+}
+
+SELECT content_id, COUNT(*) AS row_count
+FROM ${ref("grant_ticket_labels")}
+GROUP BY content_id
+HAVING COUNT(*) > 1

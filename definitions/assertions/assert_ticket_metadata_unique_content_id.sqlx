@@ -1,0 +1,11 @@
+config {
+  type: "assertion",
+  name: "assert_ticket_metadata_unique_content_id",
+  tags: ["helpdesk"],
+  description: "Fails if ticket_metadata has more than one row for the same content_id. Proven red 2026-09-14/23 against live data: 26 duplicate groups, 282 extra rows, mostly from a one-time 2026-05-18 migration MERGE. Goes green only after the approved one-time dedupe runs; the writers were already safe (see grant_question_classifier and grant_ticket_labels for the actively-growing case)."
+}
+
+SELECT content_id, COUNT(*) AS row_count
+FROM ${ref("ticket_metadata")}
+GROUP BY content_id
+HAVING COUNT(*) > 1
