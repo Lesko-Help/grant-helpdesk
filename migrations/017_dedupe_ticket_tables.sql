@@ -15,6 +15,18 @@
 -- other row, and the table's own schema (column modes, description, any
 -- other option), is left completely alone.
 --
+-- Reviewed 2026-09-23 (see brief's "## Agentic review"): the kept-rows temp
+-- table and the row-count guard now live INSIDE each BEGIN TRANSACTION, not
+-- before it — built before the transaction, a concurrent app write to a
+-- duplicated content_id (e.g. update_ticket_meta) between the snapshot and
+-- the DELETE would be silently lost (DELETE removes the concurrent write,
+-- INSERT puts back the stale snapshot). Inside the transaction, BigQuery's
+-- isolation means that same concurrent write instead aborts the
+-- transaction — a conflict looks like a conflict, not a silent loss. Each
+-- transaction also now ASSERTs its own result before COMMIT, so a wrong
+-- result rolls back instead of only being visible in a commented-out query
+-- someone has to remember to run.
+--
 -- ── ORDER OF RUN — read before running ────────────────────────────────────
 --
 -- Run this ONLY after:
@@ -27,6 +39,26 @@
 -- old MERGE every 30 minutes and will re-insert duplicates as fast as this
 -- migration removes them. Running this migration before the fix compiles
 -- would look like it worked, then silently undo itself.
+--
+-- The writer fix only stops same-batch duplicates (35 of 38 live
+-- ticket_metadata groups, all sharing one classified_at). 3 classifier
+-- groups and 6 of the 32 grant_ticket_labels groups have different
+-- timestamps, pointing at overlapping runs (the scheduled workflow, the
+-- hourly release, and pytest's remote trigger hitting the same live repo) —
+-- QUALIFY cannot stop those. The uniqueKey(content_id) assertions below are
+-- the guard that catches any of those still happening after this runs, not
+-- the writer fix alone. Stopping pytest's remote trigger from hitting the
+-- live repo, and an absence/heartbeat alert for the hourly
+-- poll-dataform-failures job itself (rule 4 — silence is a failure), are
+-- both follow-ups the overseer owns; not built in this branch.
+--
+-- Also expect noise right after landing: every */30 grant-helpdesk-5min
+-- Dataform invocation between "writer fix compiles" and "this migration
+-- runs" will report state=FAILED (tagged `helpdesk`) because both
+-- assertions are red, and the project-wide "a Dataform invocation failed"
+-- policy will email each one. That's expected — nothing else is failing.
+-- Run this migration promptly after the first compile to stop it, and warn
+-- Martin those emails are coming.
 --
 -- ── The rule ───────────────────────────────────────────────────────────────
 --
@@ -72,8 +104,22 @@
 --     GROUP BY content_id HAVING COUNT(*) > 1
 --   );
 
+BEGIN TRANSACTION;
+
+-- Snapshot of "how many rows this table SHOULD have once every content_id
+-- is unique" — taken here, before the DELETE, so the post-COMMIT ASSERT
+-- below is checking against the state at transaction start, not recomputing
+-- from a table the DELETE already changed (which would trivially always
+-- match).
+CREATE TEMP TABLE ticket_metadata_expected_row_count AS
+SELECT COUNT(DISTINCT content_id) AS expected_rows
+FROM `bigtribebuilders.grant_helpdesk.ticket_metadata`;
+
 -- Computed once, read twice below (the DELETE's id list and the INSERT's
--- rows) so the two statements can't disagree with each other.
+-- rows) so the two statements can't disagree with each other. Inside the
+-- transaction (not before it — see the header comment) so a concurrent
+-- write to one of these content_ids aborts this transaction instead of
+-- being silently overwritten by a stale snapshot.
 CREATE TEMP TABLE ticket_metadata_kept_rows AS
 SELECT * EXCEPT(rn) FROM (
   SELECT
@@ -95,8 +141,6 @@ SELECT * EXCEPT(rn) FROM (
 )
 WHERE rn = 1;
 
-BEGIN TRANSACTION;
-
 -- Removes ALL rows (winner + losers) for each duplicated content_id — every
 -- non-duplicated row in the table is never touched by this statement.
 DELETE FROM `bigtribebuilders.grant_helpdesk.ticket_metadata`
@@ -107,9 +151,27 @@ WHERE content_id IN (SELECT content_id FROM ticket_metadata_kept_rows);
 INSERT INTO `bigtribebuilders.grant_helpdesk.ticket_metadata`
 SELECT * FROM ticket_metadata_kept_rows;
 
+-- Guards: a wrong result rolls back this transaction instead of landing
+-- silently and only being caught by a manual query someone has to remember
+-- to run.
+ASSERT (
+  SELECT COUNT(*) FROM (
+    SELECT content_id
+    FROM `bigtribebuilders.grant_helpdesk.ticket_metadata`
+    GROUP BY content_id
+    HAVING COUNT(*) > 1
+  )
+) = 0 AS 'ticket_metadata still has a duplicated content_id after dedupe';
+
+ASSERT (
+  SELECT COUNT(*) FROM `bigtribebuilders.grant_helpdesk.ticket_metadata`
+) = (SELECT expected_rows FROM ticket_metadata_expected_row_count)
+  AS 'ticket_metadata row count does not match its pre-delete distinct content_id count';
+
 COMMIT TRANSACTION;
 
--- Sanity check after — expect 7,084 rows, 0 duplicate content_ids:
+-- Sanity check after — expect 7,084 rows, 0 duplicate content_ids (now also
+-- enforced by the ASSERTs above, not just this manual query):
 --
 --   SELECT COUNT(*) AS total, COUNT(DISTINCT content_id) AS distinct_ids
 --   FROM `bigtribebuilders.grant_helpdesk.ticket_metadata`;
@@ -123,6 +185,12 @@ COMMIT TRANSACTION;
 --     FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
 --     GROUP BY content_id HAVING COUNT(*) > 1
 --   );
+
+BEGIN TRANSACTION;
+
+CREATE TEMP TABLE grant_ticket_labels_expected_row_count AS
+SELECT COUNT(DISTINCT content_id) AS expected_rows
+FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels`;
 
 CREATE TEMP TABLE grant_ticket_labels_kept_rows AS
 SELECT * EXCEPT(rn) FROM (
@@ -144,13 +212,25 @@ SELECT * EXCEPT(rn) FROM (
 )
 WHERE rn = 1;
 
-BEGIN TRANSACTION;
-
 DELETE FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
 WHERE content_id IN (SELECT content_id FROM grant_ticket_labels_kept_rows);
 
 INSERT INTO `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
 SELECT * FROM grant_ticket_labels_kept_rows;
+
+ASSERT (
+  SELECT COUNT(*) FROM (
+    SELECT content_id
+    FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
+    GROUP BY content_id
+    HAVING COUNT(*) > 1
+  )
+) = 0 AS 'grant_ticket_labels still has a duplicated content_id after dedupe';
+
+ASSERT (
+  SELECT COUNT(*) FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
+) = (SELECT expected_rows FROM grant_ticket_labels_expected_row_count)
+  AS 'grant_ticket_labels row count does not match its pre-delete distinct content_id count';
 
 COMMIT TRANSACTION;
 
@@ -192,8 +272,14 @@ COMMIT TRANSACTION;
 
 -- ── Undo ───────────────────────────────────────────────────────────────────
 --
--- Restores the pre-dedupe tables exactly, from the untouched backups. Only
--- if something looks wrong after running this migration.
+-- Restores ONLY the content_ids this migration touched, from the untouched
+-- backups — not a full-table WHERE TRUE swap (review finding #6: that would
+-- also discard every app write either table received after the backup was
+-- taken, e.g. update_ticket_meta or set_ticket_assignee). The scope is
+-- exactly the content_ids that had duplicates in the backup, which is also
+-- exactly the set this migration's DELETE + INSERT touched — every
+-- non-duplicated row was never part of this migration and so is never part
+-- of the Undo either.
 --
 -- NOT a CREATE OR REPLACE TABLE ... AS SELECT from the backup — checked live
 -- and the backups themselves (made via CREATE TABLE ... AS SELECT * FROM the
@@ -204,17 +290,41 @@ COMMIT TRANSACTION;
 -- would carry that data faithfully but silently reintroduce both schema
 -- regressions into the live table. Same DELETE + INSERT shape as the
 -- migration itself avoids that, because it never recreates the live table —
--- only replaces its rows, so its existing schema (REQUIRED mode,
--- description) is never touched:
+-- only replaces the rows it's scoped to, so the table's existing schema
+-- (REQUIRED mode, description) is never touched:
 --
 --   BEGIN TRANSACTION;
---   DELETE FROM `bigtribebuilders.grant_helpdesk.ticket_metadata` WHERE TRUE;
+--   DELETE FROM `bigtribebuilders.grant_helpdesk.ticket_metadata`
+--   WHERE content_id IN (
+--     SELECT content_id
+--     FROM `bigtribebuilders.grant_helpdesk.ticket_metadata_backup_20260923`
+--     GROUP BY content_id
+--     HAVING COUNT(*) > 1
+--   );
 --   INSERT INTO `bigtribebuilders.grant_helpdesk.ticket_metadata`
---   SELECT * FROM `bigtribebuilders.grant_helpdesk.ticket_metadata_backup_20260923`;
+--   SELECT * FROM `bigtribebuilders.grant_helpdesk.ticket_metadata_backup_20260923`
+--   WHERE content_id IN (
+--     SELECT content_id
+--     FROM `bigtribebuilders.grant_helpdesk.ticket_metadata_backup_20260923`
+--     GROUP BY content_id
+--     HAVING COUNT(*) > 1
+--   );
 --   COMMIT TRANSACTION;
 --
 --   BEGIN TRANSACTION;
---   DELETE FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels` WHERE TRUE;
+--   DELETE FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
+--   WHERE content_id IN (
+--     SELECT content_id
+--     FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels_backup_20260923`
+--     GROUP BY content_id
+--     HAVING COUNT(*) > 1
+--   );
 --   INSERT INTO `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
---   SELECT * FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels_backup_20260923`;
+--   SELECT * FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels_backup_20260923`
+--   WHERE content_id IN (
+--     SELECT content_id
+--     FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels_backup_20260923`
+--     GROUP BY content_id
+--     HAVING COUNT(*) > 1
+--   );
 --   COMMIT TRANSACTION;
