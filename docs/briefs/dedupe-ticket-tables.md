@@ -20,8 +20,12 @@ Stop ticket_metadata and grant_ticket_labels from creating duplicate rows, back 
    Martin approves the exact row list (via the overseer) — this session STOPS
    and reports before running it.
 5. `grant_ticket_labels`'s runnable has a BTB_ALERT alert (structured JSON,
-   severity ERROR, matching the deploy-alerts.sh log-match policy), proven to
-   fire by breaking it on purpose once and confirming the email arrived.
+   severity ERROR, matching the deploy-alerts.sh log-match policy). Per
+   Martin's 2026-09-23 call ("land first, I deploy"), the fire-proof runs
+   AFTER landing: the overseer deploys the job from `main`, breaks it once on
+   purpose, and confirms the email — not this worktree session. This
+   worktree's part of #5 is done once the alert kit is committed and the
+   policy exists live (it does — see State).
 
 ## May touch
 
@@ -233,14 +237,15 @@ expected to go green (after the approved delete actually runs).
   heredoc-escaping bug from the previous checkpoint is fixed and verified,
   not just fixed.
 
-**In flight — blocked, waiting on the overseer/Martin:**
-- Deploy question: proving the grant_ticket_labels alert fires needs a real
-  BTB_ALERT line from the LIVE deployed `poll-dataform-failures` Cloud Run
-  Job (Monitoring's filter matches on `resource.labels.job_name`; a local
-  run can't reach that). Sent to `helpdesk-opzichter [a6904a]` (msg_id
-  373c0eed-ecb8-4560-abbf-63479079d201). Reply received: overseer is taking
-  it to Martin, **do not deploy anything to production until further word.**
-  This is the only remaining blocker on Done-when #5.
+**Resolved — deploy question:** proving the grant_ticket_labels alert fires
+needs a real BTB_ALERT line from the LIVE deployed `poll-dataform-failures`
+Cloud Run Job (Monitoring's filter matches on `resource.labels.job_name`; a
+local run can't reach that), so it can only happen after the job is deployed
+from `main`. Martin's answer (via the overseer, 2026-09-23): "Land first, I
+deploy." This worktree session never deploys anything to production — it
+lands the alert kit (done, see above) and reports the exact deploy + break-it
+steps in its final report; the overseer runs them from `main` after landing.
+See Done-when #5 above.
 
 **Done this turn — ticket_metadata/grant_ticket_labels dedupe:**
 - Martin's decision (relayed by the overseer): pure newest-wins for the 4
@@ -287,24 +292,23 @@ expected to go green (after the approved delete actually runs).
   snapshots of the live tables, same pattern as migration 016's
   `recovery_snapshot_20260820`.
 
+**Done this turn — migration written, not run:**
+- `migrations/017_dedupe_ticket_tables.sql` — `CREATE OR REPLACE TABLE ... AS
+  SELECT * EXCEPT(rn) FROM (... ROW_NUMBER() ...) WHERE rn = 1` for both
+  tables, `ORDER BY updated_at DESC` for ticket_metadata (timestamp-safe, no
+  secondary key needed), `ORDER BY labeled_at DESC, TO_JSON_STRING(t) DESC`
+  for grant_ticket_labels (the 2 genuine ties). Follows migration 016's
+  format. NOT run. Expected row counts after running, measured live
+  2026-09-23: ticket_metadata 7,366 -> 7,084 rows; grant_ticket_labels 5,894
+  -> 5,812 rows (re-check before running if either table has changed since).
+
 **Next:**
-1. Write (do NOT run) `migrations/017_dedupe_ticket_tables.sql`: for each
-   table, `CREATE OR REPLACE TABLE ... AS SELECT * EXCEPT(rn) FROM (SELECT
-   *, ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY <timestamp> DESC
-   [, TO_JSON_STRING(t) DESC for grant_ticket_labels]) AS rn FROM ...)
-   WHERE rn = 1` — BigQuery has no row-level DELETE without a unique key, so
-   replace-with-deduplicated-select is the equivalent operation; note that
-   explicitly in the migration's header comment, same style as migration
-   016's comment blocks. Follow migration 016's format (numbered steps,
-   sanity-check queries, an Undo section referencing the two backup tables
-   above).
-2. STOP — report to the overseer: both backup table names, the exact
-   before/after row counts per table, and the two grant_ticket_labels
-   tiebreak picks above, for Martin's explicit approval before the DELETE
-   (i.e. before the CREATE OR REPLACE) ever runs. Do not run it unprompted.
-3. Once the deploy question above is answered: deploy the alert-kit job
-   code (only if authorized) and break `grant_ticket_labels` on purpose once
-   to confirm the email actually arrives — the last piece of Done-when #5.
+1. STOP — report to the overseer per this turn's instruction: both backup
+   table names, the exact before/after row counts per table, the two
+   grant_ticket_labels tiebreak picks, and the deploy + break-it-on-purpose
+   commands for Done-when #5 (for the overseer to run from `main` after
+   landing, per Martin's "land first, I deploy"). Do not run the migration,
+   and do not deploy anything, from this worktree.
 
 **Traps (dated, old ones stay):**
 - 2026-08-19: Dataform compiles from GitHub main hourly; nothing here
