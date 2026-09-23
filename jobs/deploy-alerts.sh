@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+# One alert policy: page Martin when poll_dataform_failures.py logs a
+# BTB_ALERT line, per docs/briefs/dedupe-ticket-tables.md's requirement that
+# grant_ticket_labels gets an alert proven to fire.
+#
+# NOT A NEW PATTERN — this project (bigtribebuilders) already has an
+# identical policy for a different job: "BTB-ALERT bigtribebuilders —
+# cerbo-logger reported a BTB_ALERT" (id 6770814786273898596), which matches
+# textPayload/jsonPayload.message:"BTB_ALERT" scoped to
+# resource.labels.job_name="cerbo-logger". This script creates the same
+# shape scoped to job_name="poll-dataform-failures" instead. No new log
+# metric needed — a conditionMatchedLog policy watches Cloud Logging
+# directly, the same way the cerbo-logger one does.
+#
+# WHY NOT THE EXISTING PROJECT-WIDE POLICIES INSTEAD:
+#   "a Dataform invocation failed"       — fires on ANY repo's ANY action
+#                                           failing, not specifically on
+#                                           grant_ticket_labels, and carries
+#                                           no repo-specific runbook.
+#   "any Cloud Run job execution failed" — fires on the job's PROCESS exiting
+#                                           non-zero, which also happens for
+#                                           actions never in ALERTED_ACTIONS
+#                                           (poll_dataform_failures.py can
+#                                           exit 1 for reasons unrelated to
+#                                           grant_ticket_labels).
+# Both already exist and still apply — two alerts on one real failure is
+# fine, per the "any Cloud Run job execution failed" policy's own
+# documentation. This script adds the one thing neither covers: a policy
+# that names grant_ticket_labels specifically, via the BTB_ALERT text
+# raillog.alert() writes.
+#
+# Idempotent: find_policy/apply_policy below are lifted near-verbatim from
+# lesko-questions-zone/deploy-alerts.sh — same page-walk-safe lookup, same
+# whole-shape reconcile (condition + documentation + alertStrategy, not just
+# the filter) so a later edit here can't silently stop reaching the live
+# policy. Re-running this script is always safe.
+set -euo pipefail
+
+PROJECT="${PROJECT:-bigtribebuilders}"
+JOB="${JOB:-poll-dataform-failures}"
+CHANNEL_NAME="${CHANNEL_NAME:-Martin (email)}"
+
+TOKEN="$(gcloud auth print-access-token)"
+API="https://monitoring.googleapis.com/v3/projects/${PROJECT}"
+
+CHANNEL=$(curl -s -H "Authorization: Bearer $TOKEN" "${API}/notificationChannels" \
+  | python3 -c "
+import json,sys
+name='''${CHANNEL_NAME}'''
+for c in json.load(sys.stdin).get('notificationChannels',[]):
+    if c.get('displayName')==name: print(c['name']); break")
+[ -n "$CHANNEL" ] || { echo "no notification channel named '${CHANNEL_NAME}' in ${PROJECT} — not creating one, fix by hand"; exit 1; }
+echo "==> routing to ${CHANNEL}"
+
+# find_policy DISPLAYNAME — the live alertPolicy JSON with this displayName,
+# or empty if none exists yet. SQL analogy: SELECT ... WHERE display_name = ?
+# LIMIT 1 — except this "table" is over the network and can fail without
+# being empty, so a malformed body, an {"error": ...} envelope, an ambiguous
+# multi-row match, or a page walk that never terminates all exit 1 instead of
+# printing as "not found" (caught by `set -euo pipefail`).
+ALERT_POLICY_LIST_MAX_PAGES="${ALERT_POLICY_LIST_MAX_PAGES:-50}"
+
+find_policy() {
+  local title="$1"
+  python3 - "$TOKEN" "$API" "$title" "$ALERT_POLICY_LIST_MAX_PAGES" <<'PY'
+import json
+import subprocess
+import sys
+
+token, api, title, max_pages = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+matches = []
+page_token = None
+page = 0
+while True:
+    page += 1
+    if page > max_pages:
+        sys.stderr.write(
+            "ERROR: alertPolicies list for %r did not finish after %d pages "
+            "(nextPageToken still present) — stopping instead of looping "
+            "forever\n" % (title, max_pages))
+        sys.exit(1)
+    cmd = ["curl", "-s", "-G", "-H", "Authorization: Bearer %s" % token,
+           "--data-urlencode", 'filter=display_name="%s"' % title]
+    if page_token:
+        cmd += ["--data-urlencode", "pageToken=%s" % page_token]
+    cmd.append("%s/alertPolicies" % api)
+    body = subprocess.run(cmd, capture_output=True, text=True).stdout
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(
+            "ERROR: alertPolicies list for %r was not valid JSON: %s\n" % (title, e))
+        sys.exit(1)
+    if "error" in data:
+        sys.stderr.write(
+            "ERROR: alertPolicies list for %r failed: %s\n"
+            % (title, data["error"].get("message", data["error"])))
+        sys.exit(1)
+    matches += [p for p in data.get("alertPolicies", []) if p.get("displayName") == title]
+    if len(matches) > 1:
+        sys.stderr.write(
+            "ERROR: alertPolicies list for %r returned more than one policy "
+            "with that name — ambiguous, stopping\n" % title)
+        sys.exit(1)
+    page_token = data.get("nextPageToken")
+    if not page_token:
+        break
+
+if matches:
+    print(json.dumps(matches[0]))
+PY
+}
+
+# apply_policy TITLE PAYLOAD — create-or-reconcile-in-place. Compares the
+# WHOLE live condition (not just its filter) plus documentation and
+# alertStrategy, so an edit to any of those actually reaches the live policy
+# on a re-run instead of being masked by a filter-only match.
+apply_policy() {
+  local title="$1" payload="$2"
+  local existing
+  existing=$(find_policy "$title") || exit 1
+  if [ -z "$existing" ]; then
+    echo "==> creating '$title'"
+    local response
+    response=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -d "$payload" "${API}/alertPolicies")
+    echo "$response" | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+if 'error' in d:
+    print('   ERROR: ' + d['error']['message'])
+    print('   re-run this script before retrying by hand — it checks find_policy() first')
+    sys.exit(1)
+print('   created')
+"
+    return
+  fi
+
+  local same
+  same=$(python3 -c "
+import json, sys
+existing, want = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+def cond_sans_name(p):
+    c = dict(p.get('conditions', [{}])[0])
+    c.pop('name', None)
+    return c
+same = (cond_sans_name(existing) == cond_sans_name(want)
+        and existing.get('alertStrategy') == want['alertStrategy']
+        and existing.get('documentation') == want['documentation'])
+print('True' if same else 'False')
+" "$existing" "$payload")
+  if [ "$same" = "True" ]; then
+    echo "==> '$title' exists and matches — leaving it"
+    return
+  fi
+
+  echo "==> '$title' exists but has drifted from this file — patching"
+  local pname patch_body response
+  pname=$(printf '%s' "$existing" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
+  patch_body=$(python3 -c "
+import json, sys
+existing, want = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+# Keep the existing condition's own name — that is what makes this an UPDATE
+# rather than a delete-and-recreate, so the policy keeps its id and any
+# already-open incident stays attached to it.
+cond = existing.get('conditions', [{}])[0]
+name = cond.get('name')
+cond.clear()
+cond.update(want['conditions'][0])
+if name:
+    cond['name'] = name
+print(json.dumps({
+    'conditions': [cond],
+    'alertStrategy': want['alertStrategy'],
+    'documentation': want['documentation'],
+}))
+" "$existing" "$payload")
+  response=$(curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -d "$patch_body" \
+    "https://monitoring.googleapis.com/v3/${pname}?updateMask=conditions,alertStrategy,documentation")
+  echo "$response" | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+if 'error' in d:
+    print('   ERROR: ' + d['error']['message']); sys.exit(1)
+print('   patched')
+"
+}
+
+# ── the policy ────────────────────────────────────────────────────────────
+# Built via os.environ + a QUOTED heredoc (<<'PY'), not ${...} interpolation
+# into a JSON-inside-Python-inside-bash string: the documentation text below
+# needs literal double quotes (a gcloud command in a code block), and
+# escaping those through three nested layers is exactly what produced a
+# SyntaxError the first time this was written straight with ${JOB}-style
+# substitution. Passing values as env vars sidesteps the layering entirely —
+# the heredoc body is inert text as far as bash is concerned.
+TITLE="BTB-ALERT ${PROJECT} — ${JOB} reported a BTB_ALERT"
+PAYLOAD=$(TITLE="$TITLE" JOB="$JOB" PROJECT="$PROJECT" CHANNEL="$CHANNEL" python3 - <<'PY'
+import json
+import os
+
+title, job, project, channel = (
+    os.environ["TITLE"], os.environ["JOB"], os.environ["PROJECT"], os.environ["CHANNEL"])
+
+content = (
+    f"{job} called raillog.alert() (jobs/raillog.py). Codes: AUTH_FAILED, "
+    "SOURCE_FAILED, SOURCE_EMPTY, ASSERTION_FAILED, QUOTA, STALE, "
+    "UNEXPECTED — the code is in the message itself.\n\n"
+    "As of 2026-09-23 the only action wired into ALERTED_ACTIONS is "
+    "grant_ticket_labels (jobs/poll_dataform_failures.py) — this alert "
+    "means that Dataform action failed, not any other action in "
+    "grant-helpdesk or community-manager-dashboard.\n\n"
+    "Read the full line in Cloud Logging:\n"
+    f"  gcloud logging read 'resource.type=\"cloud_run_job\" AND "
+    f'resource.labels.job_name="{job}" AND (textPayload:"BTB_ALERT" '
+    f"OR jsonPayload.message:\"BTB_ALERT\")' --project {project} --limit 5\n\n"
+    "The message names the Dataform invocation id and a console link — "
+    "open it to see which grant_ticket_labels row(s) failed."
+)
+
+print(json.dumps({
+    "displayName": title,
+    "documentation": {
+        "subject": title,
+        "content": content,
+        "mimeType": "text/markdown"},
+    "conditions": [{
+        "displayName": "a BTB_ALERT line appeared in the job logs",
+        "conditionMatchedLog": {
+            "filter": (
+                f'resource.type="cloud_run_job" AND resource.labels.job_name="{job}" '
+                'AND (textPayload:"BTB_ALERT" OR jsonPayload.message:"BTB_ALERT")')}}],
+    "combiner": "OR", "enabled": True,
+    "alertStrategy": {
+        "notificationRateLimit": {"period": "1800s"},
+        "autoClose": "604800s"},
+    "notificationChannels": [channel]}))
+PY
+)
+
+apply_policy "$TITLE" "$PAYLOAD"
+
+echo
+echo "Policies now watching ${JOB} in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"
+curl -s -H "Authorization: Bearer $TOKEN" "${API}/alertPolicies" | python3 -c "
+import json,sys
+for p in json.load(sys.stdin).get('alertPolicies',[]):
+    print('  -', p.get('displayName'))"
