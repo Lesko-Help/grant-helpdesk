@@ -222,69 +222,89 @@ expected to go green (after the approved delete actually runs).
   pattern, proven RED against live data (ticket_metadata 26 dup groups/282
   extra rows; grant_ticket_labels 32 dup groups/82 extra rows).
 
-**Done, NOT yet committed (alert kit):**
-- `jobs/raillog.py` (new): BTB_ALERT emitter, `alert(runnable, code, message)`.
-- `jobs/poll_dataform_failures.py`: `ALERTED_ACTIONS = {"grant_ticket_labels"}`,
-  `get_failed_action_names()` (queries Dataform's
-  `workflowInvocations/{id}:query`, confirmed live against invocation
-  `1779255900-1c7deac7-8054-4e4c-8bba-ad759513f976` — 11 actions, 1 FAILED,
-  correctly narrowed), wired into `main()`, `sys.exit(1)` when an alerted
-  action fails.
-- `jobs/Dockerfile.poll_dataform`: `COPY poll_dataform_failures.py raillog.py .`
-- `jobs/deploy-alerts.sh` (new, `jobs/deploy-alerts.sh:196-238`): single
-  `conditionMatchedLog` policy mirroring the project's existing
-  "cerbo-logger reported a BTB_ALERT" policy, scoped to
-  `job_name="poll-dataform-failures"`. `find_policy`/`apply_policy` lifted
-  near-verbatim from `lesko-questions-zone/deploy-alerts.sh` (page-walk-safe
-  lookup, whole-shape reconcile, PATCH-in-place keeping the condition's own
-  `name`). Hit and fixed a real bug this turn: the payload-building heredoc
-  was originally unquoted (`<<PY`) mixing bash `${VAR}` interpolation with
-  Python strings that needed literal `\"` — bash only treats backslash as
-  special before `$`, `` ` ``, `\`, newline in an unquoted heredoc, so the
-  `\"` sequences arrived at Python mangled → `SyntaxError: unexpected
-  character after line continuation character`. Fixed by switching to a
-  quoted heredoc (`<<'PY'`, zero bash expansion) and passing `TITLE`/`JOB`/
-  `PROJECT`/`CHANNEL` through `os.environ` instead. **Not yet re-run since
-  the fix** — first concrete next step.
+**Done, committed (alert kit, `git log`: d2f39fd, 1abd401, on top of the above):**
+- `jobs/raillog.py`, `jobs/poll_dataform_failures.py` (`ALERTED_ACTIONS`,
+  `get_failed_action_names()`, `sys.exit(1)`), `jobs/Dockerfile.poll_dataform`
+  — commit 1abd401.
+- `jobs/deploy-alerts.sh` — commit d2f39fd. Verified LIVE against
+  `bigtribebuilders`: first run created "BTB-ALERT bigtribebuilders —
+  poll-dataform-failures reported a BTB_ALERT"; second run recognized it as
+  matching and left it alone (idempotent, confirmed both directions). The
+  heredoc-escaping bug from the previous checkpoint is fixed and verified,
+  not just fixed.
 
 **In flight — blocked, waiting on the overseer/Martin:**
-- Sent `helpdesk-opzichter [a6904a]` a report (msg_id
-  1c04b3fc-b219-4552-952c-df0abfaf0399) on `ticket_metadata`'s 4 real
-  conflicts (content_ids `comment_146961416`, `comment_147058507`,
-  `comment_147074419`, `post_101109210` — older row has an open ticket
-  assigned to a coach, newer migration row is closed with `assigned_to`
-  blank). Asked Martin: (a) pure newest-wins, (b) backfill `assigned_to` on
-  those 4, or (c) other. **No reply yet — do not compute the row list or
-  write the migration until it arrives.** `grant_ticket_labels`'s 2 minor
-  conflicts need no decision (newest-`labeled_at`-wins is fine).
-- New question reasoned through but NOT yet sent: proving the
-  grant_ticket_labels alert fires (Done-when #5) needs a real BTB_ALERT line
-  in live Cloud Logging under `resource.labels.job_name=
-  "poll-dataform-failures"` — a local Python run's stdout never reaches
-  that resource type/label. That means deploying this session's modified
-  job code (raillog.py/poll_dataform_failures.py/Dockerfile) to the live
-  production Cloud Run Job. The project CLAUDE.md only names `deploy.sh`
-  (the Streamlit app) as off-limits and this repo has no existing job-deploy
-  script, so it's not explicitly forbidden — but it's a shared-production
-  action, so leaning toward asking the overseer before running any job
-  deploy, same as the ticket_metadata question. Not sent yet.
+- Deploy question: proving the grant_ticket_labels alert fires needs a real
+  BTB_ALERT line from the LIVE deployed `poll-dataform-failures` Cloud Run
+  Job (Monitoring's filter matches on `resource.labels.job_name`; a local
+  run can't reach that). Sent to `helpdesk-opzichter [a6904a]` (msg_id
+  373c0eed-ecb8-4560-abbf-63479079d201). Reply received: overseer is taking
+  it to Martin, **do not deploy anything to production until further word.**
+  This is the only remaining blocker on Done-when #5.
+
+**Done this turn — ticket_metadata/grant_ticket_labels dedupe:**
+- Martin's decision (relayed by the overseer): pure newest-wins for the 4
+  conflicting ticket_metadata tickets (`comment_146961416`,
+  `comment_147058507`, `comment_147074419`, `post_101109210`) — keep the
+  2026-05-18 `system_migration_20260518` row (closed, no coach) as-is, do
+  NOT backfill `assigned_to`. Newest-wins also applies to
+  `grant_ticket_labels`. Don't chase the 5-vs-4 discrepancy; report "found 4
+  today."
+- Re-ran the live dup-group counts to confirm nothing drifted since 2026-09-14:
+  ticket_metadata still 26 groups/282 extra rows; grant_ticket_labels still
+  32 groups/82 extra rows.
+- Found the 5th group behind the "5 vs 4" drift: `comment_147732168` in
+  ticket_metadata — 2 rows, identical except `updated_at` 7s apart, empty
+  `assigned_to` on both. Newest-wins loses nothing here; not a real
+  conflict, doesn't need Martin's attention.
+- Checked all 26 ticket_metadata dup groups for tie risk: only the 5 above
+  are non-identical; the other 21 are pure repeated-identical-row bugs
+  (e.g. `comment_147039001` has 16 byte-identical rows) where "which copy
+  survives" is moot. Verified the 4 real-conflict tickets' two timestamps
+  are never tied (April row vs. 2026-05-18 16:48:05 migration row) — plain
+  `ORDER BY updated_at DESC` picks Martin's chosen row unambiguously, no
+  special-casing needed in SQL.
+- Checked all 32 grant_ticket_labels dup groups: 8 are non-identical (not 2
+  as the earlier brief said — that was an undercount). 6 have distinct
+  `labeled_at` (unambiguous newest-wins: `comment_148453992`,
+  `comment_148454159`, `post_106668318`, `post_106668333`,
+  `post_107303423`, `post_107303439`). 2 are genuinely tied on `labeled_at`
+  with DIFFERENT content — `comment_147039001` (4 rows: 1×
+  easy/Community Support, 3× inappropriate/Other) and `comment_147274739`
+  (2 rows: null/Community Support vs null/Other). A plain
+  `ORDER BY labeled_at DESC` is non-deterministic on a tie in BigQuery, so
+  added a secondary deterministic tiebreak, `TO_JSON_STRING(t) DESC` —
+  confirmed it picks `inappropriate/Other` for `comment_147039001`
+  (matches the 3-of-4 majority) and `domain='Other'` for
+  `comment_147274739` (arbitrary but deterministic and documented). Not
+  re-escalated: overseer already blessed newest-wins for this table as
+  low-stakes AI-label metadata.
+- Created both backups (explicitly authorized by the overseer's message —
+  "go ahead with the backups... then stop before the DELETE"):
+  `bigtribebuilders.grant_helpdesk.ticket_metadata_backup_20260923` (7,366
+  rows) and `bigtribebuilders.grant_helpdesk.grant_ticket_labels_backup_20260923`
+  (5,894 rows). Both are non-destructive `CREATE TABLE ... AS SELECT *`
+  snapshots of the live tables, same pattern as migration 016's
+  `recovery_snapshot_20260820`.
 
 **Next:**
-1. Re-run `bash jobs/deploy-alerts.sh`, confirm it creates/reconciles the
-   policy cleanly against live `bigtribebuilders` Monitoring (no more
-   SyntaxError).
-2. Before deploying job code to prove the alert fires: send the overseer the
-   open question above. Don't deploy unilaterally.
-3. Once verified/answered: commit the alert kit (raillog.py,
-   poll_dataform_failures.py, Dockerfile.poll_dataform, deploy-alerts.sh) —
-   one commit, and break `grant_ticket_labels` on purpose once the policy is
-   live to confirm the email actually arrives.
-4. Once the overseer replies on the ticket_metadata conflict: back up both
-   tables (`CREATE TABLE ... AS SELECT *`, timestamped, per migration 016's
-   `recovery_snapshot_20260820` pattern); compute the exact newest-wins row
-   list; write (not run) `migrations/017_dedupe_ticket_tables.sql`; STOP and
-   report backup table names + exact row list for Martin's approval before
-   anyone runs the DELETE.
+1. Write (do NOT run) `migrations/017_dedupe_ticket_tables.sql`: for each
+   table, `CREATE OR REPLACE TABLE ... AS SELECT * EXCEPT(rn) FROM (SELECT
+   *, ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY <timestamp> DESC
+   [, TO_JSON_STRING(t) DESC for grant_ticket_labels]) AS rn FROM ...)
+   WHERE rn = 1` — BigQuery has no row-level DELETE without a unique key, so
+   replace-with-deduplicated-select is the equivalent operation; note that
+   explicitly in the migration's header comment, same style as migration
+   016's comment blocks. Follow migration 016's format (numbered steps,
+   sanity-check queries, an Undo section referencing the two backup tables
+   above).
+2. STOP — report to the overseer: both backup table names, the exact
+   before/after row counts per table, and the two grant_ticket_labels
+   tiebreak picks above, for Martin's explicit approval before the DELETE
+   (i.e. before the CREATE OR REPLACE) ever runs. Do not run it unprompted.
+3. Once the deploy question above is answered: deploy the alert-kit job
+   code (only if authorized) and break `grant_ticket_labels` on purpose once
+   to confirm the email actually arrives — the last piece of Done-when #5.
 
 **Traps (dated, old ones stay):**
 - 2026-08-19: Dataform compiles from GitHub main hourly; nothing here
@@ -304,3 +324,11 @@ expected to go green (after the approved delete actually runs).
 - 2026-09-23: proving a Cloud Monitoring alert fires for a Cloud Run Job
   requires the log line to come from the real deployed job (resource
   type/labels must match) — a local script run can never trigger it.
+- 2026-09-23: BigQuery `ROW_NUMBER() OVER (... ORDER BY <ts> DESC)` is
+  non-deterministic on ties — harmless if the tied rows are byte-identical,
+  but silently picks an arbitrary one when they differ (2 of
+  grant_ticket_labels's 32 dup groups). Always add a secondary deterministic
+  tiebreak (e.g. `TO_JSON_STRING(t) DESC`) and check for ties before trusting
+  a newest-wins dedupe. BigQuery also has no row-level DELETE without a
+  unique key — dedupe via `CREATE OR REPLACE TABLE ... AS SELECT ... WHERE
+  rn = 1`, not a DELETE statement.
