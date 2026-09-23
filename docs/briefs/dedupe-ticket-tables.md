@@ -209,3 +209,94 @@ newest-wins row list including manual resolution of the 5 conflicting
 STOP and report to the overseer with backup table names + exact row list for
 Martin's approval; build and prove the alert kit; only then are assertions
 expected to go green (after the approved delete actually runs).
+
+## State (2026-09-23, this session — supersedes the "Still to do" paragraph above)
+
+**Done, committed or about to be committed this turn (nothing landed to git yet
+as of this writing — committing right after this edit):**
+- `definitions/intelligence/grant_question_classifier.sqlx`: added
+  `QUALIFY ROW_NUMBER() OVER (PARTITION BY c.content_id ORDER BY c.updated_at
+  DESC) = 1` to the final SELECT. Fixes the confirmed root cause: its old
+  `WHERE content_id NOT IN (SELECT content_id FROM self())` only screens
+  against rows already saved, not two rows for the same key arriving in the
+  same batch.
+- `definitions/intelligence/grant_ticket_labels.sqlx`: added the same
+  `QUALIFY ROW_NUMBER() OVER (PARTITION BY q.content_id ORDER BY
+  q.classified_at DESC) = 1` to the `questions` temp table's SELECT (line
+  ~47, just before the closing `;`). Its bug turned out to be one layer
+  downstream of `grant_question_classifier`, not independent — fixing that
+  table's dupes removes this one's actual source of new duplicates.
+- Both compile clean: `dataform compile` → 21 actions, no errors.
+- `definitions/assertions/assert_ticket_metadata_unique_content_id.sqlx` and
+  `assert_grant_ticket_labels_unique_content_id.sqlx` added (uniqueKey
+  pattern: `GROUP BY content_id HAVING COUNT(*) > 1`).
+- Proven RED against live data today via read-only `bq query` (not by
+  running the assertion through Dataform — no need, same SQL): ticket_metadata
+  26 dup groups / 282 extra rows; grant_ticket_labels 32 dup groups / 82 extra
+  rows. Matches the 2026-09-14 memory almost exactly.
+
+**In flight — blocked, waiting on the overseer/Martin:**
+- Sent `helpdesk-opzichter [a6904a]` a report (msg_id
+  1c04b3fc-b219-4552-952c-df0abfaf0399) flagging a judgment call: of
+  `ticket_metadata`'s 26 dup groups, 4 have a real conflict — content_ids
+  `comment_146961416`, `comment_147058507`, `comment_147074419`,
+  `post_101109210`. In each, the OLDER row (Apr 2026) has `status=''` (open)
+  and a coach in `assigned_to` (Amber Hawkins x2, Charity Spencer, Amber
+  Littlefield); the NEWER row (all four 2026-05-18 16:48:05, the
+  `system_migration_20260518` batch) has `status='closed'` but
+  `assigned_to` blank — the migration didn't carry the assignment forward.
+  Pure "newest wins" would silently drop these 4 coaches' assignments.
+  Asked Martin to pick: (a) pure newest-wins, (b) backfill `assigned_to`
+  from the older row on those 4, or (c) other. **Do not compute the final
+  delete row list or write the migration until this answer arrives.**
+  Also flagged: memory said 5 conflicting tickets, live data today shows
+  only 4 — unexplained drift, not chased further.
+  `grant_ticket_labels` also has 2 conflicting groups (`comment_147039001`,
+  `comment_147274739`, differing AI-generated `domain`/`difficulty`) — lower
+  stakes, newest-`labeled_at`-wins is fine there, no objection needed.
+  Backup-table creation and the migration file are NOT started — both need
+  the row-list decision first.
+
+**Next, once the overseer replies:**
+1. Take backups of both tables (`CREATE TABLE ... AS SELECT *`, timestamped
+   name, following the `recovery_snapshot_20260820` pattern in migration 016).
+2. Compute the exact newest-wins row list per Martin's answer.
+3. Write (not run) `migrations/017_dedupe_ticket_tables.sql` — write only,
+   per brief's "Done when" #4.
+4. STOP again and report the backup table names + exact row list for
+   Martin's approval before anyone runs the DELETE.
+5. Alert kit (raillog.py, deploy-alerts.sh, grant_ticket_labels alert) —
+   independent of the above, can be done in parallel. Was about to start:
+   found `lesko-provisioning/worker/raillog.py` (canonical) and
+   `dunning_executor/raillog.py` (committed copy) — but that module is built
+   for *outbound HTTP rail calls* (mn/recurly/paypal/gmail, `RAIL_ALERT`
+   marker, plain-text `logging.error`, no structured JSON). It predates and
+   does NOT match the global CLAUDE.md's newer (2026-09-14) `BTB_ALERT`
+   convention: structured JSON log line with `"severity": "ERROR"`,
+   `BTB_ALERT <repo>/<runnable> <CODE>: <message>`, codes from
+   {AUTH_FAILED, SOURCE_FAILED, SOURCE_EMPTY, ASSERTION_FAILED, QUOTA,
+   STALE, UNEXPECTED}. Was mid-search for an existing repo that already
+   implements the *new* BTB_ALERT convention as a template (grepped
+   `BTB_ALERT` across ~/Lesko, got hits in `getresponse/scripts/alerts.py`
+   and `LH-member-private-zone/zone_app/alert.py` — **not yet read either**).
+   Next action: read one of those two as the template, then write a small
+   `raillog.py` for grant-helpdesk (this repo has no outbound HTTP rail
+   callers, so it's just the BTB_ALERT emitter, no rail/code_for/bq_code
+   machinery), wire it into `jobs/poll_dataform_failures.py` for the
+   `grant_ticket_labels` action, adapt `deploy-alerts.sh` from
+   `lesko-provisioning/deploy-alerts.sh`, then break it on purpose once to
+   prove the email fires.
+
+**Traps (still current, dated):**
+- 2026-08-19: Dataform compiles from GitHub main hourly;
+  grant-helpdesk-5min runs every 30 min off the latest pinned compile.
+  Nothing here pushes to main — that's the overseer's.
+- 2026-08-20: pausing the workflow needs `releaseConfig` in the PATCH body
+  too; a full refresh needs `stg_grant_candidates` redeployed. Overseer's
+  call, not this session's.
+- 2026-08-20: `grant_tickets` LEFT JOINs `ticket_metadata` without
+  deduplicating (8,438 rows / 6,181 ids as of 2026-08-20) — only
+  `bq_reads.py`'s `QUALIFY` hides this today. Expect counts to shift once
+  the dedupe lands.
+- 2026-05-28: auto-mode blocks live BQ UPDATE/DELETE and workflow
+  enable/disable without Martin's per-statement approval.
