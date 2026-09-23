@@ -38,3 +38,11 @@ ${when(incremental(), `
     SELECT content_id FROM ${self()}
   )
 `)}
+
+-- Defends against a same-batch duplicate content_id (two source rows for one
+-- key in a single run): "NOT IN (SELECT ... FROM self())" only screens out
+-- keys already saved from a PRIOR run, so it can't stop two new rows for the
+-- same key arriving together in THIS run — same as a SQL window function
+-- being needed to collapse duplicates a plain WHERE can't. Keep only the row
+-- built from the freshest source content per content_id.
+QUALIFY ROW_NUMBER() OVER (PARTITION BY c.content_id ORDER BY c.updated_at DESC) = 1

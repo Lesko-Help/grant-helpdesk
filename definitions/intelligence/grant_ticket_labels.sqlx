@@ -44,7 +44,14 @@ WHERE q.is_question = TRUE
     SELECT content_id
     FROM `bigtribebuilders.grant_helpdesk.grant_ticket_labels`
     WHERE domain IS NOT NULL
-  );
+  )
+
+-- Defends against grant_question_classifier still holding a duplicate
+-- content_id (historical, or from a future race there): WHEN NOT MATCHED
+-- below only checks the target table, so two source rows for the same key
+-- would otherwise both insert. Keep one row per content_id, same guard as
+-- above.
+QUALIFY ROW_NUMBER() OVER (PARTITION BY q.content_id ORDER BY q.classified_at DESC) = 1;
 
 -- Step 2: run ML only on the materialised set, then merge results.
 MERGE `bigtribebuilders.grant_helpdesk.grant_ticket_labels` T
