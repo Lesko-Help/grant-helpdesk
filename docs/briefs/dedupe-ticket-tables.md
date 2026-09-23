@@ -216,99 +216,67 @@ expected to go green (after the approved delete actually runs).
 
 ## State (2026-09-23, this session — supersedes the "Still to do" paragraph above)
 
-**Done, committed (`git log`: bde729d, 61beeac, 720e7c8, on top of c2c6359):**
-- `definitions/intelligence/grant_question_classifier.sqlx` and
-  `grant_ticket_labels.sqlx` (61beeac): `QUALIFY ROW_NUMBER() OVER
-  (PARTITION BY content_id ORDER BY <its timestamp> DESC) = 1` fixes the
-  same-batch duplicate root cause. Compiles clean, 21 actions.
-- `definitions/assertions/assert_ticket_metadata_unique_content_id.sqlx` and
-  `assert_grant_ticket_labels_unique_content_id.sqlx` (bde729d): uniqueKey
-  pattern, proven RED against live data (ticket_metadata 26 dup groups/282
-  extra rows; grant_ticket_labels 32 dup groups/82 extra rows).
+**Done, committed, stable:**
+- Writer fix + assertions (`git log`: bde729d, 61beeac, 720e7c8): `QUALIFY
+  ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY <ts> DESC) = 1` in
+  `grant_question_classifier.sqlx` + `grant_ticket_labels.sqlx`; both
+  uniqueKey(content_id) assertions, proven RED live (ticket_metadata 26
+  groups/282 extra rows; grant_ticket_labels 32 groups/82 extra rows).
+- Alert kit (`git log`: d2f39fd, 1abd401): `raillog.py`,
+  `poll_dataform_failures.py` (`ALERTED_ACTIONS`, `sys.exit(1)`),
+  `Dockerfile.poll_dataform`, `deploy-alerts.sh`. Verified LIVE twice
+  (create, then idempotent no-op) against `bigtribebuilders` — policy
+  "BTB-ALERT bigtribebuilders — poll-dataform-failures reported a
+  BTB_ALERT" exists live now, routed to "Martin (email)".
 
-**Done, committed (alert kit, `git log`: d2f39fd, 1abd401, on top of the above):**
-- `jobs/raillog.py`, `jobs/poll_dataform_failures.py` (`ALERTED_ACTIONS`,
-  `get_failed_action_names()`, `sys.exit(1)`), `jobs/Dockerfile.poll_dataform`
-  — commit 1abd401.
-- `jobs/deploy-alerts.sh` — commit d2f39fd. Verified LIVE against
-  `bigtribebuilders`: first run created "BTB-ALERT bigtribebuilders —
-  poll-dataform-failures reported a BTB_ALERT"; second run recognized it as
-  matching and left it alone (idempotent, confirmed both directions). The
-  heredoc-escaping bug from the previous checkpoint is fixed and verified,
-  not just fixed.
+**Resolved — deploy ownership:** Martin, via the overseer: "Land first, I
+deploy." This worktree never deploys to production. It lands the alert kit
+(done) and hands the overseer exact deploy + break-it-on-purpose commands
+(sent in the report below); overseer runs them from `main` after landing,
+once Dataform recompiles.
 
-**Resolved — deploy question:** proving the grant_ticket_labels alert fires
-needs a real BTB_ALERT line from the LIVE deployed `poll-dataform-failures`
-Cloud Run Job (Monitoring's filter matches on `resource.labels.job_name`; a
-local run can't reach that), so it can only happen after the job is deployed
-from `main`. Martin's answer (via the overseer, 2026-09-23): "Land first, I
-deploy." This worktree session never deploys anything to production — it
-lands the alert kit (done, see above) and reports the exact deploy + break-it
-steps in its final report; the overseer runs them from `main` after landing.
-See Done-when #5 above.
-
-**Done this turn — ticket_metadata/grant_ticket_labels dedupe:**
-- Martin's decision (relayed by the overseer): pure newest-wins for the 4
-  conflicting ticket_metadata tickets (`comment_146961416`,
-  `comment_147058507`, `comment_147074419`, `post_101109210`) — keep the
-  2026-05-18 `system_migration_20260518` row (closed, no coach) as-is, do
-  NOT backfill `assigned_to`. Newest-wins also applies to
-  `grant_ticket_labels`. Don't chase the 5-vs-4 discrepancy; report "found 4
-  today."
-- Re-ran the live dup-group counts to confirm nothing drifted since 2026-09-14:
-  ticket_metadata still 26 groups/282 extra rows; grant_ticket_labels still
-  32 groups/82 extra rows.
-- Found the 5th group behind the "5 vs 4" drift: `comment_147732168` in
-  ticket_metadata — 2 rows, identical except `updated_at` 7s apart, empty
-  `assigned_to` on both. Newest-wins loses nothing here; not a real
-  conflict, doesn't need Martin's attention.
-- Checked all 26 ticket_metadata dup groups for tie risk: only the 5 above
-  are non-identical; the other 21 are pure repeated-identical-row bugs
-  (e.g. `comment_147039001` has 16 byte-identical rows) where "which copy
-  survives" is moot. Verified the 4 real-conflict tickets' two timestamps
-  are never tied (April row vs. 2026-05-18 16:48:05 migration row) — plain
-  `ORDER BY updated_at DESC` picks Martin's chosen row unambiguously, no
-  special-casing needed in SQL.
-- Checked all 32 grant_ticket_labels dup groups: 8 are non-identical (not 2
-  as the earlier brief said — that was an undercount). 6 have distinct
-  `labeled_at` (unambiguous newest-wins: `comment_148453992`,
-  `comment_148454159`, `post_106668318`, `post_106668333`,
-  `post_107303423`, `post_107303439`). 2 are genuinely tied on `labeled_at`
-  with DIFFERENT content — `comment_147039001` (4 rows: 1×
-  easy/Community Support, 3× inappropriate/Other) and `comment_147274739`
-  (2 rows: null/Community Support vs null/Other). A plain
-  `ORDER BY labeled_at DESC` is non-deterministic on a tie in BigQuery, so
-  added a secondary deterministic tiebreak, `TO_JSON_STRING(t) DESC` —
-  confirmed it picks `inappropriate/Other` for `comment_147039001`
-  (matches the 3-of-4 majority) and `domain='Other'` for
-  `comment_147274739` (arbitrary but deterministic and documented). Not
-  re-escalated: overseer already blessed newest-wins for this table as
-  low-stakes AI-label metadata.
-- Created both backups (explicitly authorized by the overseer's message —
-  "go ahead with the backups... then stop before the DELETE"):
-  `bigtribebuilders.grant_helpdesk.ticket_metadata_backup_20260923` (7,366
-  rows) and `bigtribebuilders.grant_helpdesk.grant_ticket_labels_backup_20260923`
-  (5,894 rows). Both are non-destructive `CREATE TABLE ... AS SELECT *`
-  snapshots of the live tables, same pattern as migration 016's
-  `recovery_snapshot_20260820`.
-
-**Done this turn — migration written, not run:**
-- `migrations/017_dedupe_ticket_tables.sql` — `CREATE OR REPLACE TABLE ... AS
-  SELECT * EXCEPT(rn) FROM (... ROW_NUMBER() ...) WHERE rn = 1` for both
-  tables, `ORDER BY updated_at DESC` for ticket_metadata (timestamp-safe, no
-  secondary key needed), `ORDER BY labeled_at DESC, TO_JSON_STRING(t) DESC`
-  for grant_ticket_labels (the 2 genuine ties). Follows migration 016's
-  format. NOT run. Expected row counts after running, measured live
-  2026-09-23: ticket_metadata 7,366 -> 7,084 rows; grant_ticket_labels 5,894
-  -> 5,812 rows (re-check before running if either table has changed since).
+**Done this turn — dedupe approved, migration written and rewritten:**
+- Martin's decisions (relayed by overseer): pure newest-wins, no backfill,
+  for the 4 ticket_metadata conflicts (`comment_146961416`,
+  `comment_147058507`, `comment_147074419`, `post_101109210`); newest-wins
+  also for grant_ticket_labels. 5th group (`comment_147732168`, 7s-apart
+  identical rows) confirmed harmless, not a real conflict.
+- All 26 ticket_metadata + 32 grant_ticket_labels dup groups checked for tie
+  risk. ticket_metadata: no ties, plain `ORDER BY updated_at DESC` is safe.
+  grant_ticket_labels: 2 genuine `labeled_at` ties (`comment_147039001`,
+  `comment_147274739`) need `TO_JSON_STRING(t) DESC` as a secondary key —
+  picks `inappropriate/Other` and `domain='Other'` respectively.
+- Backups created: `ticket_metadata_backup_20260923` (7,366 rows),
+  `grant_ticket_labels_backup_20260923` (5,894 rows). Non-destructive CTAS
+  snapshots, same pattern as migration 016's `recovery_snapshot_20260820`.
+- **Bug caught in my own first draft (commit e58779d) and fixed (a695112):**
+  that draft used `CREATE OR REPLACE TABLE ... AS SELECT ... WHERE rn=1`.
+  Overseer/Martin flagged, I verified live: `ticket_metadata.content_id` is
+  mode REQUIRED (CTAS silently makes it NULLABLE) and `grant_ticket_labels`
+  has a live table description (CTAS drops it). **Same bug existed one
+  level deeper in the Undo section too**: the backup tables are themselves
+  CTAS snapshots, so they ALREADY have content_id NULLABLE and no
+  description (confirmed live) — restoring via CTAS from them would have
+  reintroduced both regressions. Rewrote both the migration and its Undo to
+  DELETE+INSERT inside a transaction, scoped only to duplicated content_ids
+  (computed at run time, never hard-coded) — this never recreates the live
+  table, so its schema is never touched either way.
+- Migration dry-run (`bq query --dry_run`) confirms it parses. NOT executed.
+  Expected counts after running: ticket_metadata 7,366 -> 7,084 rows;
+  grant_ticket_labels 5,894 -> 5,812 rows (re-check if either has drifted).
+- Added an ORDER-OF-RUN note to the migration: run only after this branch
+  lands on `main` AND Dataform recompiles the writer fix (up to 1h) — else
+  the still-running old MERGE re-inserts duplicates as fast as this removes
+  them.
+- Sent the overseer two reports (msg f996a2ed before the rewrite; a
+  done-when report after, per this turn's ask) — commit range, row counts,
+  tiebreaks, deploy + break-it commands, red-then-green status.
 
 **Next:**
-1. STOP — report to the overseer per this turn's instruction: both backup
-   table names, the exact before/after row counts per table, the two
-   grant_ticket_labels tiebreak picks, and the deploy + break-it-on-purpose
-   commands for Done-when #5 (for the overseer to run from `main` after
-   landing, per Martin's "land first, I deploy"). Do not run the migration,
-   and do not deploy anything, from this worktree.
+1. Nothing pending on this session's side. Migration written, dry-run
+   clean, NOT executed; deploy NOT run. STOP holds — waiting on the
+   overseer/Martin to actually run the migration and, separately, on the
+   overseer to deploy per the commands already sent.
 
 **Traps (dated, old ones stay):**
 - 2026-08-19: Dataform compiles from GitHub main hourly; nothing here
