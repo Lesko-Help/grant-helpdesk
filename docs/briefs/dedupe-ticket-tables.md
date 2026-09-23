@@ -212,28 +212,56 @@ expected to go green (after the approved delete actually runs).
 
 ## State (2026-09-23, this session — supersedes the "Still to do" paragraph above)
 
-**Done, committed or about to be committed this turn (nothing landed to git yet
-as of this writing — committing right after this edit):**
-- `definitions/intelligence/grant_question_classifier.sqlx`: added
+**Done, committed (`git log`: bde729d, 61beeac, 720e7c8, on top of c2c6359):**
+- `definitions/intelligence/grant_question_classifier.sqlx` (61beeac): added
   `QUALIFY ROW_NUMBER() OVER (PARTITION BY c.content_id ORDER BY c.updated_at
   DESC) = 1` to the final SELECT. Fixes the confirmed root cause: its old
   `WHERE content_id NOT IN (SELECT content_id FROM self())` only screens
   against rows already saved, not two rows for the same key arriving in the
   same batch.
-- `definitions/intelligence/grant_ticket_labels.sqlx`: added the same
+- `definitions/intelligence/grant_ticket_labels.sqlx` (61beeac): same
   `QUALIFY ROW_NUMBER() OVER (PARTITION BY q.content_id ORDER BY
-  q.classified_at DESC) = 1` to the `questions` temp table's SELECT (line
-  ~47, just before the closing `;`). Its bug turned out to be one layer
-  downstream of `grant_question_classifier`, not independent — fixing that
-  table's dupes removes this one's actual source of new duplicates.
-- Both compile clean: `dataform compile` → 21 actions, no errors.
+  q.classified_at DESC) = 1` on the `questions` temp table's SELECT. One
+  layer downstream of `grant_question_classifier`, not an independent bug —
+  fixing that table's dupes removes this one's actual source of new ones.
+  Both compile clean: `dataform compile` → 21 actions, no errors.
 - `definitions/assertions/assert_ticket_metadata_unique_content_id.sqlx` and
-  `assert_grant_ticket_labels_unique_content_id.sqlx` added (uniqueKey
-  pattern: `GROUP BY content_id HAVING COUNT(*) > 1`).
-- Proven RED against live data today via read-only `bq query` (not by
-  running the assertion through Dataform — no need, same SQL): ticket_metadata
-  26 dup groups / 282 extra rows; grant_ticket_labels 32 dup groups / 82 extra
-  rows. Matches the 2026-09-14 memory almost exactly.
+  `assert_grant_ticket_labels_unique_content_id.sqlx` (bde729d): uniqueKey
+  pattern (`GROUP BY content_id HAVING COUNT(*) > 1`). Proven RED against
+  live data via read-only `bq query`: ticket_metadata 26 dup groups / 282
+  extra rows; grant_ticket_labels 32 dup groups / 82 extra rows — matches the
+  2026-09-14 memory almost exactly.
+
+**Done, NOT yet committed (alert kit, in progress this turn):**
+- `jobs/raillog.py` (new): the BTB_ALERT emitter — `alert(runnable, code,
+  message)` prints one JSON line `{"severity":"ERROR","message":"BTB_ALERT
+  grant-helpdesk/<runnable> <CODE>: <message>"}`. Deliberately NOT copied
+  from lesko-provisioning's `raillog.py` (that one's the older `RAIL_ALERT`,
+  non-JSON, HTTP-rail-call convention — wrong shape). Modeled on
+  `getresponse/scripts/alerts.py` and `LH-member-private-zone/zone_app/alert.py`,
+  both of which already implement the current BTB_ALERT/JSON convention.
+  Lives in `jobs/`, not the repo root, because `jobs/Dockerfile.poll_dataform`
+  only `COPY`s the one file it runs (confirmed by reading it) — a repo-root
+  module would 404 at import time in the built container. Dockerfile updated
+  to `COPY poll_dataform_failures.py raillog.py .` to match.
+- `jobs/poll_dataform_failures.py`: added `ALERTED_ACTIONS = {"grant_ticket_labels"}`,
+  a new `get_failed_action_names()` (calls Dataform's
+  `workflowInvocations/{id}:query` endpoint — confirmed live via `curl` that
+  this returns `workflowInvocationActions[].target.name` +
+  `.state`, letting us tell which action inside a FAILED invocation actually
+  failed, not just that the invocation failed), and wiring in `main()`: any
+  failed action in `ALERTED_ACTIONS` calls `raillog.alert(name,
+  "SOURCE_FAILED", ...)` and the job `sys.exit(1)`s at the end if any fired.
+  Every other action's failure still only reaches `app_logs`, unchanged.
+  Syntax-checked with `ast.parse` (no dataform/python toolchain error).
+- **Not yet done:** haven't run this against a real FAILED invocation to
+  confirm `get_failed_action_names()` actually returns the right names — was
+  mid-search for a live FAILED invocation to test against
+  (`1779255900-1c7deac7-8054-4e4c-8bba-ad759513f976`, 2026-05-20T05:45,
+  found via a read-only list call, not yet queried for its action list).
+  `deploy-alerts.sh` not started. Haven't proven the alert fires end to end
+  (brief's Done-when #5) — need deploy-alerts.sh's Cloud Monitoring policy
+  live first, then break something on purpose.
 
 **In flight — blocked, waiting on the overseer/Martin:**
 - Sent `helpdesk-opzichter [a6904a]` a report (msg_id
@@ -257,35 +285,22 @@ as of this writing — committing right after this edit):**
   Backup-table creation and the migration file are NOT started — both need
   the row-list decision first.
 
-**Next, once the overseer replies:**
-1. Take backups of both tables (`CREATE TABLE ... AS SELECT *`, timestamped
-   name, following the `recovery_snapshot_20260820` pattern in migration 016).
-2. Compute the exact newest-wins row list per Martin's answer.
-3. Write (not run) `migrations/017_dedupe_ticket_tables.sql` — write only,
-   per brief's "Done when" #4.
-4. STOP again and report the backup table names + exact row list for
-   Martin's approval before anyone runs the DELETE.
-5. Alert kit (raillog.py, deploy-alerts.sh, grant_ticket_labels alert) —
-   independent of the above, can be done in parallel. Was about to start:
-   found `lesko-provisioning/worker/raillog.py` (canonical) and
-   `dunning_executor/raillog.py` (committed copy) — but that module is built
-   for *outbound HTTP rail calls* (mn/recurly/paypal/gmail, `RAIL_ALERT`
-   marker, plain-text `logging.error`, no structured JSON). It predates and
-   does NOT match the global CLAUDE.md's newer (2026-09-14) `BTB_ALERT`
-   convention: structured JSON log line with `"severity": "ERROR"`,
-   `BTB_ALERT <repo>/<runnable> <CODE>: <message>`, codes from
-   {AUTH_FAILED, SOURCE_FAILED, SOURCE_EMPTY, ASSERTION_FAILED, QUOTA,
-   STALE, UNEXPECTED}. Was mid-search for an existing repo that already
-   implements the *new* BTB_ALERT convention as a template (grepped
-   `BTB_ALERT` across ~/Lesko, got hits in `getresponse/scripts/alerts.py`
-   and `LH-member-private-zone/zone_app/alert.py` — **not yet read either**).
-   Next action: read one of those two as the template, then write a small
-   `raillog.py` for grant-helpdesk (this repo has no outbound HTTP rail
-   callers, so it's just the BTB_ALERT emitter, no rail/code_for/bq_code
-   machinery), wire it into `jobs/poll_dataform_failures.py` for the
-   `grant_ticket_labels` action, adapt `deploy-alerts.sh` from
-   `lesko-provisioning/deploy-alerts.sh`, then break it on purpose once to
-   prove the email fires.
+**Next:**
+1. Alert kit (not blocked on the overseer, keep going): confirm
+   `get_failed_action_names()` against a real FAILED invocation; write
+   `deploy-alerts.sh` adapted from `lesko-provisioning/deploy-alerts.sh`
+   (log-match on BTB_ALERT text + severity ERROR, `conditionAbsent` ceiling);
+   run it (this session's call to make per the brief's Deploy-implied
+   section — proving the alert fires is explicitly this brief's job); break
+   `grant_ticket_labels` on purpose once and confirm the email arrives;
+   commit the whole alert kit.
+2. Once the overseer replies on the ticket_metadata conflict: take backups
+   of both tables (`CREATE TABLE ... AS SELECT *`, timestamped, following
+   the `recovery_snapshot_20260820` pattern in migration 016); compute the
+   exact newest-wins row list; write (not run)
+   `migrations/017_dedupe_ticket_tables.sql`; STOP again and report backup
+   table names + exact row list for Martin's approval before anyone runs
+   the DELETE.
 
 **Traps (still current, dated):**
 - 2026-08-19: Dataform compiles from GitHub main hourly;
