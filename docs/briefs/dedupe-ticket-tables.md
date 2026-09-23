@@ -220,63 +220,77 @@ expected to go green (after the approved delete actually runs).
 - Writer fix + assertions (`git log`: bde729d, 61beeac, 720e7c8): `QUALIFY
   ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY <ts> DESC) = 1` in
   `grant_question_classifier.sqlx` + `grant_ticket_labels.sqlx`; both
-  uniqueKey(content_id) assertions, proven RED live (ticket_metadata 26
-  groups/282 extra rows; grant_ticket_labels 32 groups/82 extra rows).
-- Alert kit (`git log`: d2f39fd, 1abd401): `raillog.py`,
-  `poll_dataform_failures.py` (`ALERTED_ACTIONS`, `sys.exit(1)`),
-  `Dockerfile.poll_dataform`, `deploy-alerts.sh`. Verified LIVE twice
-  (create, then idempotent no-op) against `bigtribebuilders` — policy
-  "BTB-ALERT bigtribebuilders — poll-dataform-failures reported a
-  BTB_ALERT" exists live now, routed to "Martin (email)".
+  uniqueKey(content_id) assertions, proven RED live.
+- Dedupe migration (`git log`: e58779d, a695112, 23aa05e):
+  `migrations/017_dedupe_ticket_tables.sql` — per-table BEGIN TRANSACTION /
+  temp tables (dup ids + expected row count, both computed INSIDE the
+  transaction) / DELETE scoped to dup ids / INSERT survivors / ASSERT no
+  dup remains and row count matches / COMMIT. Dry-run clean, NOT executed.
+  Undo scoped to just the deduped content_ids, not a full-table swap.
+- Alert kit (`git log`: d2f39fd, 1abd401, 12d0e5e, 9d6ce75, 730f808):
+  `raillog.py`, `poll_dataform_failures.py`, `Dockerfile.poll_dataform`,
+  `deploy-alerts.sh`. Cloud Monitoring policy verified LIVE (create +
+  idempotent no-op) against `bigtribebuilders`.
+- Deploy ownership resolved: Martin, via the overseer, "Land first, I
+  deploy" — this worktree never deploys to production.
 
-**Resolved — deploy ownership:** Martin, via the overseer: "Land first, I
-deploy." This worktree never deploys to production. It lands the alert kit
-(done) and hands the overseer exact deploy + break-it-on-purpose commands
-(sent in the report below); overseer runs them from `main` after landing,
-once Dataform recompiles.
-
-**Done this turn — dedupe approved, migration written and rewritten:**
-- Martin's decisions (relayed by overseer): pure newest-wins, no backfill,
-  for the 4 ticket_metadata conflicts (`comment_146961416`,
-  `comment_147058507`, `comment_147074419`, `post_101109210`); newest-wins
-  also for grant_ticket_labels. 5th group (`comment_147732168`, 7s-apart
-  identical rows) confirmed harmless, not a real conflict.
-- All 26 ticket_metadata + 32 grant_ticket_labels dup groups checked for tie
-  risk. ticket_metadata: no ties, plain `ORDER BY updated_at DESC` is safe.
-  grant_ticket_labels: 2 genuine `labeled_at` ties (`comment_147039001`,
-  `comment_147274739`) need `TO_JSON_STRING(t) DESC` as a secondary key —
-  picks `inappropriate/Other` and `domain='Other'` respectively.
-- Backups created: `ticket_metadata_backup_20260923` (7,366 rows),
-  `grant_ticket_labels_backup_20260923` (5,894 rows). Non-destructive CTAS
-  snapshots, same pattern as migration 016's `recovery_snapshot_20260820`.
-- **Bug caught in my own first draft (commit e58779d) and fixed (a695112):**
-  that draft used `CREATE OR REPLACE TABLE ... AS SELECT ... WHERE rn=1`.
-  Overseer/Martin flagged, I verified live: `ticket_metadata.content_id` is
-  mode REQUIRED (CTAS silently makes it NULLABLE) and `grant_ticket_labels`
-  has a live table description (CTAS drops it). **Same bug existed one
-  level deeper in the Undo section too**: the backup tables are themselves
-  CTAS snapshots, so they ALREADY have content_id NULLABLE and no
-  description (confirmed live) — restoring via CTAS from them would have
-  reintroduced both regressions. Rewrote both the migration and its Undo to
-  DELETE+INSERT inside a transaction, scoped only to duplicated content_ids
-  (computed at run time, never hard-coded) — this never recreates the live
-  table, so its schema is never touched either way.
-- Migration dry-run (`bq query --dry_run`) confirms it parses. NOT executed.
-  Expected counts after running: ticket_metadata 7,366 -> 7,084 rows;
-  grant_ticket_labels 5,894 -> 5,812 rows (re-check if either has drifted).
-- Added an ORDER-OF-RUN note to the migration: run only after this branch
-  lands on `main` AND Dataform recompiles the writer fix (up to 1h) — else
-  the still-running old MERGE re-inserts duplicates as fast as this removes
-  them.
-- Sent the overseer two reports (msg f996a2ed before the rewrite; a
-  done-when report after, per this turn's ask) — commit range, row counts,
-  tiebreaks, deploy + break-it commands, red-then-green status.
+**Done this turn — overseer's review (verdict CHANGES NEEDED, 14 findings),
+fixed in new commits, per-finding:**
+- #1-3 blocker/should (commit 12d0e5e): `poll_dataform_failures.py`'s
+  `get_failed_action_names` turned every API error into `[]` and ran AFTER
+  `log_failure` had already moved the watermark — a transient error during
+  a real grant_ticket_labels failure meant no alert, exit 0, never
+  rechecked. Now it raises, runs BEFORE `log_failure`, and an outer
+  try/except around `main()` turns any escaping exception into
+  `raillog.alert(..., "UNEXPECTED", ...)` before re-raising. A failed
+  `get_failed_invocations` call now alerts (SOURCE_FAILED) and forces a
+  non-zero exit instead of a silent `continue`.
+- #4 should (commit 9d6ce75): `deploy-alerts.sh` was missing the 24h
+  re-notify (global CLAUDE.md rule 3). Added
+  `alertStrategy.notificationChannelStrategy[].renotifyInterval: "86400s"`.
+  Per overseer note B: NOT run live from here — verified locally that the
+  payload's Python still builds valid JSON with the field; the overseer
+  runs it live from `main` after landing, which is the real test of
+  whether the API accepts it on a conditionMatchedLog policy.
+- #5-6 should (commit 23aa05e): the migration's temp tables were built
+  BEFORE `BEGIN TRANSACTION` — a concurrent app write to a duplicated
+  content_id in that gap would've been silently lost. Moved inside the
+  transaction; added ASSERTs (no dup content_id remains; row count matches
+  a pre-DELETE snapshot) before each COMMIT. Undo rewritten to scope its
+  DELETE+INSERT to just the deduped content_ids, not `WHERE TRUE` (which
+  would've discarded every app write since the backup was taken).
+- #7 should (docs only, per overseer note C): added a note to the
+  migration's ORDER OF RUN — the writer QUALIFY fix only stops same-batch
+  duplicates (35/38 classifier groups); 3 classifier + 6 grant_ticket_labels
+  groups have different timestamps, pointing at overlapping runs (scheduled
+  workflow, hourly release, pytest's remote trigger). QUALIFY can't stop
+  those — the uniqueKey assertions are the guard. Stopping pytest's trigger
+  from hitting the live repo is a follow-up the **overseer owns**, not built
+  here.
+- #8 should (docs only, per overseer note C): no silence/heartbeat alert
+  exists yet for the hourly `poll-dataform-failures` job itself (rule 4).
+  Recorded as a follow-up the **overseer owns**, not built here.
+- #9 nit: documented in the migration — expect the project-wide "a Dataform
+  invocation failed" policy to email on every `helpdesk`-tagged
+  grant-helpdesk-5min run between "writer fix compiles" and "migration
+  runs" (both assertions red until then). Run 017 promptly; warn Martin.
+- #11 nit (commit 730f808): `Dockerfile.poll_dataform`'s `COPY a b .` only
+  works via undocumented BuildKit behavior — changed destination to `./`.
+- #12 nit: this file's own trap about "dedupe via CREATE OR REPLACE TABLE"
+  was stale (contradicted the approved DELETE+INSERT migration) — corrected
+  below.
+- #13 nit: a staff account's email was in this file (now "a staff
+  account") and in the commit that first wrote it (`c2c6359`). Per overseer
+  note A this is the one case where history is rewritten — happening next,
+  via `git rebase -i` editing `c2c6359` directly (branch never pushed, safe).
+- #10, #14: no change needed (assertion shape and raillog.py both confirmed
+  correct as-is).
 
 **Next:**
-1. Nothing pending on this session's side. Migration written, dry-run
-   clean, NOT executed; deploy NOT run. STOP holds — waiting on the
-   overseer/Martin to actually run the migration and, separately, on the
-   overseer to deploy per the commands already sent.
+1. Rewrite `c2c6359` to remove the staff email from its diff (finding #13 /
+   overseer note A), confirm clean.
+2. Add "## Agentic review" section (Verdict / Findings / Fixed) below.
+3. Report back to the overseer with the new commit range.
 
 **Traps (dated, old ones stay):**
 - 2026-08-19: Dataform compiles from GitHub main hourly; nothing here
@@ -301,6 +315,103 @@ once Dataform recompiles.
   but silently picks an arbitrary one when they differ (2 of
   grant_ticket_labels's 32 dup groups). Always add a secondary deterministic
   tiebreak (e.g. `TO_JSON_STRING(t) DESC`) and check for ties before trusting
-  a newest-wins dedupe. BigQuery also has no row-level DELETE without a
-  unique key — dedupe via `CREATE OR REPLACE TABLE ... AS SELECT ... WHERE
-  rn = 1`, not a DELETE statement.
+  a newest-wins dedupe. **Corrected 2026-09-23 (review finding #12):** the
+  live migration does NOT use `CREATE OR REPLACE TABLE ... AS SELECT ...
+  WHERE rn = 1` — that first-draft approach silently drops
+  `ticket_metadata.content_id`'s REQUIRED mode and `grant_ticket_labels`'s
+  table description (both confirmed live). The actual migration is
+  DELETE+INSERT inside a transaction, scoped to duplicated content_ids, with
+  ASSERTs before COMMIT — see migrations/017_dedupe_ticket_tables.sql.
+- 2026-09-23 (review finding #7, overseer-owned follow-up, not built in
+  this branch): the writer QUALIFY fix only stops duplicates created within
+  one Dataform run. 3 of the classifier's dup groups and 6 of
+  grant_ticket_labels's have differing timestamps, meaning they came from
+  separate overlapping runs (scheduled workflow, hourly release, and
+  pytest's remote trigger hitting the live repo) — QUALIFY can't see across
+  runs. The migration's uniqueKey assertions catch it after the fact; they
+  don't stop it from recurring. Stopping pytest's remote trigger from
+  writing to the live repo is the real fix and belongs to the overseer.
+- 2026-09-23 (review finding #8, overseer-owned follow-up, not built in
+  this branch): `poll-dataform-failures` itself has no silence/heartbeat
+  alert — global CLAUDE.md rule 4 ("silence is a failure") isn't satisfied
+  for this job yet. If the hourly Cloud Run Job stops running (scheduler
+  misconfigured, image fails to start, etc.) nothing notices. Needs a
+  policy that fires when no successful run happened within schedule +
+  margin, same pattern as other repos' heartbeat alerts. Overseer's to
+  build, not this session's.
+
+## Agentic review
+
+**Verdict (from `helpdesk-opzichter`, cross-session review of this branch):**
+CHANGES NEEDED — 14 findings.
+
+**Findings, summarized:**
+1. Blocker — `get_failed_action_names` swallowed API errors to `[]` and ran
+   after the watermark-moving `log_failure`, so a transient error during a
+   real grant_ticket_labels failure silently never alerted and was never
+   rechecked.
+2. Should — `get_failed_invocations` failures were only printed then
+   `continue`d, exiting 0 with no alert.
+3. Should — no outer guard turned an unhandled exception in `main()` into a
+   BTB_ALERT line.
+4. Should — `deploy-alerts.sh`'s alert policy was missing the 24h re-notify
+   required by global CLAUDE.md rule 3.
+5. Should — the migration's temp tables were built before `BEGIN
+   TRANSACTION`, so a concurrent write in that gap could be silently lost.
+6. Should — the migration's Undo did `DELETE ... WHERE TRUE` then reloaded
+   the whole backup, discarding any app write made after the backup.
+7. Should — the writer QUALIFY fix only stops same-run duplicates; several
+   dup groups came from separate overlapping runs it can't see.
+8. Should — `poll-dataform-failures` has no silence/heartbeat alert of its
+   own.
+9. Nit — no note warning that FAILED emails are expected on every
+   `helpdesk`-tagged run between the writer fix compiling and migration 017
+   running.
+10. Nit — (no change needed; assertion shape confirmed correct as written).
+11. Nit — `Dockerfile.poll_dataform`'s multi-source `COPY a b .` relies on
+    undocumented BuildKit behavior instead of the documented `./` form.
+12. Nit — this brief's trap list still described a stale `CREATE OR REPLACE
+    TABLE` dedupe approach, contradicting the approved DELETE+INSERT
+    migration.
+13. Nit — a staff account's email address was committed in this file, in
+    the commit that first wrote it.
+14. Nit — (no change needed; raillog.py confirmed correct — structured
+    JSON, `severity: ERROR`, fixed CODES set, BTB_ALERT format).
+
+**Fixed:**
+- #1-3: `jobs/poll_dataform_failures.py` — lookup reordered before the
+  watermark write, exceptions now propagate instead of `except: []`,
+  `get_failed_invocations` failures alert + force non-zero exit, and
+  `main()` is wrapped so anything that escapes still alerts `UNEXPECTED`
+  before re-raising. Commit `12d0e5e`.
+- #4: `jobs/deploy-alerts.sh` — added
+  `alertStrategy.notificationChannelStrategy[].renotifyInterval: "86400s"`.
+  Per overseer note B, **not run live from this worktree** — verified only
+  that the payload's Python still builds valid JSON with the field added;
+  the overseer runs it live from `main` after landing. Commit `9d6ce75`.
+- #5-6: `migrations/017_dedupe_ticket_tables.sql` — temp tables moved
+  inside each `BEGIN TRANSACTION`, two `ASSERT`s added per table before
+  `COMMIT` (no dup content_id remains; row count matches a pre-DELETE
+  snapshot), Undo scoped to just the deduped content_ids instead of a
+  full-table swap. Commit `23aa05e`.
+- #7: docs only, per overseer note C — added to the migration's ORDER OF
+  RUN section and to this brief's traps above. The pytest-trigger fix
+  itself is recorded as an overseer-owned follow-up, not built here.
+- #8: docs only, per overseer note C — recorded as an overseer-owned
+  follow-up in this brief's traps above; the heartbeat alert itself is not
+  built here.
+- #9: documented in the migration's ORDER OF RUN section.
+- #11: `Dockerfile.poll_dataform` — `COPY ... .` changed to `COPY ... ./`.
+  Commit `730f808`.
+- #12: trap list corrected above, in this commit.
+- #13: the one finding where history is rewritten per overseer note A, not
+  a new commit on top — `git rebase -i origin/main` editing `c2c6359`
+  directly, since this branch has never been pushed. Done in the commit
+  immediately after this one; see that commit's message for the before/after
+  and the verification command used (a grep scoped to the specific staff
+  address, not the bare `@gmail.com` substring the overseer's proposed
+  `grep -c '@gmail.com'` check used — that broader form would not reach 0
+  even after the fix, since it also matches all 12 commits'
+  `Author: holyjezusandgod <martin.j.menke@gmail.com>` metadata lines, which
+  are Martin's own expected git identity, not a leak).
+- #10, #14: no change needed.
