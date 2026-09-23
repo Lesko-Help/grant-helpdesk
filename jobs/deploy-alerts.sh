@@ -232,6 +232,13 @@ print(json.dumps({
     "combiner": "OR", "enabled": True,
     "alertStrategy": {
         "notificationRateLimit": {"period": "1800s"},
+        # An open incident re-notifies every 24h — global CLAUDE.md rule 3.
+        # This field was missing (review finding #4); the comparison in
+        # apply_policy() already diffs the whole alertStrategy object, so no
+        # separate change is needed there once it's part of this payload.
+        "notificationChannelStrategy": [{
+            "notificationChannelNames": [channel],
+            "renotifyInterval": "86400s"}],
         "autoClose": "604800s"},
     "notificationChannels": [channel]}))
 PY
