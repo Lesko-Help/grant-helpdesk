@@ -213,105 +213,94 @@ expected to go green (after the approved delete actually runs).
 ## State (2026-09-23, this session — supersedes the "Still to do" paragraph above)
 
 **Done, committed (`git log`: bde729d, 61beeac, 720e7c8, on top of c2c6359):**
-- `definitions/intelligence/grant_question_classifier.sqlx` (61beeac): added
-  `QUALIFY ROW_NUMBER() OVER (PARTITION BY c.content_id ORDER BY c.updated_at
-  DESC) = 1` to the final SELECT. Fixes the confirmed root cause: its old
-  `WHERE content_id NOT IN (SELECT content_id FROM self())` only screens
-  against rows already saved, not two rows for the same key arriving in the
-  same batch.
-- `definitions/intelligence/grant_ticket_labels.sqlx` (61beeac): same
-  `QUALIFY ROW_NUMBER() OVER (PARTITION BY q.content_id ORDER BY
-  q.classified_at DESC) = 1` on the `questions` temp table's SELECT. One
-  layer downstream of `grant_question_classifier`, not an independent bug —
-  fixing that table's dupes removes this one's actual source of new ones.
-  Both compile clean: `dataform compile` → 21 actions, no errors.
+- `definitions/intelligence/grant_question_classifier.sqlx` and
+  `grant_ticket_labels.sqlx` (61beeac): `QUALIFY ROW_NUMBER() OVER
+  (PARTITION BY content_id ORDER BY <its timestamp> DESC) = 1` fixes the
+  same-batch duplicate root cause. Compiles clean, 21 actions.
 - `definitions/assertions/assert_ticket_metadata_unique_content_id.sqlx` and
   `assert_grant_ticket_labels_unique_content_id.sqlx` (bde729d): uniqueKey
-  pattern (`GROUP BY content_id HAVING COUNT(*) > 1`). Proven RED against
-  live data via read-only `bq query`: ticket_metadata 26 dup groups / 282
-  extra rows; grant_ticket_labels 32 dup groups / 82 extra rows — matches the
-  2026-09-14 memory almost exactly.
+  pattern, proven RED against live data (ticket_metadata 26 dup groups/282
+  extra rows; grant_ticket_labels 32 dup groups/82 extra rows).
 
-**Done, NOT yet committed (alert kit, in progress this turn):**
-- `jobs/raillog.py` (new): the BTB_ALERT emitter — `alert(runnable, code,
-  message)` prints one JSON line `{"severity":"ERROR","message":"BTB_ALERT
-  grant-helpdesk/<runnable> <CODE>: <message>"}`. Deliberately NOT copied
-  from lesko-provisioning's `raillog.py` (that one's the older `RAIL_ALERT`,
-  non-JSON, HTTP-rail-call convention — wrong shape). Modeled on
-  `getresponse/scripts/alerts.py` and `LH-member-private-zone/zone_app/alert.py`,
-  both of which already implement the current BTB_ALERT/JSON convention.
-  Lives in `jobs/`, not the repo root, because `jobs/Dockerfile.poll_dataform`
-  only `COPY`s the one file it runs (confirmed by reading it) — a repo-root
-  module would 404 at import time in the built container. Dockerfile updated
-  to `COPY poll_dataform_failures.py raillog.py .` to match.
-- `jobs/poll_dataform_failures.py`: added `ALERTED_ACTIONS = {"grant_ticket_labels"}`,
-  a new `get_failed_action_names()` (calls Dataform's
-  `workflowInvocations/{id}:query` endpoint — confirmed live via `curl` that
-  this returns `workflowInvocationActions[].target.name` +
-  `.state`, letting us tell which action inside a FAILED invocation actually
-  failed, not just that the invocation failed), and wiring in `main()`: any
-  failed action in `ALERTED_ACTIONS` calls `raillog.alert(name,
-  "SOURCE_FAILED", ...)` and the job `sys.exit(1)`s at the end if any fired.
-  Every other action's failure still only reaches `app_logs`, unchanged.
-  Syntax-checked with `ast.parse` (no dataform/python toolchain error).
-- **Not yet done:** haven't run this against a real FAILED invocation to
-  confirm `get_failed_action_names()` actually returns the right names — was
-  mid-search for a live FAILED invocation to test against
-  (`1779255900-1c7deac7-8054-4e4c-8bba-ad759513f976`, 2026-05-20T05:45,
-  found via a read-only list call, not yet queried for its action list).
-  `deploy-alerts.sh` not started. Haven't proven the alert fires end to end
-  (brief's Done-when #5) — need deploy-alerts.sh's Cloud Monitoring policy
-  live first, then break something on purpose.
+**Done, NOT yet committed (alert kit):**
+- `jobs/raillog.py` (new): BTB_ALERT emitter, `alert(runnable, code, message)`.
+- `jobs/poll_dataform_failures.py`: `ALERTED_ACTIONS = {"grant_ticket_labels"}`,
+  `get_failed_action_names()` (queries Dataform's
+  `workflowInvocations/{id}:query`, confirmed live against invocation
+  `1779255900-1c7deac7-8054-4e4c-8bba-ad759513f976` — 11 actions, 1 FAILED,
+  correctly narrowed), wired into `main()`, `sys.exit(1)` when an alerted
+  action fails.
+- `jobs/Dockerfile.poll_dataform`: `COPY poll_dataform_failures.py raillog.py .`
+- `jobs/deploy-alerts.sh` (new, `jobs/deploy-alerts.sh:196-238`): single
+  `conditionMatchedLog` policy mirroring the project's existing
+  "cerbo-logger reported a BTB_ALERT" policy, scoped to
+  `job_name="poll-dataform-failures"`. `find_policy`/`apply_policy` lifted
+  near-verbatim from `lesko-questions-zone/deploy-alerts.sh` (page-walk-safe
+  lookup, whole-shape reconcile, PATCH-in-place keeping the condition's own
+  `name`). Hit and fixed a real bug this turn: the payload-building heredoc
+  was originally unquoted (`<<PY`) mixing bash `${VAR}` interpolation with
+  Python strings that needed literal `\"` — bash only treats backslash as
+  special before `$`, `` ` ``, `\`, newline in an unquoted heredoc, so the
+  `\"` sequences arrived at Python mangled → `SyntaxError: unexpected
+  character after line continuation character`. Fixed by switching to a
+  quoted heredoc (`<<'PY'`, zero bash expansion) and passing `TITLE`/`JOB`/
+  `PROJECT`/`CHANNEL` through `os.environ` instead. **Not yet re-run since
+  the fix** — first concrete next step.
 
 **In flight — blocked, waiting on the overseer/Martin:**
 - Sent `helpdesk-opzichter [a6904a]` a report (msg_id
-  1c04b3fc-b219-4552-952c-df0abfaf0399) flagging a judgment call: of
-  `ticket_metadata`'s 26 dup groups, 4 have a real conflict — content_ids
-  `comment_146961416`, `comment_147058507`, `comment_147074419`,
-  `post_101109210`. In each, the OLDER row (Apr 2026) has `status=''` (open)
-  and a coach in `assigned_to` (Amber Hawkins x2, Charity Spencer, Amber
-  Littlefield); the NEWER row (all four 2026-05-18 16:48:05, the
-  `system_migration_20260518` batch) has `status='closed'` but
-  `assigned_to` blank — the migration didn't carry the assignment forward.
-  Pure "newest wins" would silently drop these 4 coaches' assignments.
-  Asked Martin to pick: (a) pure newest-wins, (b) backfill `assigned_to`
-  from the older row on those 4, or (c) other. **Do not compute the final
-  delete row list or write the migration until this answer arrives.**
-  Also flagged: memory said 5 conflicting tickets, live data today shows
-  only 4 — unexplained drift, not chased further.
-  `grant_ticket_labels` also has 2 conflicting groups (`comment_147039001`,
-  `comment_147274739`, differing AI-generated `domain`/`difficulty`) — lower
-  stakes, newest-`labeled_at`-wins is fine there, no objection needed.
-  Backup-table creation and the migration file are NOT started — both need
-  the row-list decision first.
+  1c04b3fc-b219-4552-952c-df0abfaf0399) on `ticket_metadata`'s 4 real
+  conflicts (content_ids `comment_146961416`, `comment_147058507`,
+  `comment_147074419`, `post_101109210` — older row has an open ticket
+  assigned to a coach, newer migration row is closed with `assigned_to`
+  blank). Asked Martin: (a) pure newest-wins, (b) backfill `assigned_to` on
+  those 4, or (c) other. **No reply yet — do not compute the row list or
+  write the migration until it arrives.** `grant_ticket_labels`'s 2 minor
+  conflicts need no decision (newest-`labeled_at`-wins is fine).
+- New question reasoned through but NOT yet sent: proving the
+  grant_ticket_labels alert fires (Done-when #5) needs a real BTB_ALERT line
+  in live Cloud Logging under `resource.labels.job_name=
+  "poll-dataform-failures"` — a local Python run's stdout never reaches
+  that resource type/label. That means deploying this session's modified
+  job code (raillog.py/poll_dataform_failures.py/Dockerfile) to the live
+  production Cloud Run Job. The project CLAUDE.md only names `deploy.sh`
+  (the Streamlit app) as off-limits and this repo has no existing job-deploy
+  script, so it's not explicitly forbidden — but it's a shared-production
+  action, so leaning toward asking the overseer before running any job
+  deploy, same as the ticket_metadata question. Not sent yet.
 
 **Next:**
-1. Alert kit (not blocked on the overseer, keep going): confirm
-   `get_failed_action_names()` against a real FAILED invocation; write
-   `deploy-alerts.sh` adapted from `lesko-provisioning/deploy-alerts.sh`
-   (log-match on BTB_ALERT text + severity ERROR, `conditionAbsent` ceiling);
-   run it (this session's call to make per the brief's Deploy-implied
-   section — proving the alert fires is explicitly this brief's job); break
-   `grant_ticket_labels` on purpose once and confirm the email arrives;
-   commit the whole alert kit.
-2. Once the overseer replies on the ticket_metadata conflict: take backups
-   of both tables (`CREATE TABLE ... AS SELECT *`, timestamped, following
-   the `recovery_snapshot_20260820` pattern in migration 016); compute the
-   exact newest-wins row list; write (not run)
-   `migrations/017_dedupe_ticket_tables.sql`; STOP again and report backup
-   table names + exact row list for Martin's approval before anyone runs
-   the DELETE.
+1. Re-run `bash jobs/deploy-alerts.sh`, confirm it creates/reconciles the
+   policy cleanly against live `bigtribebuilders` Monitoring (no more
+   SyntaxError).
+2. Before deploying job code to prove the alert fires: send the overseer the
+   open question above. Don't deploy unilaterally.
+3. Once verified/answered: commit the alert kit (raillog.py,
+   poll_dataform_failures.py, Dockerfile.poll_dataform, deploy-alerts.sh) —
+   one commit, and break `grant_ticket_labels` on purpose once the policy is
+   live to confirm the email actually arrives.
+4. Once the overseer replies on the ticket_metadata conflict: back up both
+   tables (`CREATE TABLE ... AS SELECT *`, timestamped, per migration 016's
+   `recovery_snapshot_20260820` pattern); compute the exact newest-wins row
+   list; write (not run) `migrations/017_dedupe_ticket_tables.sql`; STOP and
+   report backup table names + exact row list for Martin's approval before
+   anyone runs the DELETE.
 
-**Traps (still current, dated):**
-- 2026-08-19: Dataform compiles from GitHub main hourly;
-  grant-helpdesk-5min runs every 30 min off the latest pinned compile.
-  Nothing here pushes to main — that's the overseer's.
+**Traps (dated, old ones stay):**
+- 2026-08-19: Dataform compiles from GitHub main hourly; nothing here
+  pushes to main — that's the overseer's.
 - 2026-08-20: pausing the workflow needs `releaseConfig` in the PATCH body
   too; a full refresh needs `stg_grant_candidates` redeployed. Overseer's
   call, not this session's.
 - 2026-08-20: `grant_tickets` LEFT JOINs `ticket_metadata` without
-  deduplicating (8,438 rows / 6,181 ids as of 2026-08-20) — only
+  deduplicating (8,438 rows/6,181 ids as of 2026-08-20) — only
   `bq_reads.py`'s `QUALIFY` hides this today. Expect counts to shift once
   the dedupe lands.
 - 2026-05-28: auto-mode blocks live BQ UPDATE/DELETE and workflow
   enable/disable without Martin's per-statement approval.
+- 2026-09-23: an unquoted bash heredoc (`<<PY`) reprocesses backslashes
+  before Python sees them — use `<<'PY'` + `os.environ` whenever a heredoc
+  body needs its own literal quotes alongside bash-supplied values.
+- 2026-09-23: proving a Cloud Monitoring alert fires for a Cloud Run Job
+  requires the log line to come from the real deployed job (resource
+  type/labels must match) — a local script run can never trigger it.
