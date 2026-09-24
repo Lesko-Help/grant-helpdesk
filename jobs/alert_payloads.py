@@ -34,6 +34,70 @@ def metric_log_filter(job):
     )
 
 
+def log_match_policy(title, job, project, channel):
+    """Input: display title, job name, GCP project, and a notification
+    channel's resource name. Output: the AlertPolicy dict for the original
+    conditionMatchedLog (log-based) policy that pages the instant a
+    BTB_ALERT line appears, ready to json.dumps into the Monitoring API's
+    create/patch body. Why: this used to be built inline in
+    deploy-alerts.sh's heredoc, where a stray
+    alertStrategy.notificationChannelStrategy went unnoticed for a whole
+    review round (round-3 review blocker #1) because nothing checked the
+    payload's shape offline. Pulling it in here next to threshold_policy()
+    means both policies' shapes are covered by the same tests, and a
+    regression like blocker #1 fails a test instead of only failing live
+    under set -euo pipefail.
+    """
+    content = (
+        f"{job} called raillog.alert() (jobs/raillog.py). Codes: AUTH_FAILED, "
+        "SOURCE_FAILED, SOURCE_EMPTY, ASSERTION_FAILED, QUOTA, STALE, "
+        "UNEXPECTED — the code is in the message itself.\n\n"
+        "As of 2026-09-23 the only action wired into ALERTED_ACTIONS is "
+        "grant_ticket_labels (jobs/poll_dataform_failures.py) — this alert "
+        "means that Dataform action failed, not any other action in "
+        "grant-helpdesk or community-manager-dashboard.\n\n"
+        "Read the full line in Cloud Logging:\n"
+        f"  gcloud logging read 'resource.type=\"cloud_run_job\" AND "
+        f'resource.labels.job_name="{job}" AND (textPayload:"BTB_ALERT" '
+        f"OR jsonPayload.message:\"BTB_ALERT\")' --project {project} --limit 5\n\n"
+        "The message names the Dataform invocation id and a console link — "
+        "open it to see which grant_ticket_labels row(s) failed."
+    )
+    return {
+        "displayName": title,
+        "documentation": {
+            "subject": title,
+            "content": content,
+            "mimeType": "text/markdown",
+        },
+        "conditions": [{
+            "displayName": "a BTB_ALERT line appeared in the job logs",
+            "conditionMatchedLog": {
+                "filter": metric_log_filter(job),
+            },
+        }],
+        "combiner": "OR",
+        "enabled": True,
+        "alertStrategy": {
+            # notificationChannelStrategy does NOT belong here — Monitoring
+            # rejects it outright on a conditionMatchedLog (log-based)
+            # policy ("notificationChannelStrategy is not allowed for
+            # log-based alerts", confirmed live 2026-09-24, see
+            # docs/briefs/alert-renotify-metric.md). A prior review round
+            # put it here anyway, which broke deploy-alerts.sh under
+            # set -euo pipefail before it ever reached the metric/threshold
+            # code (round-3 review blocker #1). The 24h renotify lives on
+            # the separate conditionThreshold policy from threshold_policy()
+            # instead, which is the only kind Monitoring allows that field
+            # on. test_log_match_policy_has_no_notification_channel_strategy
+            # below guards against this coming back.
+            "notificationRateLimit": {"period": "1800s"},
+            "autoClose": "604800s",
+        },
+        "notificationChannels": [channel],
+    }
+
+
 def threshold_policy(title, job, project, channel, metric_name):
     """Input: display title, job name, GCP project, a notification channel's
     resource name, and the log metric's name. Output: the AlertPolicy dict
@@ -128,12 +192,16 @@ def _main(argv):
     if len(argv) < 2:
         sys.stderr.write(
             "usage: alert_payloads.py metric-filter JOB\n"
+            "       alert_payloads.py log-match-policy TITLE JOB PROJECT CHANNEL\n"
             "       alert_payloads.py threshold-policy TITLE JOB PROJECT CHANNEL METRIC_NAME\n"
         )
         return 1
     kind = argv[1]
     if kind == "metric-filter" and len(argv) == 3:
         print(metric_log_filter(argv[2]))
+    elif kind == "log-match-policy" and len(argv) == 6:
+        title, job, project, channel = argv[2:6]
+        print(json.dumps(log_match_policy(title, job, project, channel)))
     elif kind == "threshold-policy" and len(argv) == 7:
         title, job, project, channel, metric_name = argv[2:7]
         print(json.dumps(threshold_policy(title, job, project, channel, metric_name)))

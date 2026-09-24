@@ -18,7 +18,7 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(REPO_ROOT, "jobs"))
 
-from alert_payloads import metric_log_filter, threshold_policy  # noqa: E402
+from alert_payloads import log_match_policy, metric_log_filter, threshold_policy  # noqa: E402
 
 CHANNEL = "projects/bigtribebuilders/notificationChannels/4324299381952164741"
 METRIC_NAME = "poll_dataform_failures_btb_alert_count"
@@ -29,6 +29,30 @@ def test_metric_log_filter_scopes_to_job_and_btb_alert():
     assert 'resource.labels.job_name="poll-dataform-failures"' in filt
     assert 'textPayload:"BTB_ALERT"' in filt
     assert 'jsonPayload.message:"BTB_ALERT"' in filt
+
+
+def test_log_match_policy_filter_matches_metric_log_filter():
+    # The log-match policy and the counter metric must watch the exact same
+    # lines, or the renotifying policy could fire on events the original
+    # policy never paged on (or vice versa).
+    policy = log_match_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    cond = policy["conditions"][0]["conditionMatchedLog"]
+    assert cond["filter"] == metric_log_filter("poll-dataform-failures")
+
+
+def test_log_match_policy_has_no_notification_channel_strategy():
+    # Round-3 review blocker #1: notificationChannelStrategy landed on this
+    # policy's alertStrategy in an earlier review round. Monitoring rejects
+    # it outright on a conditionMatchedLog (log-based) policy, so
+    # apply_policy's PATCH would fail and, under set -euo pipefail, the
+    # script would never reach the metric or threshold policy below it.
+    # This is the regression guard should-fix #3 asked for — it would have
+    # caught blocker #1 before it ever reached a live run.
+    policy = log_match_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    strategy = policy["alertStrategy"]
+    assert "notificationChannelStrategy" not in strategy
+    assert strategy["notificationRateLimit"] == {"period": "1800s"}
+    assert strategy["autoClose"] == "604800s"
 
 
 def test_threshold_policy_condition_names_resource_type():

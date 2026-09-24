@@ -203,66 +203,13 @@ print('   patched')
 }
 
 # ── the policy ────────────────────────────────────────────────────────────
-# Built via os.environ + a QUOTED heredoc (<<'PY'), not ${...} interpolation
-# into a JSON-inside-Python-inside-bash string: the documentation text below
-# needs literal double quotes (a gcloud command in a code block), and
-# escaping those through three nested layers is exactly what produced a
-# SyntaxError the first time this was written straight with ${JOB}-style
-# substitution. Passing values as env vars sidesteps the layering entirely —
-# the heredoc body is inert text as far as bash is concerned.
+# Payload built by alert_payloads.py's log_match_policy(), not inline here —
+# round-3 review (should-fix #3) moved it there so
+# tests/test_deploy_alerts_payloads.py can check its shape offline. This
+# script only ever calls the CLI form so both paths run the same code (see
+# alert_payloads.py's module docstring).
 TITLE="BTB-ALERT ${PROJECT} — ${JOB} reported a BTB_ALERT"
-PAYLOAD=$(TITLE="$TITLE" JOB="$JOB" PROJECT="$PROJECT" CHANNEL="$CHANNEL" python3 - <<'PY'
-import json
-import os
-
-title, job, project, channel = (
-    os.environ["TITLE"], os.environ["JOB"], os.environ["PROJECT"], os.environ["CHANNEL"])
-
-content = (
-    f"{job} called raillog.alert() (jobs/raillog.py). Codes: AUTH_FAILED, "
-    "SOURCE_FAILED, SOURCE_EMPTY, ASSERTION_FAILED, QUOTA, STALE, "
-    "UNEXPECTED — the code is in the message itself.\n\n"
-    "As of 2026-09-23 the only action wired into ALERTED_ACTIONS is "
-    "grant_ticket_labels (jobs/poll_dataform_failures.py) — this alert "
-    "means that Dataform action failed, not any other action in "
-    "grant-helpdesk or community-manager-dashboard.\n\n"
-    "Read the full line in Cloud Logging:\n"
-    f"  gcloud logging read 'resource.type=\"cloud_run_job\" AND "
-    f'resource.labels.job_name="{job}" AND (textPayload:"BTB_ALERT" '
-    f"OR jsonPayload.message:\"BTB_ALERT\")' --project {project} --limit 5\n\n"
-    "The message names the Dataform invocation id and a console link — "
-    "open it to see which grant_ticket_labels row(s) failed."
-)
-
-print(json.dumps({
-    "displayName": title,
-    "documentation": {
-        "subject": title,
-        "content": content,
-        "mimeType": "text/markdown"},
-    "conditions": [{
-        "displayName": "a BTB_ALERT line appeared in the job logs",
-        "conditionMatchedLog": {
-            "filter": (
-                f'resource.type="cloud_run_job" AND resource.labels.job_name="{job}" '
-                'AND (textPayload:"BTB_ALERT" OR jsonPayload.message:"BTB_ALERT")')}}],
-    "combiner": "OR", "enabled": True,
-    "alertStrategy": {
-        # notificationChannelStrategy does NOT belong here — Monitoring
-        # rejects it outright on a conditionMatchedLog (log-based) policy
-        # ("notificationChannelStrategy is not allowed for log-based
-        # alerts", confirmed live 2026-09-24, see
-        # docs/briefs/alert-renotify-metric.md). A prior round put it here
-        # anyway (review round 2, 2026-09-24) which broke this script under
-        # set -euo pipefail before it ever reached the new metric/policy
-        # code below — round-3 review caught it. The 24h renotify lives on
-        # the separate conditionThreshold policy further down instead,
-        # which is the only kind Monitoring allows that field on.
-        "notificationRateLimit": {"period": "1800s"},
-        "autoClose": "604800s"},
-    "notificationChannels": [channel]}))
-PY
-)
+PAYLOAD=$(python3 "$SCRIPT_DIR/alert_payloads.py" log-match-policy "$TITLE" "$JOB" "$PROJECT" "$CHANNEL")
 
 apply_policy "$TITLE" "$PAYLOAD"
 
