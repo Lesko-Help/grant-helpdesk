@@ -152,6 +152,10 @@ for its reply before starting slice K+1 — it writes a slice file, asks
 Martin in its own pane, and relays his answer back to you. Record that
 reply here before continuing. Never ask Martin directly in this window.
 
+**Slice 1 reply (2026-09-24, relayed by helpdesk-opzichter):** Martin's
+answer was "Continue to slice 2" — go ahead and wire the silence policy
+into `jobs/deploy-alerts.sh`, as the slice order says.
+
 ## Agentic review
 
 ### Verdict
