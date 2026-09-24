@@ -129,38 +129,53 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-- Filled in this brief (commit ebc249f), folding in the overseer's firedrill
-  memory message under Context.
-- `jobs/poll_dataform_failures.py`: `get_failed_invocations` now loops on
-  `nextPageToken` until a page has none, still filtering `startTime` vs
-  `since` per invocation on every page (jobs/poll_dataform_failures.py:71-110).
-- `jobs/poll_dataform_failures.py`: `main()` now collects alerted failures
-  into `alerted_events` (name -> list of {repo, inv_id, detail}) and calls
-  `raillog.alert()` once per action name via new `summarize_alert_events()`,
-  instead of once per failing invocation (jobs/poll_dataform_failures.py:185-256).
-- New `tests/test_poll_dataform_failures.py`, 5 tests, all offline
-  (fakes `requests.get`, `bigquery.Client`, `raillog.alert` — no live
-  Dataform/BigQuery). Proved red-then-green: ran the 2 new-behavior tests
-  against the pre-fix code first (both failed — pagination test found 0 of
-  2 later-page failures; alert test saw 3 calls instead of 1), then against
-  the fixed code (5/5 pass). Also covers: pagination stops when a page has
-  no `nextPageToken`; grouping doesn't drop any app_logs row; the existing
-  fetch-failure -> SOURCE_FAILED-alert-and-exit-1 path still works.
-- Committed the fix and tests together as 3564257 ("Page through every
-  Dataform invocations page; alert once per action, not per failure").
-  `git status` is clean; `origin/main` unchanged since branch start
-  (67d3060) — nothing to merge.
-- `wt-done.sh --check poller-paging` passes: "would land cleanly (clean
-  tree, origin/main merged) — nothing changed".
+- Original fix + tests: brief filled (ebc249f), pagination + alert-grouping
+  fix (3564257), reported to overseer, first review came back CHANGES with
+  1 blocker + several minors (findings below). Now fixing each in its own
+  commit, per the overseer's instructions.
+- Fixed blocker #1 (90064f2): the repo loop in `main()` is now wrapped in
+  `try/finally`; `alerted_events` is sent from the `finally` so an
+  exception partway through the loop (e.g. `get_failed_action_names`
+  raising on a later invocation) can't drop alerts already collected for
+  earlier, already-logged invocations. Also corrected the neighbouring
+  comment about when a raise here does/doesn't get re-checked next run
+  (jobs/poll_dataform_failures.py:213-274, was item 6). Proved red first:
+  new test with a "first" invocation that alerts and a "second" whose
+  action lookup raises — asserted 1 alert call, failed with 0 against
+  pre-fix code; green after the fix, 6/6 pass.
+- Fixed minor #2 (1cbdb81): `get_failed_invocations` now passes `pageToken`
+  via `requests.get(..., params=...)` instead of gluing it into the URL
+  string unencoded (jobs/poll_dataform_failures.py:81-90). Test fakes
+  updated to accept/inspect `params` instead of matching URL substrings.
+- Fixed minor #3 (4a878f0): added a `seen_tokens` set in
+  `get_failed_invocations`; raises if the API ever repeats a
+  `nextPageToken`, which now feeds the existing SOURCE_FAILED/exit-1 path
+  instead of looping until Cloud Run's task timeout (jobs/poll_dataform_failures.py:108-116).
+  New test proves it raises.
+- Added item-4 test (74d9738): page 1 succeeds, page 2 returns HTTP 500 —
+  confirms `raise_for_status` propagates out and `main()` still sends
+  SOURCE_FAILED and exits 1. No code change needed (overseer already
+  verified this path was correct).
+- All fixes to date: 8/8 tests pass
+  (`/opt/anaconda3/bin/pytest tests/test_poll_dataform_failures.py`).
 
-In flight (file:line): none — task complete, awaiting overseer review.
+In flight (file:line): still owed from the review —
+- item 5: `summarize_alert_events` (jobs/poll_dataform_failures.py, near
+  line 185) should start its message "Dataform action failed N time(s) —
+  ..." instead of dropping that wording.
+- item 8: missing docstrings — `main()` has none; `get_failed_invocations`'s
+  docstring doesn't state its output shape (list of
+  `{inv_id, start_at, tags}`); test helpers `iso()` and `invocation()` have
+  none.
+- After those two commits: re-run the full test file, `git add -N .` +
+  `git status --short` for a clean tree, `wt-done.sh --check poller-paging`,
+  then report the new commit range + red-then-green proof (already have it
+  for the blocker) + pytest count + the check's exit code back to the
+  overseer, per its instructions. Do NOT fill in the brief's Verdict line —
+  overseer does that after re-review.
 
-Next: report to the overseer (branch, commits ebc249f..3564257, HEAD
-3564257) and wait. Overseer then reviews the diff, redeploys
-`poll-dataform-failures` from `jobs/Dockerfile.poll_dataform` off `main`
-after landing, and redoes the break-on-purpose firedrill against policies
-13511530526976011919 (log-match) / 9606063400841394205 (threshold) to
-prove they fire now.
+Next: finish items 5 and 8 (each own commit), verify clean/green, report to
+`helpdesk-opzichter`, then stop and wait for the re-review verdict.
 
 Traps (with dates):
 - 2026-09-24: this worktree's `python3` has no pytest. Use
@@ -170,6 +185,9 @@ Traps (with dates):
   `tests/test_poll_dataform_failures.py` here, don't run the whole suite
   unless credentials are meant to be live.
 - 2026-09-23: a `get_failed_invocations` fetch error must still exit
-  non-zero with a `SOURCE_FAILED` alert — this task's refactor kept that
-  path (see `test_fetch_failure_still_alerts_and_exits_nonzero`), don't
-  let a future edit swallow it again.
+  non-zero with a `SOURCE_FAILED` alert — kept covered through every
+  review round, don't let a future edit swallow it again.
+- 2026-09-24 (review round 1): any fake `requests.get` in this test file
+  must accept a `params=None` kwarg now (pagination uses `params=`, not a
+  glued URL) — a fake missing it raises TypeError on call, not a normal
+  assertion failure.
