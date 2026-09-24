@@ -95,13 +95,16 @@ def test_get_failed_invocations_follows_pagination(monkeypatch):
 
     calls = []
 
-    def fake_get(url, headers=None, timeout=None):
-        calls.append(url)
-        if "pageToken=tok-3" in url:
+    def fake_get(url, headers=None, params=None, timeout=None):
+        # params, not a hand-glued query string — a token containing "+",
+        # "/" or "&" is passed through requests' own encoding this way
+        # (overseer review 2026-09-24, minor #2).
+        calls.append(params.get("pageToken"))
+        if params.get("pageToken") == "tok-3":
             return FakeResponse(page3)
-        if "pageToken=tok-2" in url:
+        if params.get("pageToken") == "tok-2":
             return FakeResponse(page2)
-        assert "pageToken" not in url
+        assert "pageToken" not in params
         return FakeResponse(page1)
 
     monkeypatch.setattr(poller.requests, "get", fake_get)
@@ -119,8 +122,8 @@ def test_get_failed_invocations_stops_when_a_page_has_no_next_token(monkeypatch)
     }
     calls = []
 
-    def fake_get(url, headers=None, timeout=None):
-        calls.append(url)
+    def fake_get(url, headers=None, params=None, timeout=None):
+        calls.append(params)
         return FakeResponse(single_page)
 
     monkeypatch.setattr(poller.requests, "get", fake_get)
@@ -149,8 +152,8 @@ def test_main_sends_one_summary_alert_not_one_per_failure(monkeypatch):
         ]
     }
 
-    def fake_get(url, headers=None, timeout=None):
-        if "/workflowInvocations?pageSize=50" in url:
+    def fake_get(url, headers=None, params=None, timeout=None):
+        if url.endswith("/workflowInvocations"):
             return FakeResponse(backlog_page)
         if url.endswith(":query?pageSize=200"):
             return FakeResponse(action_names_response)
@@ -189,8 +192,8 @@ def test_main_still_logs_every_backlog_failure_to_app_logs(monkeypatch):
     }
     action_names_response = {"workflowInvocationActions": []}  # not an alerted action
 
-    def fake_get(url, headers=None, timeout=None):
-        if "/workflowInvocations?pageSize=50" in url:
+    def fake_get(url, headers=None, params=None, timeout=None):
+        if url.endswith("/workflowInvocations"):
             return FakeResponse(backlog_page)
         if url.endswith(":query?pageSize=200"):
             return FakeResponse(action_names_response)
@@ -234,8 +237,8 @@ def test_main_sends_grouped_alert_even_when_a_later_invocation_raises(monkeypatc
         ],
     }
 
-    def fake_get(url, headers=None, timeout=None):
-        if "/workflowInvocations?pageSize=50" in url:
+    def fake_get(url, headers=None, params=None, timeout=None):
+        if url.endswith("/workflowInvocations"):
             return FakeResponse(backlog_page)
         return FakeResponse({}, 200)  # get_dataform_error's detail fetch
 
@@ -267,7 +270,7 @@ def test_main_sends_grouped_alert_even_when_a_later_invocation_raises(monkeypatc
 # ── existing behaviour must not regress: a fetch failure still alerts and exits non-zero ──
 
 def test_fetch_failure_still_alerts_and_exits_nonzero(monkeypatch):
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, headers=None, params=None, timeout=None):
         raise RuntimeError("network down")
 
     alert_calls = []

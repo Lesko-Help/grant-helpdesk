@@ -79,13 +79,14 @@ def get_failed_invocations(token: str, repo: str, since: datetime) -> list[dict]
     time filter itself is unchanged; only how many pages feed it changed.
     """
     headers = {"Authorization": f"Bearer {token}"}
+    url = f"{DATAFORM_BASE}/{repo}/workflowInvocations"
     failed = []
     page_token = None
     while True:
-        url = f"{DATAFORM_BASE}/{repo}/workflowInvocations?pageSize=50"
+        params = {"pageSize": 50}
         if page_token:
-            url += f"&pageToken={page_token}"
-        resp = requests.get(url, headers=headers, timeout=30)
+            params["pageToken"] = page_token
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
         resp.raise_for_status()
         body = resp.json()
 
