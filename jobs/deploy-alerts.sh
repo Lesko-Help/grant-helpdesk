@@ -214,7 +214,13 @@ METRIC_NAME="${JOB//-/_}_btb_alert_count"
 METRIC_FILTER=$(python3 "$SCRIPT_DIR/alert_payloads.py" metric-filter "$JOB")
 METRIC_DESCRIBE_ERR="$(mktemp)"
 if gcloud logging metrics describe "$METRIC_NAME" --project "$PROJECT" >/dev/null 2>"$METRIC_DESCRIBE_ERR"; then
-  echo "==> metric '$METRIC_NAME' exists, leaving it"
+  EXISTING_METRIC_FILTER=$(gcloud logging metrics describe "$METRIC_NAME" --project "$PROJECT" --format='value(filter)')
+  if [ "$EXISTING_METRIC_FILTER" = "$METRIC_FILTER" ]; then
+    echo "==> metric '$METRIC_NAME' exists and matches — leaving it"
+  else
+    echo "==> metric '$METRIC_NAME' filter has drifted from this file — updating"
+    gcloud logging metrics update "$METRIC_NAME" --project "$PROJECT" --log-filter="$METRIC_FILTER" >/dev/null
+  fi
 elif grep -q "NOT_FOUND" "$METRIC_DESCRIBE_ERR"; then
   echo "==> creating metric '$METRIC_NAME'"
   gcloud logging metrics create "$METRIC_NAME" --project "$PROJECT" \
