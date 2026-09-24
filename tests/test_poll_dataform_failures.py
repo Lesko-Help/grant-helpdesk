@@ -303,3 +303,35 @@ def test_fetch_failure_still_alerts_and_exits_nonzero(monkeypatch):
 
     assert exc.value.code == 1
     assert any(code == "SOURCE_FAILED" for _, code, _ in alert_calls)
+
+
+def test_main_alerts_source_failed_when_a_later_page_errors(monkeypatch):
+    # Overseer review 2026-09-24, item 4: an HTTP error on page N>1 must be
+    # handled the same as an error on page 1 -- raise_for_status raises out
+    # of get_failed_invocations (no partial list returned), and main()'s
+    # existing fetch-error handler sends SOURCE_FAILED and exits 1. Page 1
+    # is fine here; page 2 (pageToken=tok-2) is a 500.
+    page1 = {
+        "workflowInvocations": [invocation("p1", "FAILED", SINCE + timedelta(hours=1))],
+        "nextPageToken": "tok-2",
+    }
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        if params and params.get("pageToken") == "tok-2":
+            return FakeResponse({}, status_code=500)
+        return FakeResponse(page1)
+
+    alert_calls = []
+
+    monkeypatch.setattr(poller, "REPOSITORIES", ["grant-helpdesk"])
+    monkeypatch.setattr(poller.requests, "get", fake_get)
+    monkeypatch.setattr(poller, "get_token", lambda: "tok")
+    monkeypatch.setattr(poller, "last_logged_at", lambda bq, repo: SINCE)
+    monkeypatch.setattr(poller.bigquery, "Client", FakeBigQuery)
+    monkeypatch.setattr(poller.raillog, "alert", lambda *a: alert_calls.append(a))
+
+    with pytest.raises(SystemExit) as exc:
+        poller.main()
+
+    assert exc.value.code == 1
+    assert any(code == "SOURCE_FAILED" for _, code, _ in alert_calls)
