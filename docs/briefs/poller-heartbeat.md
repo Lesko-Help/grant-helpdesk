@@ -194,6 +194,14 @@ for its reply before starting slice K+1 — it writes a slice file, asks
 Martin in its own pane, and relays his answer back to you. Record that
 reply here before continuing. Never ask Martin directly in this window.
 
+**Slice 2 reply (2026-09-24, relayed by helpdesk-opzichter):** Martin's
+answer was "Continue to slice 3" — go ahead with the runbook text and its
+test. The overseer also said: when the brief's done-when holds, send it
+the done-when report directly (branch, commit range, summary, how
+red-then-green was proven, deploy implied) — it did not ask for a
+separate "slice 3 done - continue or re-steer?" pause first, since slice
+3 is the last slice.
+
 **Slice 1 reply (2026-09-24, relayed by helpdesk-opzichter):** Martin's
 answer was "Continue to slice 2" — go ahead and wire the silence policy
 into `jobs/deploy-alerts.sh`, as the slice order says.
@@ -314,32 +322,56 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done: brief filled in (commit 20d0278, first on branch). Slice 1 done and
-committed (43f5d4e): absence_policy() added to jobs/alert_payloads.py:249
-(SILENCE_WINDOW_SECONDS=5400 at jobs/alert_payloads.py:222), plus the
-absence-policy CLI kind, plus 8 tests appended to
-tests/test_deploy_alerts_payloads.py (all pass via
-`/opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q` — 22
-passed; red-then-green-then-red-then-green transcript is pasted into this
-brief's Slices section under slice 1). Reported to overseer, Martin said
-"Continue to slice 2" (relayed 2026-09-24, recorded in Slices section,
-commit 432453f).
-In flight: slice 2 — wiring absence_policy() into jobs/deploy-alerts.sh.
-Was about to add a new section at the end (TITLE_SILENCE, PAYLOAD_SILENCE,
-apply_policy "$TITLE_SILENCE" "$PAYLOAD_SILENCE") right before the closing
-"Policies now watching..." listing loop at the very end of the file — no
-code written yet for this slice.
-Next: write that section in jobs/deploy-alerts.sh, run `bash -n
-jobs/deploy-alerts.sh`, then prove it offline with fake curl/gcloud on
-PATH in the scratchpad (not committed): one run where the silence POST
-returns {"error":...} and the script must exit 1; a second run where it
-returns a matching policy and the script prints "exists and matches" and
-exits 0. Paste both transcripts into the brief's slice 2 line, commit,
-report to overseer, wait for reply — then slice 3 (runbook content + its
-test).
+committed (43f5d4e): absence_policy() at jobs/alert_payloads.py:217
+(SILENCE_WINDOW_SECONDS=5400 at jobs/alert_payloads.py:209), plus the
+absence-policy CLI kind, plus 8 tests in
+tests/test_deploy_alerts_payloads.py. Reported to overseer, Martin said
+"Continue to slice 2" (commit 432453f). Slice 2 done and committed
+(ebfe22f): the silence section wired into jobs/deploy-alerts.sh (lines
+251-261, right after the threshold apply_policy call and before the
+closing listing loop), plus the header-comment paragraph explaining it
+(lines 53-60). Proved with `bash -n` (SYNTAX OK) and two offline runs
+using fake curl/gcloud on PATH from the scratchpad (stubs/curl,
+stubs/gcloud — python3 scripts, not committed): run 1 (no `run2` marker)
+reaches the silence create POST, gets `{"error":...}`, exits 1 without
+touching the two earlier policies; run 2 (`run2` marker present) has
+find_policy return a real absence_policy()-built match, prints "exists
+and matches", exits 0. Both transcripts pasted into the brief's slice 2
+line. Reported to overseer, Martin said "Continue to slice 3" (relayed
+2026-09-24, not yet recorded verbatim in the Slices STOP paragraph —
+do that first on resume). Slice 3 code done but NOT yet committed:
+absence_policy()'s `content` in jobs/alert_payloads.py:232-253 now has
+the real runbook (gcloud run jobs executions list command, scheduler job
+name poll-dataform-failures-hourly, usual causes, the "blind poller"
+limit, how to resume — a gcloud run jobs execute command). Added
+test_absence_policy_documentation_is_a_runbook in
+tests/test_deploy_alerts_payloads.py (right before
+test_same_policy_absence_round_trip) asserting those three substrings.
+Proved red (appended a 4th false assertion, got AssertionError) then
+reverted it and confirmed green — 23 passed via
+`/opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q`.
+Next: record Martin's slice-3 go-ahead verbatim in the Slices STOP
+paragraph (docs/briefs/poller-heartbeat.md, after the slice list, same
+format as the slice-1 reply). Paste the pytest proof (green, the
+deliberate-break red, green again) into slice 3's line. Commit slice 3
+(jobs/alert_payloads.py + tests/test_deploy_alerts_payloads.py + brief).
+Report slice 3 done to the overseer and wait for its reply — but per the
+overseer's last message it already said to send the done-when report
+directly once done-when holds, so slice 3's own "continue or re-steer?"
+step may be skippable; re-read the overseer's message before deciding.
+Then: done-when checklist — merge origin/main once, `git add -N .`,
+`wt-done.sh --check poller-heartbeat` until it exits 0, send the overseer
+the final report (branch poller-heartbeat, commit range 20d0278..HEAD,
+summary, red-then-green proof summary, deploy implied from the brief).
 Traps (with dates): see Context section above, items 1-8 (all 2026-09-14
 to 2026-09-24, from the overseer's memory relay) — notably #3/#4 (API
 omits zero-value fields on read; re-read after a CREATE error before
 retrying) apply to apply_policy()'s existing find_policy/same_policy
-logic, which slice 2 reuses unchanged, not to new code.
+logic, reused unchanged by slices 2-3.
 This checkout's system `python3 -m pytest` has no pytest installed — use
 `/opt/anaconda3/bin/pytest` for every test run in this worktree.
+Offline curl/gcloud stubs for testing deploy-alerts.sh live at
+$SCRATCHPAD/stubs/{curl,gcloud} (python3, executable, not committed) — a
+`run2` marker file in that same dir switches the silence-policy lookup
+from "not found" to "found, matching"; delete it between runs that need
+"not found".
