@@ -184,6 +184,40 @@ def threshold_policy(title, job, project, channel, metric_name):
     }
 
 
+def same_policy(existing, want):
+    """Input: two AlertPolicy dicts — `existing` as Monitoring's API returns
+    it for a live policy, `want` as this script's own payload builders
+    produce it. Output: True if they describe the same policy (no PATCH
+    needed), False if `want` should be applied. Why: the API omits fields
+    still holding their zero/default value on read — thresholdValue: 0 and
+    duration: "0s" have both been seen missing from a live conditionThreshold
+    even though this script always sets them explicitly. A plain dict
+    comparison in deploy-alerts.sh's apply_policy() saw that as permanent
+    drift and re-PATCHed a policy that already matched on every clean re-run
+    (round-3 review should-fix #4). Filling the same defaults back onto
+    `existing` before comparing makes a policy that already matches actually
+    compare equal.
+    """
+    defaults = {"thresholdValue": 0, "duration": "0s"}
+
+    def cond_sans_name(policy):
+        cond = dict(policy.get("conditions", [{}])[0])
+        cond.pop("name", None)
+        threshold = cond.get("conditionThreshold")
+        if threshold is not None:
+            threshold = dict(threshold)
+            for key, default in defaults.items():
+                threshold.setdefault(key, default)
+            cond["conditionThreshold"] = threshold
+        return cond
+
+    return (
+        cond_sans_name(existing) == cond_sans_name(want)
+        and existing.get("alertStrategy") == want.get("alertStrategy")
+        and existing.get("documentation") == want.get("documentation")
+    )
+
+
 def _main(argv):
     """Input: argv (sys.argv). Output: process exit code. Why: gives
     deploy-alerts.sh a stable CLI so both it and the offline test call the
@@ -194,6 +228,7 @@ def _main(argv):
             "usage: alert_payloads.py metric-filter JOB\n"
             "       alert_payloads.py log-match-policy TITLE JOB PROJECT CHANNEL\n"
             "       alert_payloads.py threshold-policy TITLE JOB PROJECT CHANNEL METRIC_NAME\n"
+            "       alert_payloads.py same-policy EXISTING_JSON WANT_JSON\n"
         )
         return 1
     kind = argv[1]
@@ -205,6 +240,9 @@ def _main(argv):
     elif kind == "threshold-policy" and len(argv) == 7:
         title, job, project, channel, metric_name = argv[2:7]
         print(json.dumps(threshold_policy(title, job, project, channel, metric_name)))
+    elif kind == "same-policy" and len(argv) == 4:
+        existing, want = json.loads(argv[2]), json.loads(argv[3])
+        print("True" if same_policy(existing, want) else "False")
     else:
         sys.stderr.write(f"bad arguments for kind {kind!r}\n")
         return 1

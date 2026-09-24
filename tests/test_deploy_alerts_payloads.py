@@ -18,7 +18,8 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(REPO_ROOT, "jobs"))
 
-from alert_payloads import log_match_policy, metric_log_filter, threshold_policy  # noqa: E402
+from alert_payloads import (  # noqa: E402
+    log_match_policy, metric_log_filter, same_policy, threshold_policy)
 
 CHANNEL = "projects/bigtribebuilders/notificationChannels/4324299381952164741"
 METRIC_NAME = "poll_dataform_failures_btb_alert_count"
@@ -120,3 +121,26 @@ def test_cli_metric_filter_matches_direct_call():
          "metric-filter", "poll-dataform-failures"],
         capture_output=True, text=True, check=True)
     assert result.stdout.strip() == metric_log_filter("poll-dataform-failures")
+
+
+def test_same_policy_ignores_api_omitted_defaults():
+    # Round-3 review should-fix #4: the Monitoring API omits fields still
+    # holding their zero/default value on read, so a policy that was created
+    # from this exact payload can come back from GET without thresholdValue
+    # or duration at all. Without normalizing those back in, apply_policy
+    # would call this "drifted" and re-PATCH on every clean re-run.
+    want = threshold_policy(
+        "TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL, METRIC_NAME)
+    existing = json.loads(json.dumps(want))  # deep copy
+    existing["conditions"][0]["name"] = "projects/bigtribebuilders/alertPolicies/123/conditions/456"
+    del existing["conditions"][0]["conditionThreshold"]["thresholdValue"]
+    del existing["conditions"][0]["conditionThreshold"]["duration"]
+    assert same_policy(existing, want) is True
+
+
+def test_same_policy_still_detects_real_drift():
+    want = threshold_policy(
+        "TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL, METRIC_NAME)
+    existing = json.loads(json.dumps(want))
+    existing["conditions"][0]["conditionThreshold"]["filter"] = "metric.type=\"something-else\""
+    assert same_policy(existing, want) is False

@@ -153,18 +153,7 @@ print('   created')
   fi
 
   local same
-  same=$(python3 -c "
-import json, sys
-existing, want = json.loads(sys.argv[1]), json.loads(sys.argv[2])
-def cond_sans_name(p):
-    c = dict(p.get('conditions', [{}])[0])
-    c.pop('name', None)
-    return c
-same = (cond_sans_name(existing) == cond_sans_name(want)
-        and existing.get('alertStrategy') == want['alertStrategy']
-        and existing.get('documentation') == want['documentation'])
-print('True' if same else 'False')
-" "$existing" "$payload")
+  same=$(python3 "$SCRIPT_DIR/alert_payloads.py" same-policy "$existing" "$payload")
   if [ "$same" = "True" ]; then
     echo "==> '$title' exists and matches — leaving it"
     return
