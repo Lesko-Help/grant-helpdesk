@@ -18,6 +18,7 @@ Every other action's failure still only reaches app_logs, same as before.
 import os
 import sys
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -68,28 +69,44 @@ def last_logged_at(bq: bigquery.Client, repo: str) -> datetime:
 
 
 def get_failed_invocations(token: str, repo: str, since: datetime) -> list[dict]:
-    """Fetch FAILED workflow invocations for a repository created after `since`."""
-    url = f"{DATAFORM_BASE}/{repo}/workflowInvocations?pageSize=50"
-    headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    invocations = resp.json().get("workflowInvocations", [])
+    """Fetch FAILED workflow invocations for a repository created after `since`.
 
+    Walks every page (`nextPageToken`) instead of stopping at the first 50:
+    the Dataform API returns invocations in no time order, so a failure
+    newer than `since` can land on any page, not just the first — reading
+    one page only means the age of `since` decides nothing, the age of the
+    invocations that happen to sort onto page 1 does. The per-invocation
+    time filter itself is unchanged; only how many pages feed it changed.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
     failed = []
-    for inv in invocations:
-        if inv.get("state") != "FAILED":
-            continue
-        start_str = inv.get("invocationTiming", {}).get("startTime", "")
-        if not start_str:
-            continue
-        start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-        if start_dt <= since:
-            continue
-        failed.append({
-            "inv_id":   inv["name"].split("/")[-1],
-            "start_at": start_dt,
-            "tags":     inv.get("invocationConfig", {}).get("includedTags", []),
-        })
+    page_token = None
+    while True:
+        url = f"{DATAFORM_BASE}/{repo}/workflowInvocations?pageSize=50"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        body = resp.json()
+
+        for inv in body.get("workflowInvocations", []):
+            if inv.get("state") != "FAILED":
+                continue
+            start_str = inv.get("invocationTiming", {}).get("startTime", "")
+            if not start_str:
+                continue
+            start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+            if start_dt <= since:
+                continue
+            failed.append({
+                "inv_id":   inv["name"].split("/")[-1],
+                "start_at": start_dt,
+                "tags":     inv.get("invocationConfig", {}).get("includedTags", []),
+            })
+
+        page_token = body.get("nextPageToken")
+        if not page_token:
+            break
     return failed
 
 
@@ -165,12 +182,28 @@ def log_failure(bq: bigquery.Client, repo: str, inv_id: str, start_at: datetime,
         print(f"  [WARN] BQ insert error for log row: {errors}")
 
 
+def summarize_alert_events(events: list[dict]) -> str:
+    """Turn one action name's failures this run into a single alert message.
+
+    Input: a list of `{"repo", "inv_id", "detail"}` dicts, one per failing
+    invocation of that action. Output: one string naming the count and up
+    to 5 of them by repo/invocation/detail, with the rest counted but not
+    listed. Exists so a backlog of many failures for the same action pages
+    someone once, with enough to act on, instead of flooding one email per
+    row — the row-level detail still went to app_logs in full either way.
+    """
+    lines = [f"{e['repo']}/{e['inv_id']}: {e['detail']}" for e in events]
+    shown = lines[:5]
+    suffix = "" if len(lines) <= 5 else f" (+{len(lines) - 5} more)"
+    return f"{len(events)} failure(s) — {'; '.join(shown)}{suffix}"
+
+
 def main():
     bq    = bigquery.Client(project=PROJECT)
     token = get_token()
 
     total_logged     = 0
-    alerted_names    = []   # ALERTED_ACTIONS members seen failing this run, for the exit code
+    alerted_events   = defaultdict(list)  # action name -> failures this run, for one alert per name
     any_fetch_failed = False  # a repo we couldn't even list invocations for, also for the exit code
 
     for repo in REPOSITORIES:
@@ -205,17 +238,22 @@ def main():
             print(f"  Logged: {inv['inv_id'][:20]}... | {detail[:80]}")
             total_logged += 1
 
+            # Collected here, alerted once per name after the loop below —
+            # a backlog run (e.g. the first run after a paging fix) can
+            # have many failures for the same action, and Martin's
+            # decision is one summary BTB_ALERT for that action, not one
+            # per failure. Every failure still gets its own app_logs row
+            # above regardless of this grouping.
             for name in ALERTED_ACTIONS.intersection(failed_names):
-                raillog.alert(
-                    name, "SOURCE_FAILED",
-                    f"Dataform action failed in {repo}, invocation {inv['inv_id']}: {detail}"
-                )
-                alerted_names.append(name)
+                alerted_events[name].append({"repo": repo, "inv_id": inv["inv_id"], "detail": detail})
+
+    for name, events in alerted_events.items():
+        raillog.alert(name, "SOURCE_FAILED", summarize_alert_events(events))
 
     print(f"\nDone — {total_logged} failure(s) logged to app_logs.")
-    if alerted_names:
-        print(f"[ALERT] {len(alerted_names)} alerted action failure(s): {', '.join(alerted_names)}")
-    if alerted_names or any_fetch_failed:
+    if alerted_events:
+        print(f"[ALERT] {len(alerted_events)} alerted action(s) with failures: {', '.join(alerted_events)}")
+    if alerted_events or any_fetch_failed:
         sys.exit(1)  # failure looks like failure — see the global CLAUDE.md rule
 
 
