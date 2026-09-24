@@ -280,9 +280,26 @@ def absence_policy(title, job, project, channel, window_seconds=SILENCE_WINDOW_S
         "combiner": "OR",
         "enabled": True,
         "alertStrategy": {
+            # 7 days is fine for autoClose here even though a silence can, by
+            # definition, run longer than that: Monitoring re-notifies every
+            # renotifyInterval regardless of autoClose, so a silence past 7
+            # days does not go quiet — it keeps re-notifying under a fresh
+            # incident instead of the same one. Checked live during the
+            # pause/resume fire drill (brief's Deploy implied), not just
+            # assumed.
             "autoClose": "604800s",
             "notificationChannelStrategy": [{
                 "notificationChannelNames": [channel],
+                # 86400s (24h) exactly — unlike threshold_policy()'s 82800s
+                # workaround above, this does NOT need to stay under its
+                # condition's window. That workaround exists because a
+                # conditionThreshold's rolling-sum window can clear and
+                # auto-resolve the incident before a same-length
+                # renotifyInterval would fire. conditionAbsent has no such
+                # window to clear while the condition is still true — it
+                # just keeps being absent — so renotifyInterval can equal
+                # the "renotify every 24h" requirement exactly. Do not
+                # shorten this to match the sibling policy.
                 "renotifyInterval": "86400s",
             }],
         },
