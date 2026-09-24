@@ -342,7 +342,9 @@ fixed in new commits, per-finding:**
 
 ## Agentic review
 
-**Verdict (from `helpdesk-opzichter`, cross-session review of this branch):**
+Verdict: pass — round 2, 2026-09-23, helpdesk-opzichter: all 14 findings fixed and verified at 58b7ca0 (compile, 017 dry-run, py/sh syntax, staff address gone from history)
+
+**Round 1 verdict (from `helpdesk-opzichter`, cross-session review of this branch):**
 CHANGES NEEDED — 14 findings.
 
 **Findings, summarized:**
