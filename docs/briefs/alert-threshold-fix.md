@@ -57,11 +57,13 @@ Dataform) passes, including two new/changed tests:
    longer exists) while its `alignmentPeriod`/`perSeriesAligner` assertions
    stay.
 
-Best-effort, not blocking: an offline check that `deploy-alerts.sh`'s
-create-policy path exits non-zero on this exact API error (stub the error
-JSON, no live gcloud/network) — the overseer asked for this but has no live
-run to confirm the fix against, so if it can't be done cleanly offline it is
-noted in the report instead of forced in.
+Checked offline (not a committed test — a one-off scratch repro, see report
+to overseer): `deploy-alerts.sh`'s create-policy path pipes the API's error
+JSON through a `python3 -c` snippet that calls `sys.exit(1)` on an `"error"`
+key; reproduced that exact snippet standalone under `set -euo pipefail` with
+the live error JSON as input and confirmed the enclosing script exits 1
+without reaching any later line. No code change needed there — `pipefail`
+already propagates it correctly.
 
 Spec: unchanged because this repo has no `docs/specs/` tree yet (checked —
 `docs/specs` does not exist), so there is nothing to update.
