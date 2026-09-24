@@ -187,6 +187,28 @@ All payload-shape only. No gcloud, no network, no live Dataform, BigQuery or Mon
        ```
 3. **Runbook + fire-drill note.** `documentation.content` covers what went silent, the last run (`gcloud run jobs executions list --job poll-dataform-failures --region europe-west1 --project bigtribebuilders --limit 5`), usual causes (scheduler paused or failing, job failing (see the "execution failed" alert), image broken), the blind-poller limit, and how to resume. Add the runbook test. Proof: pytest green. The brief's "Deploy implied" holds the overseer's steps: after landing, from main, run `jobs/deploy-alerts.sh` twice. The 2nd run must say "exists and matches" for every policy. Then, with Martin's per-action OK: `gcloud scheduler jobs pause poll-dataform-failures-hourly …`, wait until the BTB-ALERT mail arrives (about 95 min after the last success) and record the minutes, then `resume`, and confirm the incident closes after the next run. No `deploy.sh`: the job's image does not change.
 
+   - **Proof, run 2026-09-24.** Green with the real runbook content:
+     ```
+     $ /opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q
+     .......................                                                  [100%]
+     23 passed in 0.15s
+     ```
+     Proved the new test can fail: appended a 4th, false assertion
+     (`assert "this line intentionally wrong" in content`) to
+     `test_absence_policy_documentation_is_a_runbook`:
+     ```
+     $ /opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q -k test_absence_policy_documentation_is_a_runbook
+     F                                                                        [100%]
+     AssertionError: assert 'this line intentionally wrong' in 'No successful run of poll-dataform-failures in the last 90 minutes ...'
+     1 failed, 22 deselected in 0.03s
+     ```
+     Reverted the false assertion, green again:
+     ```
+     $ /opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q
+     .......................                                                  [100%]
+     23 passed in 0.15s
+     ```
+
 STOP: after every slice, message the overseer (SendMessage — find it with
 ListAgents if the name needs a [ref]): "slice K done - continue or
 re-steer?" plus a one-line summary of the slice and its proof line. Wait

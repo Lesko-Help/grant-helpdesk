@@ -258,6 +258,16 @@ def test_cli_absence_policy_matches_direct_call():
     assert via_cli == via_call
 
 
+def test_absence_policy_documentation_is_a_runbook():
+    # Slice 3: the placeholder content from slice 1 gets replaced with a real
+    # runbook — what Martin needs at 3am, not just what the condition is.
+    policy = absence_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    content = policy["documentation"]["content"]
+    assert "gcloud run jobs executions list" in content
+    assert "poll-dataform-failures-hourly" in content
+    assert "blind poller" in content
+
+
 def test_same_policy_absence_round_trip():
     want = absence_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
 

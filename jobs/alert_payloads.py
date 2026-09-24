@@ -231,9 +231,27 @@ def absence_policy(title, job, project, channel, window_seconds=SILENCE_WINDOW_S
     """
     content = (
         f"No successful run of {job} in the last {window_seconds // 60} "
-        "minutes (its hourly schedule plus a margin). See "
-        "docs/briefs/poller-heartbeat.md for how to check the last run and "
-        "resume — filled in by slice 3."
+        "minutes (its hourly schedule plus a margin).\n\n"
+        "Check the last run:\n"
+        f"  gcloud run jobs executions list --job {job} --region "
+        f"europe-west1 --project {project} --limit 5\n\n"
+        "Usual causes:\n"
+        f"  - Scheduler job {job}-hourly is paused, deleted, or itself "
+        "failing to trigger — check it in Cloud Scheduler.\n"
+        f"  - {job} is running but exiting non-zero — see the separate "
+        f'"any Cloud Run job execution failed" alert for this job.\n'
+        "  - The job's container image is broken (bad deploy, missing "
+        "credentials) and every execution fails before it can succeed.\n\n"
+        "Known limit: this alert only proves a run finished with exit 0 — "
+        "it does not catch a blind poller that runs fine but reads too "
+        "little (see docs/briefs/poller-heartbeat.md, Product). Until "
+        "worktree poller-paging lands, the job reads only page 1 of "
+        "Dataform invocations and still exits 0.\n\n"
+        "To resume: fix the cause above, then either wait for the next "
+        "hourly run or trigger one by hand:\n"
+        f"  gcloud run jobs execute {job} --region europe-west1 --project "
+        f"{project}\n"
+        "The incident closes automatically on the next successful run."
     )
     return {
         "displayName": title,
