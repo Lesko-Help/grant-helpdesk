@@ -152,15 +152,20 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done: brief filled in and committed (fc1f911). Wrote
-tests/test_deploy_alerts_payloads.py (7 cases) against jobs/alert_payloads.py,
-which does not exist yet — confirmed red: `ModuleNotFoundError` on collection.
-In flight (file:line): tests/test_deploy_alerts_payloads.py:22 imports
-`alert_payloads` — next step is writing that module to turn this green.
-Next: write jobs/alert_payloads.py; run tests green (use
-`/opt/anaconda3/bin/pytest` — the default `python3` has no pytest installed,
-see trap below); wire jobs/deploy-alerts.sh to call it for the new metric +
-threshold policy; `bash -n jobs/deploy-alerts.sh`; commit; merge origin/main;
-wt-done.sh --check; report to helpdesk-opzichter.
+tests/test_deploy_alerts_payloads.py, confirmed red (804d72c), then
+jobs/alert_payloads.py, confirmed green — 7/7 via
+`/opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q`, full
+suite still 51/51 (39acecf). Wired jobs/deploy-alerts.sh to call it for the
+new metric + threshold policy, right after the existing log-match policy's
+apply_policy call; `bash -n jobs/deploy-alerts.sh` clean; manually walked
+JOB/PROJECT/CHANNEL through both CLI calls and confirmed well-formed JSON
+(87564ee).
+In flight: none — tree clean after 87564ee.
+Next: merge origin/main once; `git add -N .`; `wt-done.sh --check
+alert-renotify-metric` until it exits 0; report to helpdesk-opzichter with
+commit range fc1f911..87564ee and the note that this repo has no
+docs/specs/ or docs/gates/ at all (nothing to update, flagged for the
+overseer rather than silently assumed).
 Traps (with dates):
 - 2026-09-24: `conditionMatchedLog` (log-match) policies reject
   `alertStrategy.notificationChannelStrategy` outright — confirmed live
