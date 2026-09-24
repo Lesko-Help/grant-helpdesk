@@ -177,7 +177,20 @@ def threshold_policy(title, job, project, channel, metric_name):
             "autoClose": "604800s",
             "notificationChannelStrategy": [{
                 "notificationChannelNames": [channel],
-                "renotifyInterval": "86400s",
+                # renotifyInterval 82800s (23h), one hour SHORTER than the
+                # condition's own 86400s alignmentPeriod above — not the same
+                # value. For a one-off BTB_ALERT line at time T, the 24h
+                # rolling sum window clears at about T+24h; if renotifyInterval
+                # also equaled 86400s, the re-notify (due at roughly
+                # T+ingestion-lag+24h) would be scheduled to fire AFTER the
+                # window has already cleared, so the incident could
+                # auto-resolve first and the second email would never go out
+                # (round-4 review blocker #9). Keeping renotifyInterval an
+                # hour under alignmentPeriod means the re-notify always fires
+                # while the sum is still >0. "Re-notifies every 24h" (global
+                # CLAUDE.md rule 3) is met as "at least once a day", not
+                # exactly-24h-apart.
+                "renotifyInterval": "82800s",
             }],
         },
         "notificationChannels": [channel],

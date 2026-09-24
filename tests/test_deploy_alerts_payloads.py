@@ -85,8 +85,26 @@ def test_threshold_policy_renotifies_every_24h_and_has_no_rate_limit():
     assert "notificationRateLimit" not in strategy
     assert strategy["notificationChannelStrategy"] == [{
         "notificationChannelNames": [CHANNEL],
-        "renotifyInterval": "86400s",
+        "renotifyInterval": "82800s",
     }]
+
+
+def test_threshold_policy_renotify_interval_is_shorter_than_alignment_period():
+    # Round-4 review blocker #9: alignmentPeriod and renotifyInterval were
+    # both 86400s. For a one-off BTB_ALERT line at time T, the 24h rolling
+    # sum clears at about T+24h, but the incident only opens at
+    # T+ingestion-lag, so the re-notify was due at T+lag+24h — AFTER the
+    # window had already cleared. The second email would never arrive for a
+    # one-off event. renotifyInterval must stay strictly under
+    # alignmentPeriod so the re-notify always fires while the sum is still
+    # >0 — this asserts the invariant, not just today's chosen values.
+    policy = threshold_policy(
+        "TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL, METRIC_NAME)
+    cond = policy["conditions"][0]["conditionThreshold"]
+    strategy = policy["alertStrategy"]["notificationChannelStrategy"][0]
+    alignment_period = int(cond["aggregations"][0]["alignmentPeriod"].rstrip("s"))
+    renotify_interval = int(strategy["renotifyInterval"].rstrip("s"))
+    assert renotify_interval < alignment_period
 
 
 def test_threshold_policy_subject_keeps_btb_alert_prefix():
