@@ -34,7 +34,24 @@
 # whole-shape reconcile (condition + documentation + alertStrategy, not just
 # the filter) so a later edit here can't silently stop reaching the live
 # policy. Re-running this script is always safe.
+#
+# SECOND POLICY BELOW, SAME JOB: the log-match policy above cannot carry a
+# 24h re-notify — confirmed live 2026-09-24, PATCHing
+# alertStrategy.notificationChannelStrategy onto it returns
+# "notificationChannelStrategy is not allowed for log-based alerts". A
+# conditionThreshold (metric) policy is the kind that field is documented
+# for, so this script also creates a log-based counter metric and a
+# threshold policy on top of it — same shape lesko-questions-zone/
+# deploy-alerts.sh already runs live for its own Dataform-failure alert, and
+# lesko-provisioning/deploy-alerts.sh's rail_alert_by_code policy for the
+# trap of leaving resource.type out of the filter or notificationRateLimit
+# in the strategy. See docs/briefs/alert-renotify-metric.md for the full
+# citation trail. The log-match policy above is left in place, unchanged,
+# until the new one is proven to fire once — see that brief's "Deploy
+# implied".
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PROJECT="${PROJECT:-bigtribebuilders}"
 JOB="${JOB:-poll-dataform-failures}"
@@ -245,6 +262,38 @@ PY
 )
 
 apply_policy "$TITLE" "$PAYLOAD"
+
+# ── the log metric: one count per BTB_ALERT line from ${JOB} ────────────────
+# Counts exactly the lines the log-match policy above already watches —
+# metric_log_filter() in alert_payloads.py builds that filter so
+# tests/test_deploy_alerts_payloads.py can check it offline; this script only
+# ever calls the CLI form so both paths run the same code. No custom
+# metricDescriptor: an unspecified one defaults to DELTA/INT64/no labels
+# (Cloud Logging REST docs, projects.metrics), exactly a bare counter, which
+# is all a threshold policy needs.
+METRIC_NAME="${JOB//-/_}_btb_alert_count"
+METRIC_FILTER=$(python3 "$SCRIPT_DIR/alert_payloads.py" metric-filter "$JOB")
+METRIC_DESCRIBE_ERR="$(mktemp)"
+if gcloud logging metrics describe "$METRIC_NAME" --project "$PROJECT" >/dev/null 2>"$METRIC_DESCRIBE_ERR"; then
+  echo "==> metric '$METRIC_NAME' exists, leaving it"
+elif grep -q "NOT_FOUND" "$METRIC_DESCRIBE_ERR"; then
+  echo "==> creating metric '$METRIC_NAME'"
+  gcloud logging metrics create "$METRIC_NAME" --project "$PROJECT" \
+    --description="One count per BTB_ALERT line from ${JOB}. Backs the renotifying metric-threshold policy below — see docs/briefs/alert-renotify-metric.md for why the log-match policy above cannot carry a 24h renotify itself." \
+    --log-filter="$METRIC_FILTER" >/dev/null
+else
+  echo "ERROR: could not look up metric '$METRIC_NAME' (not a NOT_FOUND) — stopping, nothing changed:"
+  cat "$METRIC_DESCRIBE_ERR"
+  rm -f "$METRIC_DESCRIBE_ERR"
+  exit 1
+fi
+rm -f "$METRIC_DESCRIBE_ERR"
+
+# ── the renotifying policy on top of it ──────────────────────────────────────
+TITLE_METRIC="BTB-ALERT ${PROJECT} — ${JOB} reported a BTB_ALERT (renotifies every 24h)"
+PAYLOAD_METRIC=$(python3 "$SCRIPT_DIR/alert_payloads.py" threshold-policy \
+  "$TITLE_METRIC" "$JOB" "$PROJECT" "$CHANNEL" "$METRIC_NAME")
+apply_policy "$TITLE_METRIC" "$PAYLOAD_METRIC"
 
 echo
 echo "Policies now watching ${JOB} in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"
