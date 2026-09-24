@@ -129,6 +129,52 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-In flight (file:line):
+- Filled in this brief (commit ebc249f), folding in the overseer's firedrill
+  memory message under Context.
+- `jobs/poll_dataform_failures.py`: `get_failed_invocations` now loops on
+  `nextPageToken` until a page has none, still filtering `startTime` vs
+  `since` per invocation on every page (jobs/poll_dataform_failures.py:71-110).
+- `jobs/poll_dataform_failures.py`: `main()` now collects alerted failures
+  into `alerted_events` (name -> list of {repo, inv_id, detail}) and calls
+  `raillog.alert()` once per action name via new `summarize_alert_events()`,
+  instead of once per failing invocation (jobs/poll_dataform_failures.py:185-256).
+- New `tests/test_poll_dataform_failures.py`, 5 tests, all offline
+  (fakes `requests.get`, `bigquery.Client`, `raillog.alert` — no live
+  Dataform/BigQuery). Proved red-then-green: ran the 2 new-behavior tests
+  against the pre-fix code first (both failed — pagination test found 0 of
+  2 later-page failures; alert test saw 3 calls instead of 1), then against
+  the fixed code (5/5 pass). Also covers: pagination stops when a page has
+  no `nextPageToken`; grouping doesn't drop any app_logs row; the existing
+  fetch-failure -> SOURCE_FAILED-alert-and-exit-1 path still works.
+- Uncommitted right now: `jobs/poll_dataform_failures.py` (modified),
+  `tests/test_poll_dataform_failures.py` (new) — both ready, not yet
+  committed as of this checkpoint.
+
+In flight (file:line): none mid-edit — next action is to commit the two
+files above, then run `wt-done.sh --check poller-paging`, merge
+`origin/main`, and report to the overseer.
+
 Next:
+1. `git add jobs/poll_dataform_failures.py tests/test_poll_dataform_failures.py`
+   and commit (one idea: paging + one-alert-per-backlog, per the Goal).
+2. Merge `origin/main` once, right before reporting.
+3. `git add -N .`, confirm `git status` clean.
+4. `wt-done.sh --check poller-paging`, fix anything it refuses on, re-run
+   to 0.
+5. SendMessage to `helpdesk-opzichter` with branch, commit range, HEAD sha,
+   5-line summary, red-then-green proof, deploy implication (Cloud Run Job
+   `poll-dataform-failures` redeploy from `jobs/Dockerfile.poll_dataform`,
+   overseer runs it from `main` after landing, then redoes the firedrill
+   against policies 13511530526976011919 / 9606063400841394205).
+
 Traps (with dates):
+- 2026-09-24: this worktree's `python3` has no pytest. Use
+  `/opt/anaconda3/bin/pytest tests/test_poll_dataform_failures.py`.
+- 2026-08-19: `pytest` on this repo's other test files can hit live
+  Dataform via `bq_writes.trigger_assignment_refresh` — run only
+  `tests/test_poll_dataform_failures.py` here, don't run the whole suite
+  unless credentials are meant to be live.
+- 2026-09-23: a `get_failed_invocations` fetch error must still exit
+  non-zero with a `SOURCE_FAILED` alert — this task's refactor kept that
+  path (see `test_fetch_failure_still_alerts_and_exits_nonzero`), don't
+  let a future edit swallow it again.
