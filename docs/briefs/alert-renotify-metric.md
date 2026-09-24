@@ -95,6 +95,17 @@ and the report to come): one forced BTB_ALERT execution of the job, watching
 for the metric-threshold policy's own email, before anyone retires the
 older log-match policy.
 
+Expected first-run hiccup: the script creates the counter metric and then,
+in the same run, creates the threshold policy that reads it
+(`gcloud logging metrics create` followed immediately by the policy
+`POST`). Monitoring can reject a brand-new policy pointing at a metric it
+hasn't propagated yet. No retry logic was added for this (round-3 review
+should-fix #6, chose the reviewer's documented alternative over retry
+logic) — `deploy-alerts.sh` is fully idempotent end to end (`find_policy` /
+`apply_policy` / the metric-exists check above all re-check live state), so
+if the first run fails here, re-running it is the fix: the metric already
+exists on the second run, and only the policy create is retried.
+
 ## Context
 
 Overseer's memory message (helpdesk-opzichter, 2026-09-24 09:20Z), verbatim
