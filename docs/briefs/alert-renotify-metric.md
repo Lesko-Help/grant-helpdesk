@@ -151,13 +151,16 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done: brief filled in (Done when, May touch, Deploy implied, Context, from
-the overseer's 09:20Z memory message and sibling-repo precedent).
-In flight (file:line): about to write jobs/alert_payloads.py and
-tests/test_deploy_alerts_payloads.py, then wire jobs/deploy-alerts.sh to use
-it.
-Next: prove tests/test_deploy_alerts_payloads.py red, then green; wire
-deploy-alerts.sh; commit; merge origin/main; wt-done.sh --check; report.
+Done: brief filled in and committed (fc1f911). Wrote
+tests/test_deploy_alerts_payloads.py (7 cases) against jobs/alert_payloads.py,
+which does not exist yet — confirmed red: `ModuleNotFoundError` on collection.
+In flight (file:line): tests/test_deploy_alerts_payloads.py:22 imports
+`alert_payloads` — next step is writing that module to turn this green.
+Next: write jobs/alert_payloads.py; run tests green (use
+`/opt/anaconda3/bin/pytest` — the default `python3` has no pytest installed,
+see trap below); wire jobs/deploy-alerts.sh to call it for the new metric +
+threshold policy; `bash -n jobs/deploy-alerts.sh`; commit; merge origin/main;
+wt-done.sh --check; report to helpdesk-opzichter.
 Traps (with dates):
 - 2026-09-24: `conditionMatchedLog` (log-match) policies reject
   `alertStrategy.notificationChannelStrategy` outright — confirmed live
@@ -171,3 +174,6 @@ Traps (with dates):
   `notificationRateLimit` — Monitoring accepts that field only on log-based
   policies and rejects the whole request otherwise (mirror-image trap of the
   one above).
+- 2026-09-24: this worktree's default `python3` (3.14, /opt/homebrew) has no
+  pytest; `/opt/anaconda3/bin/pytest` does. Use that interpreter (or
+  `/opt/anaconda3/bin/python3 -m pytest`) to run this repo's tests here.
