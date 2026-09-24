@@ -206,49 +206,65 @@ def main():
     alerted_events   = defaultdict(list)  # action name -> failures this run, for one alert per name
     any_fetch_failed = False  # a repo we couldn't even list invocations for, also for the exit code
 
-    for repo in REPOSITORIES:
-        print(f"\n--- {repo} ---")
-        since = last_logged_at(bq, repo)
-        print(f"Checking for failures since {since.isoformat()}")
+    try:
+        for repo in REPOSITORIES:
+            print(f"\n--- {repo} ---")
+            since = last_logged_at(bq, repo)
+            print(f"Checking for failures since {since.isoformat()}")
 
-        try:
-            failed = get_failed_invocations(token, repo, since)
-        except Exception as e:
-            print(f"  [ERROR] Could not fetch invocations: {e}")
-            # Was `continue` with only a print — the run then exited 0 and
-            # nobody saw it. A repo we can't even list failures for is
-            # itself something raillog.alert() exists to report.
-            raillog.alert(
-                "poll_dataform_failures", "SOURCE_FAILED",
-                f"Could not fetch Dataform invocations for {repo}: {e}"
-            )
-            any_fetch_failed = True
-            continue
+            try:
+                failed = get_failed_invocations(token, repo, since)
+            except Exception as e:
+                print(f"  [ERROR] Could not fetch invocations: {e}")
+                # Was `continue` with only a print — the run then exited 0 and
+                # nobody saw it. A repo we can't even list failures for is
+                # itself something raillog.alert() exists to report.
+                raillog.alert(
+                    "poll_dataform_failures", "SOURCE_FAILED",
+                    f"Could not fetch Dataform invocations for {repo}: {e}"
+                )
+                any_fetch_failed = True
+                continue
 
-        print(f"Found {len(failed)} new failure(s)")
-        for inv in failed:
-            detail = get_dataform_error(token, repo, inv["inv_id"])
-            # Computed BEFORE log_failure: log_failure's row is what moves
-            # next run's watermark (last_logged_at), so if this lookup
-            # raises, the invocation is never marked logged and gets
-            # re-checked next run instead of silently skipping its alert.
-            failed_names = get_failed_action_names(token, repo, inv["inv_id"])
+            print(f"Found {len(failed)} new failure(s)")
+            for inv in failed:
+                detail = get_dataform_error(token, repo, inv["inv_id"])
+                # Computed BEFORE log_failure: if this raises, this
+                # invocation is never marked logged, so a raise on the
+                # FIRST invocation of a repo's run does get re-checked next
+                # run. But once any earlier invocation in this same run has
+                # called log_failure, next run's watermark (last_logged_at)
+                # has already moved to that row's created_at ("now"), not
+                # this invocation's start_at — so a raise on a LATER
+                # invocation does not get re-checked, it just needs a
+                # manual look. Paging makes backlog runs larger, so this
+                # matters more now than when the poller only ever saw page
+                # 1 (known limit, overseer review 2026-09-24).
+                failed_names = get_failed_action_names(token, repo, inv["inv_id"])
 
-            log_failure(bq, repo, inv["inv_id"], inv["start_at"], inv["tags"], detail)
-            print(f"  Logged: {inv['inv_id'][:20]}... | {detail[:80]}")
-            total_logged += 1
+                log_failure(bq, repo, inv["inv_id"], inv["start_at"], inv["tags"], detail)
+                print(f"  Logged: {inv['inv_id'][:20]}... | {detail[:80]}")
+                total_logged += 1
 
-            # Collected here, alerted once per name after the loop below —
-            # a backlog run (e.g. the first run after a paging fix) can
-            # have many failures for the same action, and Martin's
-            # decision is one summary BTB_ALERT for that action, not one
-            # per failure. Every failure still gets its own app_logs row
-            # above regardless of this grouping.
-            for name in ALERTED_ACTIONS.intersection(failed_names):
-                alerted_events[name].append({"repo": repo, "inv_id": inv["inv_id"], "detail": detail})
-
-    for name, events in alerted_events.items():
-        raillog.alert(name, "SOURCE_FAILED", summarize_alert_events(events))
+                # Collected here, alerted once per name after the loop below —
+                # a backlog run (e.g. the first run after a paging fix) can
+                # have many failures for the same action, and Martin's
+                # decision is one summary BTB_ALERT for that action, not one
+                # per failure. Every failure still gets its own app_logs row
+                # above regardless of this grouping.
+                for name in ALERTED_ACTIONS.intersection(failed_names):
+                    alerted_events[name].append({"repo": repo, "inv_id": inv["inv_id"], "detail": detail})
+    finally:
+        # In `finally`, not after the loop: if something above raises
+        # (e.g. get_failed_action_names on a later invocation), the
+        # alerts collected for invocations already logged this run must
+        # still go out — those invocations already moved the watermark via
+        # log_failure, so a dropped alert here means nobody is ever told
+        # about them (blocker, overseer review 2026-09-24). The exception
+        # itself is not caught here, so it still propagates and the run
+        # still ends non-zero either way.
+        for name, events in alerted_events.items():
+            raillog.alert(name, "SOURCE_FAILED", summarize_alert_events(events))
 
     print(f"\nDone — {total_logged} failure(s) logged to app_logs.")
     if alerted_events:
