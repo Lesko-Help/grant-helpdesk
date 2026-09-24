@@ -204,7 +204,7 @@ def summarize_alert_events(events: list[dict]) -> str:
     lines = [f"{e['repo']}/{e['inv_id']}: {e['detail']}" for e in events]
     shown = lines[:5]
     suffix = "" if len(lines) <= 5 else f" (+{len(lines) - 5} more)"
-    return f"{len(events)} failure(s) — {'; '.join(shown)}{suffix}"
+    return f"Dataform action failed {len(events)} time(s) — {'; '.join(shown)}{suffix}"
 
 
 def main():

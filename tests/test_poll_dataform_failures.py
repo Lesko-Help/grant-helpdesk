@@ -192,7 +192,7 @@ def test_main_sends_one_summary_alert_not_one_per_failure(monkeypatch):
     runnable, code, message = alert_calls[0]
     assert runnable == "grant_ticket_labels"
     assert code == "SOURCE_FAILED"
-    assert "3 failure(s)" in message
+    assert "Dataform action failed 3 time(s)" in message
     for inv_id in ("backlog-1", "backlog-2", "backlog-3"):
         assert inv_id in message
 
