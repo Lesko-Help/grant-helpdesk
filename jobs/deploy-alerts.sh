@@ -213,6 +213,7 @@ apply_policy "$TITLE" "$PAYLOAD"
 METRIC_NAME="${JOB//-/_}_btb_alert_count"
 METRIC_FILTER=$(python3 "$SCRIPT_DIR/alert_payloads.py" metric-filter "$JOB")
 METRIC_DESCRIBE_ERR="$(mktemp)"
+trap 'rm -f "$METRIC_DESCRIBE_ERR"' EXIT
 if gcloud logging metrics describe "$METRIC_NAME" --project "$PROJECT" >/dev/null 2>"$METRIC_DESCRIBE_ERR"; then
   EXISTING_METRIC_FILTER=$(gcloud logging metrics describe "$METRIC_NAME" --project "$PROJECT" --format='value(filter)')
   if [ "$EXISTING_METRIC_FILTER" = "$METRIC_FILTER" ]; then
@@ -229,10 +230,8 @@ elif grep -q "NOT_FOUND" "$METRIC_DESCRIBE_ERR"; then
 else
   echo "ERROR: could not look up metric '$METRIC_NAME' (not a NOT_FOUND) — stopping, nothing changed:"
   cat "$METRIC_DESCRIBE_ERR"
-  rm -f "$METRIC_DESCRIBE_ERR"
   exit 1
 fi
-rm -f "$METRIC_DESCRIBE_ERR"
 
 # ── the renotifying policy on top of it ──────────────────────────────────────
 TITLE_METRIC="BTB-ALERT ${PROJECT} — ${JOB} reported a BTB_ALERT (renotifies every 24h)"
