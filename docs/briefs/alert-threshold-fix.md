@@ -14,7 +14,7 @@ here, something skipped that step.)
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass — overseer review 2026-09-24: evaluationMissingData dropped (absent = NO_OP), invariant test proven red-then-green, 14/14 payload tests pass; live proof = deploy-alerts.sh re-run from main after landing.
 
 ### Findings
 What the overseer's review subagent flagged — style, bugs, security —
