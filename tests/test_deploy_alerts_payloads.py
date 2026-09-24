@@ -75,7 +75,6 @@ def test_threshold_policy_stays_open_for_a_full_day():
     cond = policy["conditions"][0]["conditionThreshold"]
     assert cond["aggregations"][0]["alignmentPeriod"] == "86400s"
     assert cond["aggregations"][0]["perSeriesAligner"] == "ALIGN_SUM"
-    assert cond["evaluationMissingData"] == "EVALUATION_MISSING_DATA_NO_OP"
 
 
 def test_threshold_policy_renotifies_every_24h_and_has_no_rate_limit():
@@ -87,6 +86,23 @@ def test_threshold_policy_renotifies_every_24h_and_has_no_rate_limit():
         "notificationChannelNames": [CHANNEL],
         "renotifyInterval": "82800s",
     }]
+
+
+def test_threshold_policy_evaluation_missing_data_absent_or_has_nonzero_duration():
+    # Cloud Monitoring rejects evaluationMissingData paired with duration
+    # "0s": "Conditions setting evaluation_missing_data must have a
+    # non-zero duration" (confirmed live 2026-09-24, deploy-alerts.sh run
+    # from main 406e2b7 against bigtribebuilders — see
+    # docs/briefs/alert-threshold-fix.md, Context). The API docs say
+    # EVALUATION_MISSING_DATA_UNSPECIFIED (the field's absence) is
+    # equivalent to NO_OP, so dropping the field keeps the same behavior
+    # without violating that constraint. This asserts the invariant, not
+    # just today's fix, so a future duration change can't quietly break it.
+    policy = threshold_policy(
+        "TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL, METRIC_NAME)
+    cond = policy["conditions"][0]["conditionThreshold"]
+    if "evaluationMissingData" in cond:
+        assert cond["duration"] != "0s"
 
 
 def test_threshold_policy_renotify_interval_is_shorter_than_alignment_period():

@@ -156,7 +156,16 @@ def threshold_policy(title, job, project, channel, metric_name):
                 # metric's own ingestion delay, so 86400s (24h) fits safely
                 # under it (Cloud Monitoring aggregation docs, fetched
                 # 2026-09-24).
-                "evaluationMissingData": "EVALUATION_MISSING_DATA_NO_OP",
+                #
+                # evaluationMissingData is deliberately left unset, not set
+                # to EVALUATION_MISSING_DATA_NO_OP: the Monitoring API
+                # rejects that combined with duration "0s" above
+                # ("Conditions setting evaluation_missing_data must have a
+                # non-zero duration", confirmed live 2026-09-24 — see
+                # docs/briefs/alert-threshold-fix.md). The API docs describe
+                # EVALUATION_MISSING_DATA_UNSPECIFIED — an absent field — as
+                # equivalent to NO_OP, so leaving it out keeps the same
+                # missing-data behavior without violating that constraint.
                 "aggregations": [{
                     "alignmentPeriod": "86400s",
                     "perSeriesAligner": "ALIGN_SUM",
