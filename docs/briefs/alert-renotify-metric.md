@@ -14,15 +14,28 @@ here, something skipped that step.)
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: changes requested — round 3, 8 findings, all fixed on top (no history rewrite); reported back for round 4.
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+Round-3 review of fc1f911..3f7842e, from the overseer's review subagent:
+1. [blocker] deploy-alerts.sh:250-259 — log-match policy's alertStrategy still carried notificationChannelStrategy (renotifyInterval 86400s), which Monitoring rejects on a log-based policy; apply_policy's PATCH would fail and, under set -euo pipefail, the script would never reach the metric/threshold-policy code.
+2. [blocker] alert_payloads.py:76-105 — threshold_policy()'s 60s alignmentPeriod on a DELTA/ALIGN_SUM counter reports a genuine 0 within about a minute of the last BTB_ALERT line, auto-resolving the incident long before a 24h renotify could fire.
+3. [should-fix] tests/test_deploy_alerts_payloads.py missed both blockers — the log-match policy's payload lived inline in deploy-alerts.sh's heredoc, invisible to the offline test suite.
+4. [should-fix] deploy-alerts.sh:156-167 — apply_policy's drift check used exact dict equality, so a live policy missing API-omitted default fields (thresholdValue 0, duration "0s") would always look "drifted" and get re-PATCHed on every clean re-run.
+5. [should-fix] deploy-alerts.sh:277-278 — the metric-exists branch never compared the live metric's filter to METRIC_FILTER, so a filter edit here would silently never reach an already-created metric.
+6. [should-fix] deploy-alerts.sh:281-296 — on a first run, Monitoring may briefly reject the threshold policy created right after the metric, since the metric may not have propagated yet.
+7. [nit] deploy-alerts.sh:276-290 — the mktemp METRIC_DESCRIBE_ERR file was left behind if `metrics create` failed under set -e.
+8. [nit] alert_payloads.py:31-34 — the filter also matches textPayload:"BTB_ALERT"; reviewer confirmed this is harmless and consistent with the old policy, no change needed.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. a99e68e — removed notificationChannelStrategy from the log-match policy's alertStrategy.
+2. dd9b6b5 — alignmentPeriod 86400s + explicit EVALUATION_MISSING_DATA_NO_OP, doc text updated, red→green proven via a git-history temp-file import of the pre-fix module.
+3. 79ff681 — extracted log_match_policy() into alert_payloads.py with a CLI subcommand and a regression-guard test (notificationChannelStrategy not in alertStrategy), proven red by reintroducing finding #1's bug in a scratch copy first.
+4. 39b79ce — added same_policy() to alert_payloads.py, normalizing thresholdValue/duration before comparing; proven red against a naive dict-equality scratch copy first.
+5. cd48053 — metric-exists branch now compares the live filter to METRIC_FILTER and runs `gcloud logging metrics update` on drift.
+6. 96e8b73 — documented the expected first-run race and its idempotent fix (re-run the script) in the brief's Deploy implied section, per the reviewer's own offered alternative to retry logic.
+7. d05ffad — `trap 'rm -f "$METRIC_DESCRIBE_ERR"' EXIT` replaces the manual rm -f calls.
+8. not fixed — see report (reviewer confirmed no change needed).
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
