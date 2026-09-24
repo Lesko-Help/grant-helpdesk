@@ -14,7 +14,7 @@ here, something skipped that step.)
 ## Agentic review
 
 ### Verdict
-Verdict: changes requested — round 3, 8 findings, all fixed on top (no history rewrite); reported back for round 4.
+Verdict: changes requested — round 4, 1 finding (blocker #9), fixed on top (no history rewrite); reported back.
 
 ### Findings
 Round-3 review of fc1f911..3f7842e, from the overseer's review subagent:
@@ -27,6 +27,9 @@ Round-3 review of fc1f911..3f7842e, from the overseer's review subagent:
 7. [nit] deploy-alerts.sh:276-290 — the mktemp METRIC_DESCRIBE_ERR file was left behind if `metrics create` failed under set -e.
 8. [nit] alert_payloads.py:31-34 — the filter also matches textPayload:"BTB_ALERT"; reviewer confirmed this is harmless and consistent with the old policy, no change needed.
 
+Round-4 review of a99e68e..3901e38, from the overseer's review subagent:
+9. [blocker] alert_payloads.py:161 + :180 — alignmentPeriod (86400s) equaled renotifyInterval (86400s). For a one-off BTB_ALERT line at time T, the 24h rolling sum clears at about T+24h; the incident opens at T+ingestion-lag, so the re-notify was due at T+lag+24h — after the condition had already cleared. The second email would likely never arrive for a one-off event; it only worked while new BTB_ALERT lines kept coming, defeating half the point of a renotify safety net.
+
 ### Fixed in
 1. a99e68e — removed notificationChannelStrategy from the log-match policy's alertStrategy.
 2. dd9b6b5 — alignmentPeriod 86400s + explicit EVALUATION_MISSING_DATA_NO_OP, doc text updated, red→green proven via a git-history temp-file import of the pre-fix module.
@@ -36,6 +39,7 @@ Round-3 review of fc1f911..3f7842e, from the overseer's review subagent:
 6. 96e8b73 — documented the expected first-run race and its idempotent fix (re-run the script) in the brief's Deploy implied section, per the reviewer's own offered alternative to retry logic.
 7. d05ffad — `trap 'rm -f "$METRIC_DESCRIBE_ERR"' EXIT` replaces the manual rm -f calls.
 8. not fixed — see report (reviewer confirmed no change needed).
+9. 05a9415 — renotifyInterval dropped to 82800s (23h), one hour under alignmentPeriod's 86400s, so the re-notify always fires while the 24h sum is still >0; new test asserts the invariant `renotifyInterval < alignmentPeriod` directly rather than pinning today's exact values, proven red against the pre-fix 86400s/86400s code first.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
@@ -119,6 +123,14 @@ logic) — `deploy-alerts.sh` is fully idempotent end to end (`find_policy` /
 if the first run fails here, re-running it is the fix: the metric already
 exists on the second run, and only the policy create is retried.
 
+Proof plan for the renotify itself (round-4 review blocker #9's fix —
+renotifyInterval 82800s vs. alignmentPeriod 86400s): after the one forced
+BTB_ALERT execution above, the incident should still be OPEN about 1h later
+(the 24h rolling sum has not yet cleared), and a second email should arrive
+within about 23h of the first (renotifyInterval). If the incident instead
+auto-closes before the second email arrives, the safety margin was not
+enough and needs widening.
+
 ## Context
 
 Overseer's memory message (helpdesk-opzichter, 2026-09-24 09:20Z), verbatim
@@ -175,8 +187,8 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done: round-3 review (8 findings) all fixed, one commit per finding, on top
-(no history rewrite):
+Done: round-3 review (8 findings) and round-4 review (1 finding) both fixed,
+one commit per finding, on top (no history rewrite):
 - blocker #1 (stray notificationChannelStrategy on the log-match policy):
   a99e68e.
 - blocker #2 (60s alignmentPeriod + default evaluationMissingData let the
@@ -193,23 +205,26 @@ Done: round-3 review (8 findings) all fixed, one commit per finding, on top
 - nit #7 (trap 'rm -f "$METRIC_DESCRIBE_ERR"' EXIT replaces manual rm -f
   calls): d05ffad.
 - nit #8: no code change needed (reviewer confirmed harmless).
+- blocker #9 (alignmentPeriod == renotifyInterval, both 86400s, meant a
+  one-off alert's re-notify was due right as the 24h sum cleared, so the
+  second email likely never fired; fixed with renotifyInterval 82800s,
+  one hour under alignmentPeriod): 05a9415.
 Every python-touching fix proven red→green per repo convention (git-history
 or scratch-copy temp import to show red, then
 /opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q green —
-currently 12 passed). bash -n jobs/deploy-alerts.sh clean after every
+currently 13 passed). bash -n jobs/deploy-alerts.sh clean after every
 deploy-alerts.sh edit.
 In flight / next:
-- Fill in this brief's "## Agentic review" section (Verdict/Findings/Fixed,
-  one line per finding, citing the commits above) — not done yet.
-- Re-run ONLY tests/test_deploy_alerts_payloads.py once more after the
-  Agentic review edit (no code changes expected from that edit, but confirm
-  tree is still green) and bash -n jobs/deploy-alerts.sh once more.
+- This State commit plus the brief's Agentic review round-4 entry and
+  Deploy implied proof-plan update are being committed now, alongside
+  05a9415 (the blocker #9 code+test fix).
 - git add -N ., confirm git status --short clean, merge origin/main if it
   moved, wt-done.sh --check alert-renotify-metric until it exits 0.
-- Report back to helpdesk-opzichter [a6904a] via SendMessage: new commit
-  range (a99e68e..d05ffad plus the should-fix #6 doc commit 96e8b73 and
-  this State commit), one line per finding → fixed-in commit, proof method.
-  Then stop and wait for the next verdict.
+- Report back to helpdesk-opzichter [a6904a] via SendMessage: commit 05a9415
+  (blocker #9 fix) plus this brief-update commit, proof method (scratch-copy
+  red→green), and the updated Deploy implied proof plan (incident stays
+  OPEN ~1h after the forced alert; second email arrives within ~23h). Then
+  stop and wait for the next verdict.
 Traps (with dates):
 - 2026-09-24: GCP docs confirm EVALUATION_MISSING_DATA_UNSPECIFIED (unset)
   already equals NO_OP — the real bug in blocker #2 is not missing-data
