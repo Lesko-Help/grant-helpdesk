@@ -271,11 +271,33 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done: brief filled in (Done when, May touch, Deploy implied, Context, this
-State section) and committed as the first commit on this branch.
-In flight: about to start slice 1 (payload builder) in
-jobs/alert_payloads.py.
-Next: slice 1 — write the absence_policy() tests, prove red, implement,
-prove green, report to overseer, wait for reply.
-Traps (with dates): see Context above, items 1-8 (all 2026-09-14 to
-2026-09-24, from the overseer's memory relay).
+Done: brief filled in (commit 20d0278, first on branch). Slice 1 done and
+committed (43f5d4e): absence_policy() added to jobs/alert_payloads.py:249
+(SILENCE_WINDOW_SECONDS=5400 at jobs/alert_payloads.py:222), plus the
+absence-policy CLI kind, plus 8 tests appended to
+tests/test_deploy_alerts_payloads.py (all pass via
+`/opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q` — 22
+passed; red-then-green-then-red-then-green transcript is pasted into this
+brief's Slices section under slice 1). Reported to overseer, Martin said
+"Continue to slice 2" (relayed 2026-09-24, recorded in Slices section,
+commit 432453f).
+In flight: slice 2 — wiring absence_policy() into jobs/deploy-alerts.sh.
+Was about to add a new section at the end (TITLE_SILENCE, PAYLOAD_SILENCE,
+apply_policy "$TITLE_SILENCE" "$PAYLOAD_SILENCE") right before the closing
+"Policies now watching..." listing loop at the very end of the file — no
+code written yet for this slice.
+Next: write that section in jobs/deploy-alerts.sh, run `bash -n
+jobs/deploy-alerts.sh`, then prove it offline with fake curl/gcloud on
+PATH in the scratchpad (not committed): one run where the silence POST
+returns {"error":...} and the script must exit 1; a second run where it
+returns a matching policy and the script prints "exists and matches" and
+exits 0. Paste both transcripts into the brief's slice 2 line, commit,
+report to overseer, wait for reply — then slice 3 (runbook content + its
+test).
+Traps (with dates): see Context section above, items 1-8 (all 2026-09-14
+to 2026-09-24, from the overseer's memory relay) — notably #3/#4 (API
+omits zero-value fields on read; re-read after a CREATE error before
+retrying) apply to apply_policy()'s existing find_policy/same_policy
+logic, which slice 2 reuses unchanged, not to new code.
+This checkout's system `python3 -m pytest` has no pytest installed — use
+`/opt/anaconda3/bin/pytest` for every test run in this worktree.
