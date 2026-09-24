@@ -151,22 +151,70 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done: brief filled in and committed (fc1f911). Wrote
-tests/test_deploy_alerts_payloads.py, confirmed red (804d72c), then
-jobs/alert_payloads.py, confirmed green — 7/7 via
-`/opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q`, full
-suite still 51/51 (39acecf). Wired jobs/deploy-alerts.sh to call it for the
-new metric + threshold policy, right after the existing log-match policy's
-apply_policy call; `bash -n jobs/deploy-alerts.sh` clean; manually walked
-JOB/PROJECT/CHANNEL through both CLI calls and confirmed well-formed JSON
-(87564ee).
-In flight: none — tree clean after 87564ee.
-Next: merge origin/main once; `git add -N .`; `wt-done.sh --check
-alert-renotify-metric` until it exits 0; report to helpdesk-opzichter with
-commit range fc1f911..87564ee and the note that this repo has no
-docs/specs/ or docs/gates/ at all (nothing to update, flagged for the
-overseer rather than silently assumed).
+Done: brief filled in, tests + alert_payloads.py red→green (7/7,
+39acecf), deploy-alerts.sh wired and reported ready (87564ee), reported to
+helpdesk-opzichter, got back CHANGES NEEDED (round-3 review, 8 findings).
+Fixed blocker #1 so far: removed alertStrategy.notificationChannelStrategy
+from the log-match policy (a99e68e) — a prior round had put it there,
+Monitoring rejects that field on a log-based policy, and under
+set -euo pipefail that would have made deploy-alerts.sh exit before ever
+reaching the new metric/policy code. bash -n clean after this fix.
+In flight: still owe from the round-3 review (not yet done):
+- blocker #2: threshold_policy()'s alignmentPeriod (60s) + default
+  evaluationMissingData let a DELTA/ALIGN_SUM counter's real zero (not
+  missing data) auto-resolve the incident within ~1 minute of the last
+  BTB_ALERT line, so the 24h renotify never actually fires. Fix: set
+  aggregations.alignmentPeriod to 86400s (GCP docs: max is ~25h minus
+  ingestion delay, so 24h fits) and set evaluationMissingData explicitly to
+  "EVALUATION_MISSING_DATA_NO_OP" for clarity even though it's already the
+  documented default for an unset field. Update the doc text ("in the last
+  minute" → last 24h) and the tests.
+- should-fix #3: pull the log-match policy's heredoc (deploy-alerts.sh
+  ~205-262, the pre-a99e68e version minus the bug) into alert_payloads.py
+  as log_match_policy(), call it via CLI same as threshold-policy, and add
+  a test asserting notificationChannelStrategy is NOT in its alertStrategy
+  — this is the regression guard that would have caught blocker #1;
+  prove it red by temporarily reintroducing the bug in the test run before
+  trusting it green.
+- should-fix #4: apply_policy's drift comparison (deploy-alerts.sh, the
+  `same=$(python3 -c ...)` block) does exact dict equality, so a live
+  policy missing default-valued fields (thresholdValue 0, maybe duration
+  "0s") the REST API omits on read will always look "drifted", making
+  every clean re-run patch unnecessarily. Fix: extract a same_policy()
+  pure function into alert_payloads.py that normalizes those defaults
+  before comparing, call it from apply_policy() via CLI, add tests with a
+  synthetic "existing" missing those keys.
+- should-fix #5: deploy-alerts.sh's metric-exists branch (~277-278) never
+  checks the live metric's filter against METRIC_FILTER, so a filter edit
+  here would silently never reach an already-created metric. Fix: compare
+  `gcloud logging metrics describe --format='value(filter)'` to
+  $METRIC_FILTER, `gcloud logging metrics update --log-filter=...` on
+  drift.
+- should-fix #6: first-run race — Monitoring may reject the new policy
+  right after `gcloud logging metrics create` because the metric isn't
+  visible yet. Chose to document in this brief (not add retry logic):
+  deploy-alerts.sh is fully idempotent, so a second run resolves it.
+- nit #7: `trap 'rm -f "$METRIC_DESCRIBE_ERR"' EXIT` instead of the
+  manual `rm -f` calls, so a failed `metrics create` under set -e doesn't
+  leave the temp file behind.
+- nit #8: no change (reviewer confirmed harmless).
+- Once all fixed: fill in brief's "## Agentic review" Verdict/Findings/
+  Fixed sections, re-run ONLY tests/test_deploy_alerts_payloads.py (review
+  flagged that the full suite can reach a live Dataform trigger via
+  bq_writes.trigger_assignment_refresh() — do not run full suite again),
+  bash -n, commit, git add -N ., wt-done.sh --check, report to
+  helpdesk-opzichter again.
 Traps (with dates):
+- 2026-09-24: GCP docs confirm EVALUATION_MISSING_DATA_UNSPECIFIED (unset)
+  already equals NO_OP — the real bug in blocker #2 is not missing-data
+  handling, it's that a DELTA/ALIGN_SUM counter reports a genuine 0 (not
+  "missing") once BTB_ALERT lines stop, which NO_OP does nothing about.
+  The fix is alignmentPeriod, not evaluationMissingData (though setting the
+  latter explicitly is harmless belt-and-suspenders).
+- 2026-09-24: don't run the full pytest suite from this worktree — review
+  flagged that some test can reach the live Dataform repo via
+  bq_writes.trigger_assignment_refresh(). Run only
+  tests/test_deploy_alerts_payloads.py.
 - 2026-09-24: `conditionMatchedLog` (log-match) policies reject
   `alertStrategy.notificationChannelStrategy` outright — confirmed live
   against bigtribebuilders. Don't try to add a 24h renotify to a log-match
