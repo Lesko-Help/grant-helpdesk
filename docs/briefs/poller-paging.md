@@ -146,26 +146,21 @@ Done:
   the fixed code (5/5 pass). Also covers: pagination stops when a page has
   no `nextPageToken`; grouping doesn't drop any app_logs row; the existing
   fetch-failure -> SOURCE_FAILED-alert-and-exit-1 path still works.
-- Uncommitted right now: `jobs/poll_dataform_failures.py` (modified),
-  `tests/test_poll_dataform_failures.py` (new) — both ready, not yet
-  committed as of this checkpoint.
+- Committed the fix and tests together as 3564257 ("Page through every
+  Dataform invocations page; alert once per action, not per failure").
+  `git status` is clean; `origin/main` unchanged since branch start
+  (67d3060) — nothing to merge.
+- `wt-done.sh --check poller-paging` passes: "would land cleanly (clean
+  tree, origin/main merged) — nothing changed".
 
-In flight (file:line): none mid-edit — next action is to commit the two
-files above, then run `wt-done.sh --check poller-paging`, merge
-`origin/main`, and report to the overseer.
+In flight (file:line): none — task complete, awaiting overseer review.
 
-Next:
-1. `git add jobs/poll_dataform_failures.py tests/test_poll_dataform_failures.py`
-   and commit (one idea: paging + one-alert-per-backlog, per the Goal).
-2. Merge `origin/main` once, right before reporting.
-3. `git add -N .`, confirm `git status` clean.
-4. `wt-done.sh --check poller-paging`, fix anything it refuses on, re-run
-   to 0.
-5. SendMessage to `helpdesk-opzichter` with branch, commit range, HEAD sha,
-   5-line summary, red-then-green proof, deploy implication (Cloud Run Job
-   `poll-dataform-failures` redeploy from `jobs/Dockerfile.poll_dataform`,
-   overseer runs it from `main` after landing, then redoes the firedrill
-   against policies 13511530526976011919 / 9606063400841394205).
+Next: report to the overseer (branch, commits ebc249f..3564257, HEAD
+3564257) and wait. Overseer then reviews the diff, redeploys
+`poll-dataform-failures` from `jobs/Dockerfile.poll_dataform` off `main`
+after landing, and redoes the break-on-purpose firedrill against policies
+13511530526976011919 (log-match) / 9606063400841394205 (threshold) to
+prove they fire now.
 
 Traps (with dates):
 - 2026-09-24: this worktree's `python3` has no pytest. Use
