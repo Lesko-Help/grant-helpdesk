@@ -52,10 +52,15 @@ class FakeBigQuery:
 
 
 def iso(dt: datetime) -> str:
+    """Input: a datetime. Output: its Dataform-style timestamp string (Z, not +00:00).
+    Exists so fake API payloads use the same timestamp format the real API sends."""
     return dt.isoformat().replace("+00:00", "Z")
 
 
 def invocation(inv_id: str, state: str, start_dt: datetime) -> dict:
+    """Input: an invocation id, a state (e.g. "FAILED"), and its start time.
+    Output: a dict shaped like one entry in the API's workflowInvocations list.
+    Exists so tests build fake invocations without repeating the API's nesting."""
     return {
         "name": f"projects/p/locations/r/repositories/repo/workflowInvocations/{inv_id}",
         "state": state,

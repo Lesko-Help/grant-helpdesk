@@ -71,6 +71,10 @@ def last_logged_at(bq: bigquery.Client, repo: str) -> datetime:
 def get_failed_invocations(token: str, repo: str, since: datetime) -> list[dict]:
     """Fetch FAILED workflow invocations for a repository created after `since`.
 
+    Input: an auth token, a repository name, and the cutoff time to filter
+    on. Output: a list of dicts, one per FAILED invocation newer than
+    `since`, each `{"inv_id": str, "start_at": datetime, "tags": list[str]}`.
+
     Walks every page (`nextPageToken`) instead of stopping at the first 50:
     the Dataform API returns invocations in no time order, so a failure
     newer than `since` can land on any page, not just the first — reading
@@ -208,6 +212,16 @@ def summarize_alert_events(events: list[dict]) -> str:
 
 
 def main():
+    """Poll every repo in REPOSITORIES for new FAILED invocations and log/alert on them.
+
+    Input: none (reads REPOSITORIES, ALERTED_ACTIONS, and the current BigQuery
+    watermark per repo). Output: none directly — writes one app_logs row per
+    failure and, for actions in ALERTED_ACTIONS, one grouped raillog.alert()
+    call per action name. Exists as the job's entrypoint: exits non-zero
+    (via sys.exit or a propagated exception) whenever anything was found or
+    went wrong, per the global CLAUDE.md rule that unattended code must
+    report its own failure.
+    """
     bq    = bigquery.Client(project=PROJECT)
     token = get_token()
 
