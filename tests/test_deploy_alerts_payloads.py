@@ -39,6 +39,20 @@ def test_threshold_policy_condition_names_resource_type():
     assert f'metric.type="logging.googleapis.com/user/{METRIC_NAME}"' in cond["filter"]
 
 
+def test_threshold_policy_stays_open_for_a_full_day():
+    # Round-3 review blocker #2: a 60s alignmentPeriod on a DELTA/ALIGN_SUM
+    # counter reports a genuine 0 (not missing data) as soon as BTB_ALERT
+    # lines stop, auto-resolving the incident within about a minute — long
+    # before a 24h renotify could ever fire. A 24h alignmentPeriod keeps the
+    # rolling sum >0 for a full day after even one line.
+    policy = threshold_policy(
+        "TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL, METRIC_NAME)
+    cond = policy["conditions"][0]["conditionThreshold"]
+    assert cond["aggregations"][0]["alignmentPeriod"] == "86400s"
+    assert cond["aggregations"][0]["perSeriesAligner"] == "ALIGN_SUM"
+    assert cond["evaluationMissingData"] == "EVALUATION_MISSING_DATA_NO_OP"
+
+
 def test_threshold_policy_renotifies_every_24h_and_has_no_rate_limit():
     policy = threshold_policy(
         "TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL, METRIC_NAME)

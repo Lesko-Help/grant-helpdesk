@@ -47,7 +47,7 @@ def threshold_policy(title, job, project, channel, metric_name):
     re-notify global CLAUDE.md rule 3 requires.
     """
     content = (
-        f"{job} logged one or more BTB_ALERT lines in the last minute "
+        f"{job} logged one or more BTB_ALERT lines in the last 24 hours "
         f"(metric logging.googleapis.com/user/{metric_name}). This is the "
         "renotifying twin of the older log-match policy on the same job — "
         "see docs/briefs/alert-renotify-metric.md for why both exist until "
@@ -80,8 +80,21 @@ def threshold_policy(title, job, project, channel, metric_name):
                 "comparison": "COMPARISON_GT",
                 "thresholdValue": 0,
                 "duration": "0s",
+                # alignmentPeriod 86400s (24h), not 60s: this metric is a
+                # DELTA counter under ALIGN_SUM, so once BTB_ALERT lines stop
+                # a 60s window reports a genuine 0 — not missing data, a real
+                # zero — and the incident auto-resolves within about a
+                # minute of the last log line, before the 24h renotify ever
+                # gets a chance to fire (round-3 review, blocker #2). A 24h
+                # rolling sum stays >0 for a full day after even one line,
+                # which is what "renotifies every 24h" actually needs. GCP's
+                # documented max alignment period is about 25h minus the
+                # metric's own ingestion delay, so 86400s (24h) fits safely
+                # under it (Cloud Monitoring aggregation docs, fetched
+                # 2026-09-24).
+                "evaluationMissingData": "EVALUATION_MISSING_DATA_NO_OP",
                 "aggregations": [{
-                    "alignmentPeriod": "60s",
+                    "alignmentPeriod": "86400s",
                     "perSeriesAligner": "ALIGN_SUM",
                     "crossSeriesReducer": "REDUCE_SUM",
                 }],
