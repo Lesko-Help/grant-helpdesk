@@ -82,6 +82,7 @@ def get_failed_invocations(token: str, repo: str, since: datetime) -> list[dict]
     url = f"{DATAFORM_BASE}/{repo}/workflowInvocations"
     failed = []
     page_token = None
+    seen_tokens = set()
     while True:
         params = {"pageSize": 50}
         if page_token:
@@ -108,6 +109,13 @@ def get_failed_invocations(token: str, repo: str, since: datetime) -> list[dict]
         page_token = body.get("nextPageToken")
         if not page_token:
             break
+        if page_token in seen_tokens:
+            # If the API ever repeats a nextPageToken, looping forever
+            # would just run until Cloud Run's task timeout kills the job.
+            # Raising sends it down the existing SOURCE_FAILED/exit-1 path
+            # in main() instead (overseer review 2026-09-24, minor #3).
+            raise RuntimeError(f"Dataform returned a repeated nextPageToken for {repo} — stopping")
+        seen_tokens.add(page_token)
     return failed
 
 

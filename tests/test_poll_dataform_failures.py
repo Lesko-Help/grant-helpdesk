@@ -134,6 +134,22 @@ def test_get_failed_invocations_stops_when_a_page_has_no_next_token(monkeypatch)
     assert len(calls) == 1
 
 
+def test_get_failed_invocations_raises_on_a_repeated_page_token(monkeypatch):
+    # Overseer review 2026-09-24, minor #3: nothing stopped a runaway loop
+    # if the API ever repeated a nextPageToken. Raising sends it down the
+    # existing SOURCE_FAILED/exit-1 path instead of looping until Cloud
+    # Run's task timeout kills the job.
+    looping_page = {"workflowInvocations": [], "nextPageToken": "tok-1"}
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        return FakeResponse(looping_page)
+
+    monkeypatch.setattr(poller.requests, "get", fake_get)
+
+    with pytest.raises(RuntimeError):
+        poller.get_failed_invocations("tok", "repo", SINCE)
+
+
 # ── main(): one summary alert per action, not one per failure ──────────────
 
 def test_main_sends_one_summary_alert_not_one_per_failure(monkeypatch):
