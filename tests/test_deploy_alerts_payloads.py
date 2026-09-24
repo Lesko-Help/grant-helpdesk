@@ -12,6 +12,7 @@ notificationRateLimit on a policy kind that rejects it.
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -240,12 +241,22 @@ def test_absence_policy_renotifies_every_24h_and_has_no_rate_limit():
 
 
 def test_absence_policy_subject_keeps_btb_alert_prefix():
-    policy = absence_policy(
-        "BTB-ALERT bigtribebuilders — poll-dataform-failures went silent "
-        "(no successful run in 90 min)",
-        "poll-dataform-failures", "bigtribebuilders", CHANNEL)
-    assert policy["documentation"]["subject"].startswith("BTB-ALERT bigtribebuilders")
-    assert policy["displayName"].startswith("BTB-ALERT bigtribebuilders")
+    # Slice 3 review fix (7): the old version of this test typed the title
+    # itself, then checked its own input's prefix — it could never go red.
+    # This reads the title jobs/deploy-alerts.sh actually builds, so a
+    # broken prefix there fails here too.
+    script_path = os.path.join(REPO_ROOT, "jobs", "deploy-alerts.sh")
+    with open(script_path) as f:
+        source = f.read()
+    project = re.search(r'PROJECT="\$\{PROJECT:-([^}]+)\}"', source).group(1)
+    job = re.search(r'JOB="\$\{JOB:-([^}]+)\}"', source).group(1)
+    template = re.search(r'TITLE_SILENCE="([^"]+)"', source).group(1)
+    real_title = template.replace("${PROJECT}", project).replace("${JOB}", job)
+
+    policy = absence_policy(real_title, job, project, CHANNEL)
+    assert real_title.startswith("BTB-ALERT bigtribebuilders")
+    assert policy["documentation"]["subject"] == real_title
+    assert policy["displayName"] == real_title
 
 
 def test_cli_absence_policy_matches_direct_call():
