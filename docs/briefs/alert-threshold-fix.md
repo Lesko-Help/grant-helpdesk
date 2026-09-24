@@ -115,6 +115,34 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-In flight (file:line):
-Next:
+- Dropped `evaluationMissingData` from `threshold_policy()`'s
+  `conditionThreshold` in `jobs/alert_payloads.py` (paired with `duration:
+  "0s"` it made the Monitoring API reject policy creation).
+- Added `test_threshold_policy_evaluation_missing_data_absent_or_has_nonzero_duration`
+  to `tests/test_deploy_alerts_payloads.py`; proved it red against the old
+  payload first, then green after the fix.
+- Removed `test_threshold_policy_stays_open_for_a_full_day`'s now-stale
+  assertion on the removed field.
+- Verified offline (scratch repro, not committed) that
+  `deploy-alerts.sh`'s create-policy path still exits the whole script
+  non-zero on this API error under `set -euo pipefail` — no code change
+  needed there.
+- All 14 tests in `tests/test_deploy_alerts_payloads.py` pass
+  (`/opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py`).
+- origin/main unchanged since branch start (406e2b7) — nothing to merge.
+
+In flight (file:line): none — task complete, awaiting overseer review.
+
+Next: overseer reviews the diff and re-runs `jobs/deploy-alerts.sh` live
+against `bigtribebuilders` from `main` after landing, to confirm the
+threshold policy now creates cleanly.
+
 Traps (with dates):
+- 2026-09-24: this worktree's default `python3` (`/opt/homebrew/...`) has no
+  pytest installed. Use `/opt/anaconda3/bin/pytest` (or `/opt/anaconda3/bin/python3
+  -m pytest`) to run this repo's tests here — same trap already recorded in
+  `docs/briefs/alert-renotify-metric.md`.
+- 2026-09-24: run only `tests/test_deploy_alerts_payloads.py` in this repo
+  offline — other test files reach live Dataform
+  (`bq_writes.trigger_assignment_refresh`) and will fail/hang without
+  credentials.
