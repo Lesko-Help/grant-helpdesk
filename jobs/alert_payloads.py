@@ -206,6 +206,72 @@ def threshold_policy(title, job, project, channel, metric_name):
     }
 
 
+SILENCE_WINDOW_SECONDS = 5400  # 1.5x the hourly Scheduler trigger: 3600s
+# schedule + 1800s margin. The margin covers the job's own 120s timeout, the
+# Scheduler's own retry/deadline window and Monitoring's ~120s ingest delay,
+# so one missed or failed run pages about 33 min after it was due, not right
+# at the schedule boundary where a normal run's own lag could false-page.
+# See docs/briefs/poller-heartbeat.md, Architecture, "Margin".
+
+
+def absence_policy(title, job, project, channel, window_seconds=SILENCE_WINDOW_SECONDS):
+    """Input: display title, job name, GCP project, a notification channel's
+    resource name, and the silence window in seconds (defaults to
+    SILENCE_WINDOW_SECONDS). Output: the AlertPolicy dict for a
+    conditionAbsent policy that fires when the job has had no successful
+    execution (Cloud Run's own run.googleapis.com/job/completed_execution_count
+    metric, result="succeeded") within that window, ready to json.dumps into
+    the Monitoring API's create/patch body. Why: the BTB_ALERT policies above
+    only page when the job runs and logs a failure line — if the job or its
+    Scheduler trigger stops running at all, those go quiet, and quiet reads
+    as "all fine" (docs/briefs/poller-heartbeat.md, Product). Watching Cloud
+    Run's own built-in metric needs no change to poll_dataform_failures.py
+    and no new log metric or object to keep in sync (see that brief's
+    Architecture, "Rejected alternative").
+    """
+    content = (
+        f"No successful run of {job} in the last {window_seconds // 60} "
+        "minutes (its hourly schedule plus a margin). See "
+        "docs/briefs/poller-heartbeat.md for how to check the last run and "
+        "resume — filled in by slice 3."
+    )
+    return {
+        "displayName": title,
+        "documentation": {
+            "subject": title,
+            "content": content,
+            "mimeType": "text/markdown",
+        },
+        "conditions": [{
+            "displayName": f"no successful run of {job} in the window",
+            "conditionAbsent": {
+                "filter": (
+                    'resource.type="cloud_run_job" AND '
+                    'metric.type="run.googleapis.com/job/completed_execution_count" '
+                    f'AND resource.labels.job_name="{job}" '
+                    'AND metric.labels.result="succeeded"'
+                ),
+                "duration": f"{window_seconds}s",
+                "aggregations": [{
+                    "alignmentPeriod": "300s",
+                    "perSeriesAligner": "ALIGN_SUM",
+                    "crossSeriesReducer": "REDUCE_SUM",
+                }],
+            },
+        }],
+        "combiner": "OR",
+        "enabled": True,
+        "alertStrategy": {
+            "autoClose": "604800s",
+            "notificationChannelStrategy": [{
+                "notificationChannelNames": [channel],
+                "renotifyInterval": "86400s",
+            }],
+        },
+        "notificationChannels": [channel],
+    }
+
+
 def same_policy(existing, want):
     """Input: two AlertPolicy dicts — `existing` as Monitoring's API returns
     it for a live policy, `want` as this script's own payload builders
@@ -250,6 +316,7 @@ def _main(argv):
             "usage: alert_payloads.py metric-filter JOB\n"
             "       alert_payloads.py log-match-policy TITLE JOB PROJECT CHANNEL\n"
             "       alert_payloads.py threshold-policy TITLE JOB PROJECT CHANNEL METRIC_NAME\n"
+            "       alert_payloads.py absence-policy TITLE JOB PROJECT CHANNEL\n"
             "       alert_payloads.py same-policy EXISTING_JSON WANT_JSON\n"
         )
         return 1
@@ -262,6 +329,9 @@ def _main(argv):
     elif kind == "threshold-policy" and len(argv) == 7:
         title, job, project, channel, metric_name = argv[2:7]
         print(json.dumps(threshold_policy(title, job, project, channel, metric_name)))
+    elif kind == "absence-policy" and len(argv) == 6:
+        title, job, project, channel = argv[2:6]
+        print(json.dumps(absence_policy(title, job, project, channel)))
     elif kind == "same-policy" and len(argv) == 4:
         existing, want = json.loads(argv[2]), json.loads(argv[3])
         print("True" if same_policy(existing, want) else "False")

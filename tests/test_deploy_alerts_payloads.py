@@ -19,7 +19,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(REPO_ROOT, "jobs"))
 
 from alert_payloads import (  # noqa: E402
-    log_match_policy, metric_log_filter, same_policy, threshold_policy)
+    absence_policy, log_match_policy, metric_log_filter, same_policy,
+    threshold_policy)
 
 CHANNEL = "projects/bigtribebuilders/notificationChannels/4324299381952164741"
 METRIC_NAME = "poll_dataform_failures_btb_alert_count"
@@ -178,3 +179,93 @@ def test_same_policy_still_detects_real_drift():
     existing = json.loads(json.dumps(want))
     existing["conditions"][0]["conditionThreshold"]["filter"] = "metric.type=\"something-else\""
     assert same_policy(existing, want) is False
+
+
+# ── absence_policy(): pages when poll-dataform-failures goes silent ─────────
+# poller-heartbeat brief (docs/briefs/poller-heartbeat.md). Unlike the two
+# policies above, this one does not watch for a BTB_ALERT line — it watches
+# for the job's own built-in Cloud Run execution-count metric going quiet,
+# so it catches the job (or its Scheduler trigger) not running at all, which
+# a log-based policy can never see because no line is ever written.
+
+def test_absence_policy_watches_succeeded_runs_of_the_job():
+    policy = absence_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    filt = policy["conditions"][0]["conditionAbsent"]["filter"]
+    assert 'resource.type="cloud_run_job"' in filt
+    assert 'metric.type="run.googleapis.com/job/completed_execution_count"' in filt
+    assert 'resource.labels.job_name="poll-dataform-failures"' in filt
+    assert 'metric.labels.result="succeeded"' in filt
+
+
+def test_absence_policy_window_is_schedule_plus_margin():
+    # 5400s = 1.5x the hourly schedule, so one missed or failed run pages
+    # about 33 min after it was due (60 min schedule + 30 min margin for
+    # the job's own timeout, the scheduler deadline and ingest lag) — see
+    # docs/briefs/poller-heartbeat.md, Architecture, "Margin". The expected
+    # value is written here, not read from the builder, so a future change
+    # to SILENCE_WINDOW_SECONDS has to change this test on purpose.
+    policy = absence_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    duration = policy["conditions"][0]["conditionAbsent"]["duration"]
+    assert duration == "5400s"
+    seconds = int(duration.rstrip("s"))
+    assert 3600 < seconds < 7200
+
+
+def test_absence_policy_is_condition_absent_not_threshold():
+    policy = absence_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    cond = policy["conditions"][0]
+    assert "conditionAbsent" in cond
+    assert "conditionThreshold" not in cond
+    assert "conditionMatchedLog" not in cond
+
+
+def test_absence_policy_has_no_evaluation_missing_data():
+    # That field is for threshold conditions — a conditionAbsent policy has
+    # no such field at all (the 0s-duration trap from
+    # docs/briefs/alert-threshold-fix.md does not apply here, but nothing
+    # should copy the field over out of habit).
+    policy = absence_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    assert "evaluationMissingData" not in policy["conditions"][0]["conditionAbsent"]
+
+
+def test_absence_policy_renotifies_every_24h_and_has_no_rate_limit():
+    policy = absence_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    strategy = policy["alertStrategy"]
+    assert "notificationRateLimit" not in strategy
+    assert strategy["notificationChannelStrategy"] == [{
+        "notificationChannelNames": [CHANNEL],
+        "renotifyInterval": "86400s",
+    }]
+    assert policy["notificationChannels"] == [CHANNEL]
+
+
+def test_absence_policy_subject_keeps_btb_alert_prefix():
+    policy = absence_policy(
+        "BTB-ALERT bigtribebuilders — poll-dataform-failures went silent "
+        "(no successful run in 90 min)",
+        "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    assert policy["documentation"]["subject"].startswith("BTB-ALERT bigtribebuilders")
+    assert policy["displayName"].startswith("BTB-ALERT bigtribebuilders")
+
+
+def test_cli_absence_policy_matches_direct_call():
+    result = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "jobs", "alert_payloads.py"),
+         "absence-policy", "TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL],
+        capture_output=True, text=True, check=True)
+    via_cli = json.loads(result.stdout)
+    via_call = absence_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+    assert via_cli == via_call
+
+
+def test_same_policy_absence_round_trip():
+    want = absence_policy("TITLE", "poll-dataform-failures", "bigtribebuilders", CHANNEL)
+
+    existing = json.loads(json.dumps(want))
+    existing["conditions"][0]["name"] = (
+        "projects/bigtribebuilders/alertPolicies/123/conditions/456")
+    assert same_policy(existing, want) is True
+
+    drifted = json.loads(json.dumps(want))
+    drifted["conditions"][0]["conditionAbsent"]["duration"] = "9000s"
+    assert same_policy(drifted, want) is False

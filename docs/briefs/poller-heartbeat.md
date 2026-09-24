@@ -119,6 +119,29 @@ All payload-shape only. No gcloud, no network, no live Dataform, BigQuery or Mon
 
 ### Slice order
 1. **Payload builder, red then green.** Write the tests above, except the runbook test. Run them: red, because the import fails. Add `absence_policy()` + CLI kind: green. Then flip `"succeeded"`→`"failed"` in the builder once: the filter test goes red. Revert: green. Proof: `python3 -m pytest tests/test_deploy_alerts_payloads.py -q`, with the red and green output pasted into the brief.
+
+   **Proof, run 2026-09-24 via `/opt/anaconda3/bin/pytest tests/test_deploy_alerts_payloads.py -q`** (this checkout's system `python3 -m pytest` has no pytest module installed):
+   - Red (before `absence_policy()` existed):
+     ```
+     ImportError: cannot import name 'absence_policy' from 'alert_payloads'
+     1 error in 0.07s
+     ```
+   - Green (after implementing `absence_policy()` + the `absence-policy` CLI kind):
+     ```
+     ......................                                                   [100%]
+     22 passed in 0.20s
+     ```
+   - Red again (`"succeeded"` flipped to `"failed"` in the filter, once):
+     ```
+     ..............F.......                                                   [100%]
+     FAILED tests/test_deploy_alerts_payloads.py::test_absence_policy_watches_succeeded_runs_of_the_job
+     1 failed, 21 passed in 0.12s
+     ```
+   - Green again (reverted):
+     ```
+     ......................                                                   [100%]
+     22 passed in 0.15s
+     ```
 2. **Wire into deploy-alerts.sh.** Add the silence section at the end through `apply_policy`, keep `set -euo pipefail`, and don't touch the earlier sections. Proof: `bash -n jobs/deploy-alerts.sh`. Then an offline stubbed run: fake `curl`/`gcloud` on PATH in the scratchpad (not committed) returning a channel, "no policy", and then `{"error":…}` on the silence POST. The script must exit 1 at that step. Re-run with the stubs returning a matching policy: it prints "exists and matches" and exits 0.
 3. **Runbook + fire-drill note.** `documentation.content` covers what went silent, the last run (`gcloud run jobs executions list --job poll-dataform-failures --region europe-west1 --project bigtribebuilders --limit 5`), usual causes (scheduler paused or failing, job failing (see the "execution failed" alert), image broken), the blind-poller limit, and how to resume. Add the runbook test. Proof: pytest green. The brief's "Deploy implied" holds the overseer's steps: after landing, from main, run `jobs/deploy-alerts.sh` twice. The 2nd run must say "exists and matches" for every policy. Then, with Martin's per-action OK: `gcloud scheduler jobs pause poll-dataform-failures-hourly …`, wait until the BTB-ALERT mail arrives (about 95 min after the last success) and record the minutes, then `resume`, and confirm the incident closes after the next run. No `deploy.sh`: the job's image does not change.
 
