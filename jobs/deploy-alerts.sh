@@ -248,14 +248,17 @@ print(json.dumps({
                 'AND (textPayload:"BTB_ALERT" OR jsonPayload.message:"BTB_ALERT")')}}],
     "combiner": "OR", "enabled": True,
     "alertStrategy": {
+        # notificationChannelStrategy does NOT belong here — Monitoring
+        # rejects it outright on a conditionMatchedLog (log-based) policy
+        # ("notificationChannelStrategy is not allowed for log-based
+        # alerts", confirmed live 2026-09-24, see
+        # docs/briefs/alert-renotify-metric.md). A prior round put it here
+        # anyway (review round 2, 2026-09-24) which broke this script under
+        # set -euo pipefail before it ever reached the new metric/policy
+        # code below — round-3 review caught it. The 24h renotify lives on
+        # the separate conditionThreshold policy further down instead,
+        # which is the only kind Monitoring allows that field on.
         "notificationRateLimit": {"period": "1800s"},
-        # An open incident re-notifies every 24h — global CLAUDE.md rule 3.
-        # This field was missing (review finding #4); the comparison in
-        # apply_policy() already diffs the whole alertStrategy object, so no
-        # separate change is needed there once it's part of this payload.
-        "notificationChannelStrategy": [{
-            "notificationChannelNames": [channel],
-            "renotifyInterval": "86400s"}],
         "autoClose": "604800s"},
     "notificationChannels": [channel]}))
 PY
