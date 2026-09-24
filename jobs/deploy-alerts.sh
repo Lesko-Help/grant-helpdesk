@@ -49,6 +49,15 @@
 # citation trail. The log-match policy above is left in place, unchanged,
 # until the new one is proven to fire once — see that brief's "Deploy
 # implied".
+#
+# THIRD POLICY BELOW, SAME JOB: the two above only page when the job runs
+# and logs something — if the job or its Scheduler trigger stops running at
+# all, neither ever fires, and quiet reads as "all fine"
+# (docs/briefs/poller-heartbeat.md, Product). This script also creates a
+# conditionAbsent policy on Cloud Run's own built-in
+# completed_execution_count metric, watching for 5400s (90 min: the hourly
+# schedule plus a margin) with no successful execution. No new log metric
+# needed — see that brief's Architecture, "Rejected alternative".
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -238,6 +247,18 @@ TITLE_METRIC="BTB-ALERT ${PROJECT} — ${JOB} reported a BTB_ALERT (renotifies e
 PAYLOAD_METRIC=$(python3 "$SCRIPT_DIR/alert_payloads.py" threshold-policy \
   "$TITLE_METRIC" "$JOB" "$PROJECT" "$CHANNEL" "$METRIC_NAME")
 apply_policy "$TITLE_METRIC" "$PAYLOAD_METRIC"
+
+# ── the silence policy: pages when ${JOB} stops running at all ──────────────
+# The two policies above only page when the job runs and logs a BTB_ALERT
+# line — if the job or its Scheduler trigger stops running entirely, those
+# go quiet, and quiet reads as "all fine" (docs/briefs/poller-heartbeat.md,
+# Product). This one watches Cloud Run's own built-in execution-count
+# metric instead of a log line, so it needs no new log metric of its own —
+# see that brief's Architecture, "Rejected alternative".
+TITLE_SILENCE="BTB-ALERT ${PROJECT} — ${JOB} went silent (no successful run in 90 min)"
+PAYLOAD_SILENCE=$(python3 "$SCRIPT_DIR/alert_payloads.py" absence-policy \
+  "$TITLE_SILENCE" "$JOB" "$PROJECT" "$CHANNEL")
+apply_policy "$TITLE_SILENCE" "$PAYLOAD_SILENCE"
 
 echo
 echo "Policies now watching ${JOB} in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"

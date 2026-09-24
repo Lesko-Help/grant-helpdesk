@@ -143,6 +143,48 @@ All payload-shape only. No gcloud, no network, no live Dataform, BigQuery or Mon
      22 passed in 0.15s
      ```
 2. **Wire into deploy-alerts.sh.** Add the silence section at the end through `apply_policy`, keep `set -euo pipefail`, and don't touch the earlier sections. Proof: `bash -n jobs/deploy-alerts.sh`. Then an offline stubbed run: fake `curl`/`gcloud` on PATH in the scratchpad (not committed) returning a channel, "no policy", and then `{"error":…}` on the silence POST. The script must exit 1 at that step. Re-run with the stubs returning a matching policy: it prints "exists and matches" and exits 0.
+
+   - **Proof, run 2026-09-24.** Syntax:
+     ```
+     $ bash -n jobs/deploy-alerts.sh
+     SYNTAX OK
+     ```
+     Offline stubbed run, fake `curl`/`gcloud` on `PATH` (scratchpad's
+     `stubs/curl` and `stubs/gcloud`, not committed — real `python3` and the
+     real `jobs/alert_payloads.py` underneath, only the network calls are
+     faked). The channel lookup, log-match policy, log metric, and
+     renotifying threshold policy all report "created"/"exists and
+     matches" so the run actually reaches the new silence section:
+     - Run 1 (`find_policy` on the silence title returns "no policy", the
+       create POST returns `{"error":...}`):
+       ```
+       ==> routing to projects/bigtribebuilders/notificationChannels/FAKECHANNEL123
+       ==> creating 'BTB-ALERT bigtribebuilders — poll-dataform-failures reported a BTB_ALERT'
+          created
+       ==> metric 'poll_dataform_failures_btb_alert_count' exists and matches — leaving it
+       ==> creating 'BTB-ALERT bigtribebuilders — poll-dataform-failures reported a BTB_ALERT (renotifies every 24h)'
+          created
+       ==> creating 'BTB-ALERT bigtribebuilders — poll-dataform-failures went silent (no successful run in 90 min)'
+          ERROR: stub error: silence policy create failed
+          re-run this script before retrying by hand — it checks find_policy() first
+       EXIT CODE: 1
+       ```
+     - Run 2 (same stubs, but a `run2` marker makes `find_policy` on the
+       silence title return a policy built by the real `absence_policy()`
+       under that exact title — a genuine matching existing policy, not a
+       hand-typed fake):
+       ```
+       ==> routing to projects/bigtribebuilders/notificationChannels/FAKECHANNEL123
+       ==> creating 'BTB-ALERT bigtribebuilders — poll-dataform-failures reported a BTB_ALERT'
+          created
+       ==> metric 'poll_dataform_failures_btb_alert_count' exists and matches — leaving it
+       ==> creating 'BTB-ALERT bigtribebuilders — poll-dataform-failures reported a BTB_ALERT (renotifies every 24h)'
+          created
+       ==> 'BTB-ALERT bigtribebuilders — poll-dataform-failures went silent (no successful run in 90 min)' exists and matches — leaving it
+
+       Policies now watching poll-dataform-failures in bigtribebuilders (page 1 only — cosmetic, not a completeness check):
+       EXIT CODE: 0
+       ```
 3. **Runbook + fire-drill note.** `documentation.content` covers what went silent, the last run (`gcloud run jobs executions list --job poll-dataform-failures --region europe-west1 --project bigtribebuilders --limit 5`), usual causes (scheduler paused or failing, job failing (see the "execution failed" alert), image broken), the blind-poller limit, and how to resume. Add the runbook test. Proof: pytest green. The brief's "Deploy implied" holds the overseer's steps: after landing, from main, run `jobs/deploy-alerts.sh` twice. The 2nd run must say "exists and matches" for every policy. Then, with Martin's per-action OK: `gcloud scheduler jobs pause poll-dataform-failures-hourly …`, wait until the BTB-ALERT mail arrives (about 95 min after the last success) and record the minutes, then `resume`, and confirm the incident closes after the next run. No `deploy.sh`: the job's image does not change.
 
 STOP: after every slice, message the overseer (SendMessage — find it with
