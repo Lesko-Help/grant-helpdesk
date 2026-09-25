@@ -86,15 +86,19 @@ reply here before continuing. Never ask Martin directly in this window.
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: PASS, no blockers — 4 minor findings, all fixed as new commits.
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+1. `tests/test_deploy_alerts_payloads.py`, `test_service_metric_name_matches_deploy_alerts_naming`: compared a test constant with a value derived from that same constant, so it could never fail, and never read `jobs/deploy-alerts.sh`.
+2. `tests/test_deploy_alerts_payloads.py`, `test_service_threshold_policy_subject_keeps_btb_alert_prefix`: passed a title that already started with `BTB-ALERT bigtribebuilders` and checked that same input's prefix, so the real titles built in `jobs/deploy-alerts.sh` were never checked.
+3. `jobs/deploy-alerts.sh`'s closing summary printed every page-1 policy a second time, headed "Policies now watching grant-helpdesk", even though the list is not filtered to the service.
+4. `jobs/deploy-alerts.sh`'s header comment described only the three job-scoped policies, with no mention of the service-scoped block added below them.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. Fixed in `c1beaeb` — now reads `jobs/deploy-alerts.sh` and asserts the literal `SERVICE_METRIC_NAME="${SERVICE//-/_}_btb_alert_count"` line is present. Proved red by mutating that line once, confirmed the test failed, reverted, confirmed green.
+2. Fixed in `c1beaeb` — now parses `TITLE_SERVICE` and `TITLE_SERVICE_METRIC` (and `PROJECT`'s default) out of the real script source, following `test_absence_policy_subject_keeps_btb_alert_prefix`'s existing pattern. Proved red by mutating `TITLE_SERVICE`'s prefix once, confirmed the test failed, reverted, confirmed green.
+3. Fixed in `06589fd` — deleted the job block's own listing, renamed the remaining (service block's) heading to `Policies in ${PROJECT}`.
+4. Fixed in `06589fd` — added a "SERVICE POLICIES BELOW" paragraph to the header comment, pointing at this brief.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
