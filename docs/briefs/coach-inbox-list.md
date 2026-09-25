@@ -206,56 +206,58 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-- Brief filled in and committed (commit 38778be): done-when, may-touch, deploy
-  implied, context (incl. overseer's memory message of 2026-09-25).
-- Slice A1 tracer built and committed:
-  - `coach_inbox.py` (new): `merge_into_tickets(tickets, questions)` — R1
-    (waiting questions first, then everything newest `last_activity_at`
-    first) + R2 (`source` column: `ticket` / `member_question`).
-  - `tests/test_coach_inbox.py` (new): 3 tests, all green —
-    `test_merge_into_tickets_puts_waiting_questions_first_then_newest_activity`,
-    `test_merge_into_tickets_assigns_source_column`,
-    `test_merge_into_tickets_hardcoded_thread_tracer`.
-  - Red-then-green proven by hand: moved `coach_inbox.py` to the scratchpad
-    dir, reran `pytest tests/test_coach_inbox.py -k merge` → `ModuleNotFoundError`
-    (red), moved it back → 3 passed (green).
-  - `app.py`: added `import pandas as pd`, `import coach_inbox`; in
-    `tab_main`, right before the "Ticket list" section, built one hardcoded
-    member-question row and called `coach_inbox.merge_into_tickets(tickets,
-    _hardcoded_member_question)`; in `render_ticket_table`, added
-    `_is_question = row.get("source") == "member_question"` gating, with the
-    ticket-only fields (urgency/ticket_status/domain/space_id/follow-up) read
-    only in the non-question branch, since the hardcoded row doesn't carry
-    them and they come back as NaN, not None, after the concat (see trap
-    below). A "Member question" badge (inline style, no new CSS file — none
-    of the `lesko-ui`/`static` CSS files are in this brief's May touch) is
-    prepended to the member-name div, a "⏳ waiting"/"✓ Answered" status
-    string stands in for the urgency dot, and the action `st.selectbox` is
-    skipped entirely (`if not _is_question:` around it) — no dropdown for
-    member questions yet, per the spec's R2 and the gate's mock-up.
-  - Ran the app locally (`DEV_USER=martin.j.menke@gmail.com streamlit run
-    app.py --server.port 8580`), drove it with Playwright (headless
-    chromium), screenshot confirmed: Anna K.'s row on top with the "Member
-    question" badge and "⏳ waiting" status, no action dropdown, real
-    tickets unaffected below it, no server-side error in the log.
-  - Committed as one commit (`coach_inbox.py`, `tests/test_coach_inbox.py`,
-    `app.py`).
-  - Messaged `helpdesk-opzichter`: "slice A1 done - continue or re-steer?"
-    with the proof line above.
+- Brief filled in and committed (38778be). Slice A1 (hardcoded tracer row,
+  `merge_into_tickets`, badge in Tickets tab) committed as `b4a3db0` and
+  reported to `helpdesk-opzichter`; Martin replied "Continue to A2
+  (Recommended)... then A3 and A4"; overseer separately confirmed
+  coach-inbox-alert (worktree B) landed on origin/main (458922e) with root
+  `raillog.py` — merge that in before A5, nothing else changes for A2-A4.
+- A2 built, tests green, NOT yet committed, NOT yet wired into `app.py`:
+  - `config.py`: added `PRIVATE_CHAT_DATASET = "lesko-486515.private_chat"`.
+  - `coach_inbox.py`: added `load_member_questions(client=None)` — one SQL
+    query (threads JOIN messages, `ARRAY_AGG(STRUCT(...) ORDER BY
+    created_at)` per thread) + `_member_names(client, ids)` (a second query
+    against `bigtribebuilders.dataform.core_members`, `WHERE member_id IN
+    UNNEST(@member_ids)`). Real schemas confirmed live via `client.get_table`
+    before writing the SQL (both tables exist, empty, columns as expected —
+    see spec). `client=None` does a deferred `from bq_base import client`
+    INSIDE the function, not at module import, so importing `coach_inbox`
+    still never needs live credentials (bq_base constructs a real
+    `bigquery.Client` at import time — confirmed no other test file imports
+    it directly except `smoke_test.py`).
+  - `tests/test_coach_inbox.py`: added `_FakeBigQueryClient`/`_FakeQueryResult`
+    (routes by sniffing `"core_members" in sql`) + 2 tests, both green:
+    `test_load_member_questions_builds_rows_from_threads_and_messages` (R1-R3:
+    two threads, one name found in the fixture core_members frame, one
+    falling back to `"Member <id>"`, statuses `answered`/`waiting` from last
+    message's `author_role`), `test_load_member_questions_empty_tables_returns_empty_frame`
+    (empty in -> empty out, right columns, no crash — the non-error half of
+    R4; the alert half is A5). Red-then-green proven: both failed with
+    `AttributeError: module 'coach_inbox' has no attribute
+    'load_member_questions'` before the function existed, 5/5 pass now.
 
 In flight:
-- Waiting on the overseer's reply before starting A2 (real
-  `load_member_questions` read against `private_chat`, needs
-  `config.PRIVATE_CHAT_DATASET` — not added yet, deferred to A2 by design).
+- `app.py` still calls the A1 hardcoded row, not `coach_inbox.load_member_questions()`
+  yet — that swap, a local run + screenshot, and the A2 commit are next.
 
 Next:
-1. On go-ahead: build `load_member_questions` (A2) against `private_chat`,
-   joined to `core_members` for names; add `config.PRIVATE_CHAT_DATASET`.
-2. Then A3 (`waiting_count`, `🎫 Tickets (N new)` label), A4
-   (`tests/test_private_chat_insert_only.py`), each its own slice, each
-   stopped-and-reported before the next starts.
-3. A5 (read failure → `st.error` + `report_source_failure`) only after
-   worktree B lands — do not start it before then.
+1. Wire `app.py`: replace `_hardcoded_member_question` with a real call to
+   `coach_inbox.load_member_questions()`, run locally
+   (`DEV_USER=martin.j.menke@gmail.com streamlit run app.py`), screenshot —
+   expect an EMPTY questions list (see trap below), so the proof is "no
+   crash, Tickets tab unchanged" not a visible badge row this time. Commit
+   A2 alone.
+2. A3: `waiting_count(questions)` (count where `status=="waiting"`) +
+   `🎫 Tickets (N new)` label wiring in the tab header. Its own commit.
+3. A4: `tests/test_private_chat_insert_only.py`, scans tracked `.py` for
+   UPDATE/DELETE/MERGE/TRUNCATE/ALTER/DROP/CREATE naming
+   `private_messages`/`private_threads`; prove red first with a fixture file
+   holding one such statement. Its own commit.
+4. Report progress to `helpdesk-opzichter` as each of A2/A3/A4 lands (short
+   pings, not blocking — Martin already said "continue through A4").
+5. Before A5: `git fetch` + merge `origin/main` (gets root `raillog.py` from
+   coach-inbox-alert, 458922e). Only then wire `report_source_failure` +
+   `st.error` into `load_member_questions`'s error path and into `app.py`.
 
 Traps (with dates):
 - 2026-09-25 (from overseer memory): `bq_writes.trigger_assignment_refresh()`
