@@ -70,6 +70,18 @@ def test_guard_ignores_unrelated_sql():
     assert _find_violations("UPDATE `x.grant_tickets` SET status = 'closed'") == []
 
 
+def test_tracked_py_files_is_non_empty_and_includes_coach_inbox():
+    # Review finding 7: without this, test_no_tracked_file_writes_to_private_
+    # chat_tables would pass vacuously if _tracked_py_files() ever returned an
+    # empty or incomplete list (a bad cwd, git missing, a broken filter) —
+    # zero files scanned always means zero offenders found. coach_inbox.py is
+    # the one file that must always be in scope, since it is the module this
+    # whole guard exists for.
+    files = _tracked_py_files()
+    assert files != []
+    assert any(path.name == "coach_inbox.py" for path in files)
+
+
 def test_no_tracked_file_writes_to_private_chat_tables():
     offenders = []
     for path in _tracked_py_files():
