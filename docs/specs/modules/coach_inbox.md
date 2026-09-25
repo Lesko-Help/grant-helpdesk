@@ -87,13 +87,35 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 
 `def alert(runnable, code, message)` in root `raillog.py`, a copy of `jobs/raillog.py` so the Streamlit container imports it from the app path.
 
-<!-- spec:stub -->
+*What it does:*
+- R1: it behaves exactly like `jobs/raillog.py`: same `REPO = "grant-helpdesk"`, same `CODES` set, same one-line JSON shape.
+- R2: an unknown code falls back to `UNEXPECTED`.
+- R3: it is a separate file, not an import: each job's Dockerfile copies only its own script plus `jobs/raillog.py`, and the app's Dockerfile builds from the repo root, so only a root copy makes `import raillog` work from `app.py`.
+
+*Examples:* `("coach-inbox", "SOURCE_FAILED", "private_chat read failed: Forbidden")` -> stdout `{"severity": "ERROR", "message": "BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat read failed: Forbidden"}`.
+
+*Inputs / Outputs:* runnable, code, message -> one JSON line on stdout.
+
+*Errors:* none; it is the failure path and never raises.
+
+*Test:* `tests/test_raillog_app.py`, capsys -> the exact line for a known code (R1) and the `UNEXPECTED` fallback (R2); red first.
 
 ### deploy-alerts.sh (service policies)
 
 `jobs/deploy-alerts.sh` gains a log-match policy and a metric + threshold policy scoped to `resource.type="cloud_run_revision" AND resource.labels.service_name="grant-helpdesk"`, titles starting `BTB-ALERT bigtribebuilders`, the threshold one re-notifying every 24h.
 
-<!-- spec:stub -->
+*What it does:*
+- R1: `jobs/alert_payloads.py` has `service_metric_log_filter(service)`, `service_log_match_policy(title, service, project, channel)` and `service_threshold_policy(title, service, project, channel, metric_name)`, shaped like the job ones but on `resource.type="cloud_run_revision"` + `resource.labels.service_name`.
+- R2: the service log filter also requires the `BTB_ALERT grant-helpdesk/` prefix, because a service's logs are not scoped to one repo the way a job's are.
+- R3: `jobs/deploy-alerts.sh` has a second block (`SERVICE="${SERVICE:-grant-helpdesk}"`) using the same create-or-update flow as the job block; metric `grant_helpdesk_btb_alert_count`. Re-running it changes nothing when the policies already match.
+
+*Examples:* a `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: ...` line from the `grant-helpdesk` service -> one email with subject `BTB-ALERT bigtribebuilders ...`, again every 24h while open.
+
+*Inputs / Outputs:* project, service, channel -> 1 log metric + 2 alert policies in Cloud Monitoring.
+
+*Errors:* a policy on a brand-new metric may fail with "Cannot find metric(s)" for up to 10 minutes; re-run.
+
+*Test:* `tests/test_deploy_alerts_payloads.py`, offline payload shapes (R1, R2); `bash -n jobs/deploy-alerts.sh`; red first. Live proof: a second run shows "exists and matches", then the fire drill.
 
 ### add_coach_reply(thread_id, author_member_id, body)
 
