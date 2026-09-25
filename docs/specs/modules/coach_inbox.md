@@ -1,5 +1,6 @@
 # coach_inbox
 Status: agreed 2026-09-25 (approved by Martin)
+Kind: app
 
 Part of: `docs/specs/INDEX.md` · Deploy: `deploy.sh` (app), `jobs/deploy-alerts.sh` (alert) · Updated: 2026-09-25
 
