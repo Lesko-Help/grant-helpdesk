@@ -26,19 +26,16 @@ class _FakeQueryResult:
 
 class _FakeBigQueryClient:
     """Stands in for google.cloud.bigquery.Client. load_member_questions
-    sends two queries (threads+messages, then core_members names) — this
-    routes each to its canned frame by sniffing the SQL text, since a fake
-    has no real tables to query against."""
+    sends a single query joining threads, messages and core_members (review
+    finding 6: both datasets confirmed EU, so there is no region reason to
+    split them) — this just hands back the one canned frame it's given."""
 
-    def __init__(self, threads_df, names_df):
+    def __init__(self, threads_df):
         self._threads_df = threads_df
-        self._names_df = names_df
         self.queries = []
 
     def query(self, sql, job_config=None):
         self.queries.append(sql)
-        if "core_members" in sql:
-            return _FakeQueryResult(self._names_df)
         return _FakeQueryResult(self._threads_df)
 
 
@@ -179,35 +176,57 @@ def test_ticket_group_key_still_groups_a_real_tickets_thread():
     assert t1_key == t3_key
 
 
-# ── _member_names (review finding 5) ────────────────────────────────────────
+# ── member naming (review findings 5 and 6) ─────────────────────────────────
+#
+# _member_names no longer exists as its own function: finding 6 folded its
+# core_members lookup into load_member_questions's single query (R1 — see
+# below), since core_members and private_chat are confirmed both EU, so
+# there is no region reason left to keep two queries. Its client_id filter
+# and blank-name fallback (finding 5) still apply — now proven against the
+# one query's SQL text and its output, rather than a standalone helper.
 
-def test_member_names_sql_filters_by_client_id():
+def test_load_member_questions_sends_exactly_one_query_joining_core_members():
+    # R1: one parameterised query, not two joined in pandas.
+    empty_threads = pd.DataFrame(
+        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at",
+                 "messages", "full_name"]
+    )
+    fake = _FakeBigQueryClient(empty_threads)
+    coach_inbox.load_member_questions(client=fake)
+    assert len(fake.queries) == 1
+    sql = fake.queries[0]
+    assert "core_members" in sql
     # Every other core_members query in this repo filters by client_id —
     # without it, a matching member_id from another client could supply a
-    # name that belongs to someone else entirely.
-    fake = _FakeBigQueryClient(pd.DataFrame(), pd.DataFrame(columns=["member_id", "full_name"]))
-    coach_inbox._member_names(fake, [111])
-    assert "client_id = 'lesko_4022250'" in fake.queries[-1]
+    # name that belongs to someone else entirely (review finding 5).
+    assert "client_id = 'lesko_4022250'" in sql
 
 
-def test_member_names_drops_blank_names_so_the_id_fallback_applies():
-    # R2: a member with no first or last name must fall back to
-    # "Member <id>", not have an empty string silently take that place.
-    names_df = pd.DataFrame([{"member_id": 111, "full_name": ""}])
-    fake = _FakeBigQueryClient(pd.DataFrame(), names_df)
-    assert coach_inbox._member_names(fake, [111]) == {}
+def test_load_member_questions_array_agg_has_a_message_id_tie_break():
+    # Review finding 6: two messages sharing a created_at made ARRAY_AGG's
+    # ORDER BY nondeterministic, so status ("waiting"/"answered", read off
+    # the last element) could flip between runs. message_id breaks the tie.
+    empty_threads = pd.DataFrame(
+        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at",
+                 "messages", "full_name"]
+    )
+    fake = _FakeBigQueryClient(empty_threads)
+    coach_inbox.load_member_questions(client=fake)
+    assert "ORDER BY m.created_at, m.message_id" in fake.queries[0]
 
 
 def test_load_member_questions_blank_name_falls_back_to_member_id():
+    # R2: a member with no first or last name on file (or no core_members
+    # row at all) falls back to "Member <id>", not an empty string.
     threads_df = pd.DataFrame([
         {
             "thread_id": "th3", "member_id": 333, "subject": "s", "topic": "t",
             "thread_created_at": "2026-09-20T08:00:00Z",
             "messages": [_msg("member", "hi", "2026-09-20T08:00:00Z")],
+            "full_name": "",
         },
     ])
-    names_df = pd.DataFrame([{"member_id": 333, "full_name": ""}])
-    fake = _FakeBigQueryClient(threads_df, names_df)
+    fake = _FakeBigQueryClient(threads_df)
     result = coach_inbox.load_member_questions(client=fake)
     assert result.iloc[0]["member_name"] == "Member 333"
 
@@ -228,6 +247,7 @@ def test_load_member_questions_builds_rows_from_threads_and_messages():
                 _msg("member", "Can you help with rent?", "2026-09-20T08:00:00Z"),
                 _msg("coach", "Sure, let's talk", "2026-09-20T09:00:00Z"),
             ],
+            "full_name": "Carol Smith",
         },
         {
             "thread_id": "th2",
@@ -238,10 +258,10 @@ def test_load_member_questions_builds_rows_from_threads_and_messages():
             "messages": [
                 _msg("member", "My car broke down", "2026-09-21T08:00:00Z"),
             ],
+            "full_name": "",
         },
     ])
-    names_df = pd.DataFrame([{"member_id": 111, "full_name": "Carol Smith"}])
-    fake = _FakeBigQueryClient(threads_df, names_df)
+    fake = _FakeBigQueryClient(threads_df)
 
     result = coach_inbox.load_member_questions(client=fake)
 
@@ -268,10 +288,10 @@ def test_load_member_questions_empty_tables_returns_empty_frame():
     # R4 (partial — the empty-tables half only; the error/alert half is A5):
     # no threads at all -> empty frame with the right columns, no crash.
     empty_threads = pd.DataFrame(
-        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at", "messages"]
+        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at",
+                 "messages", "full_name"]
     )
-    empty_names = pd.DataFrame(columns=["member_id", "full_name"])
-    fake = _FakeBigQueryClient(empty_threads, empty_names)
+    fake = _FakeBigQueryClient(empty_threads)
 
     result = coach_inbox.load_member_questions(client=fake)
 
@@ -365,8 +385,8 @@ def test_read_failed_true_after_a_failure_and_false_after_a_success(capsys):
     assert coach_inbox.read_failed() is True
 
     empty_threads = pd.DataFrame(
-        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at", "messages"]
+        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at",
+                 "messages", "full_name"]
     )
-    empty_names = pd.DataFrame(columns=["member_id", "full_name"])
-    coach_inbox.load_member_questions(client=_FakeBigQueryClient(empty_threads, empty_names))
+    coach_inbox.load_member_questions(client=_FakeBigQueryClient(empty_threads))
     assert coach_inbox.read_failed() is False

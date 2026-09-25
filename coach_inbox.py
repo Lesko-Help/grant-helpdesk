@@ -59,6 +59,14 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
 
     dataset = config.PRIVATE_CHAT_DATASET
     try:
+        # R1: one query, not two joined in pandas. private_chat's dataset and
+        # core_members's dataset live in different GCP projects but the same
+        # region (both confirmed EU via `bq show` — see brief, review finding
+        # 6), so a cross-project JOIN reaches both in one round trip; the
+        # `client_id` filter on core_members keeps a same-numbered member from
+        # another client out (review finding 5). ANY_VALUE is safe here since
+        # every message in a thread's group shares one member_id, so every
+        # candidate full_name in that group is identical.
         threads_sql = f"""
             SELECT
                 t.thread_id,
@@ -68,28 +76,31 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
                 t.created_at AS thread_created_at,
                 ARRAY_AGG(
                     STRUCT(m.author_role AS author_role, m.body AS body, m.created_at AS created_at)
-                    ORDER BY m.created_at
-                ) AS messages
+                    ORDER BY m.created_at, m.message_id
+                ) AS messages,
+                ANY_VALUE(
+                    TRIM(CONCAT(COALESCE(cm.first_name, ''), ' ', COALESCE(cm.last_name, '')))
+                ) AS full_name
             FROM `{dataset}.private_threads` t
             JOIN `{dataset}.private_messages` m ON m.thread_id = t.thread_id
+            LEFT JOIN `{config.PROJECT_ID}.dataform.core_members` cm
+                ON cm.member_id = t.member_id AND cm.client_id = 'lesko_4022250'
             GROUP BY t.thread_id, t.member_id, t.subject, t.topic, t.created_at
         """
         threads = client.query(threads_sql).to_dataframe()
         if threads.empty:
             return pd.DataFrame(columns=_QUESTION_COLUMNS)
 
-        member_ids = sorted({int(mid) for mid in threads["member_id"].dropna().unique()})
-        names = _member_names(client, member_ids)
-
         records = []
         for row in threads.itertuples():
             messages = list(row.messages)
             last_message = messages[-1]
+            full_name = (row.full_name or "").strip()
             records.append({
                 "content_id": f"pc:{row.thread_id}",
                 "source": "member_question",
                 "member_id": row.member_id,
-                "member_name": names.get(row.member_id, f"Member {row.member_id}"),
+                "member_name": full_name if full_name else f"Member {row.member_id}",
                 "topic": row.topic,
                 "subject": row.subject,
                 "created_at": row.thread_created_at,
@@ -131,32 +142,6 @@ def report_source_failure(operation: str, err: Exception) -> None:
         "coach-inbox", "SOURCE_FAILED",
         f"private_chat {operation} failed: {type(err).__name__}",
     )
-
-
-def _member_names(client, member_ids: list) -> dict:
-    """
-    Input: a BigQuery client and the member ids seen in this batch of
-    threads. Output: {member_id: full name} for the ones core_members knows
-    a real name for, so load_member_questions can fall back to
-    "Member <id>" for the rest — both the ones missing from core_members
-    entirely and the ones present with no first or last name on file —
-    without a query per thread.
-    """
-    if not member_ids:
-        return {}
-    sql = f"""
-        SELECT
-            member_id,
-            TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) AS full_name
-        FROM `{config.PROJECT_ID}.dataform.core_members`
-        WHERE client_id = 'lesko_4022250'
-          AND member_id IN UNNEST(@member_ids)
-    """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ArrayQueryParameter("member_ids", "INT64", member_ids)]
-    )
-    df = client.query(sql, job_config=job_config).to_dataframe()
-    return {mid: name for mid, name in zip(df["member_id"], df["full_name"]) if name}
 
 
 def waiting_count(questions: pd.DataFrame) -> int:
