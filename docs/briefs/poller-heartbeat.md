@@ -231,15 +231,30 @@ into `jobs/deploy-alerts.sh`, as the slice order says.
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass
 
 ### Findings
 What the overseer's review subagent flagged — style, bugs, security —
 one line each. A trimmer before Martin's read, not a replacement for it.
 
+6. minor: same_policy round-trip test is self-derived; proven only by the
+   live 2nd deploy-alerts.sh run.
+7. minor: subject-prefix test checked its own input and could not go red.
+8. minor: renotifyInterval 86400s needed a comment explaining why it
+   differs from the sibling's 82800s.
+9. minor: autoClose 604800s needed a comment for the absence case.
+10. minor: runbook's region europe-west1 and {job}-hourly Scheduler name
+    to be confirmed live.
+
 ### Fixed in
 Which commit fixed each finding, or "not fixed — see report" — one line
 each.
+
+6. not fixed — checked live at deploy by the overseer.
+7. a58a06a
+8. df828c2
+9. df828c2
+10. not fixed — checked live at deploy by the overseer.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
