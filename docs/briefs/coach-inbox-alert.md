@@ -248,6 +248,48 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-In flight (file:line):
+- Brief filled in and committed (d9cc716).
+- B1: root `raillog.py` (copy of `jobs/raillog.py`) + `tests/test_raillog_app.py`,
+  red then green (8a7240f).
+- B2: `service_metric_log_filter`/`service_log_match_policy`/
+  `service_threshold_policy` added to `jobs/alert_payloads.py` (cloud_run_revision
+  + service_name="grant-helpdesk", repo-prefixed filter per trap 4), CLI
+  subcommands `service-metric-filter`/`service-log-match-policy`/
+  `service-threshold-policy` added; 17 new tests in
+  `tests/test_deploy_alerts_payloads.py`, red then green (998df03).
+- B3: second block in `jobs/deploy-alerts.sh` (`SERVICE="${SERVICE:-grant-helpdesk}"`)
+  applying the two service policies + their log metric via the existing
+  apply_policy/find_policy helpers; job block untouched. `bash -n` parses.
+  Full `pytest tests/` green (93 passed) (c2971d9).
+
+In flight (file:line): none — B1-B3 all committed and green.
+
 Next:
+1. Run `wt-done.sh --check coach-inbox-alert` (clean tree, origin/main merge,
+   WT_TEST) and fix anything it refuses on.
+2. `git add -N .` then `git status` to confirm clean.
+3. Merge `origin/main` once (not rebase), right before reporting.
+4. SendMessage to `helpdesk-opzichter`: branch `coach-inbox-alert`, commit
+   range d9cc716..c2971d9 (plus the merge commit), HEAD sha, 5-line summary,
+   red-then-green proof, deploy implication (overseer runs
+   `jobs/deploy-alerts.sh` from main, then the fire drill — this worktree
+   never runs it). Then wait for its review reply.
+5. Tell the overseer's SendMessage that already arrived mid-session (see
+   Context, "Overseer's memory message") was received and acted on — no
+   reply needed unless it asks a question.
+
 Traps (with dates):
+- 2026-09-25 (overseer memory, in full under Context above): resource.type
+  restriction required on conditionThreshold even when the metric filter
+  already scopes it; evaluationMissingData rejected with duration "0s";
+  Cloud Run print() lands in textPayload not jsonPayload.message, no severity
+  clause works; thresholdValue:0 omitted on read (same_policy must tolerate
+  it); a just-created log metric can 404 for up to 10 min; fire drill can't
+  use `gcloud logging write` (global resource, won't match cloud_run_revision) —
+  needs a real service failure instead.
+- 2026-09-25 (this session): `jobs/deploy-alerts.sh` sets one `trap ... EXIT`
+  per temp file — a second `trap ... EXIT` for a second mktemp file silently
+  replaces the first instead of adding to it (bash keeps only the last EXIT
+  handler). The service block's trap removes both `METRIC_DESCRIBE_ERR` and
+  `SERVICE_METRIC_DESCRIBE_ERR` for this reason — don't add a third mktemp
+  block with its own lone `trap` without folding it into the same line.
