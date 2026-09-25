@@ -206,53 +206,46 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-- A1-A5 all committed (`b4a3db0`, `e70d6ab`, `ea0bc8a`, `07043fe`, `1c9de94`)
-  and reported "slice done - continue or re-steer?" each time; Martin
-  answered "Continue" every time. See git log for each slice's own detail —
-  not re-summarized here to leave room for the review below.
-- Sent "slice A5 done", range 91cf1cb..1c9de94, 106/106 green,
-  `wt-done.sh --check` clean.
+- A1-A5 all committed (see git log `b4a3db0`..`1c9de94`); reported and
+  "Continue"d each time.
+- Overseer's agentic review (range origin/main...1c9de94, verdict FAIL, 8
+  findings, 2 blocker/6 minor) came back; fixing each as its own commit,
+  red-then-green, per its instruction. Fixed so far, each already committed:
+  - #1 [blocker, `596dfbc`]: `_gk`/`_unique_groups` keyed every row on
+    `member_id|thread_id`, falling back to content_id only when thread_id was
+    falsy — but a member-question row's thread_id is NaN after the merge's
+    concat, and NaN is truthy, so two threads from one member both keyed
+    `"<id>|nan"` and collapsed into one group that then crashed on
+    `.replace()`. Fixed via new tested `coach_inbox.ticket_group_key(row)`
+    (question rows always key on their own content_id); wired into both
+    app.py call sites. Realistic fixture (thread_id/urgency/ticket_status +
+    two-threads-one-member) added per finding 8 too.
+  - #2 [blocker, `5a70db0`]: added `coach_inbox.read_failed()` (module flag,
+    reset False at the top of `load_member_questions`, set True in its
+    except) so app.py can tell a failed read's empty frame apart from a
+    genuinely-empty one and show `st.error`, not just alert.
+  - #3 [minor, `891475c`]: dropped app.py's two try/except "second nets" —
+    they could never catch what they were written for (`bq_base` raises
+    `SystemExit`, and `bq_client` already imports `bq_base` at app.py's own
+    top-level import, before either try ever runs); #2 already covers the
+    real failure mode honestly.
+  - #4 [minor, `cbf3e68`]: added `coach_inbox.should_include_questions(
+    filter_urgency, filter_domain, filter_space="All")`; app.py now passes
+    an empty question frame into the merge when any of those isn't "All"
+    (R3 — urgency/domain/space have no meaning for a thread).
+  - #5 [in flight, uncommitted]: `_member_names` now filters
+    `client_id = 'lesko_4022250'` (matches every other core_members query in
+    the repo) and drops blank-name rows from its dict so the existing
+    `"Member <id>"` fallback in `load_member_questions` applies instead of a
+    silent `""`. Tests written and green (17/17 in test_coach_inbox.py); not
+    yet committed.
 
-Holding — agentic review came back FAIL, fixing now:
-Overseer ran an agentic review (range origin/main...1c9de94) and relayed 8
-findings, verdict FAIL. Two blockers, six minor. Told to fix all 8 as
-separate commits (no amending), each proven red then green, record the
-review (with its Verdict line) in `## Agentic review`, full suite +
-`wt-done.sh --check`, report range, stop.
-
-The 8 findings (full text is in the overseer's message, not re-typed here):
-1. [blocker] app.py `_gk` (~1289) and `_unique_groups` (~1685): a
-   member-question row has no `thread_id`; after concat pandas fills NaN,
-   and `NaN or ""` stays NaN (`bool(nan)` is True) — two threads from one
-   member collapse into one bogus group, and `_grp_tid.replace(...)` at
-   ~1505 crashes on the float. IN PROGRESS: extracting the key logic into a
-   new, tested `coach_inbox.ticket_group_key(row)` (member-question rows
-   always key on their own content_id, never grouped). Landed the buggy
-   version first on purpose, added the realistic fixture test (finding 8) to
-   confirm it reproduces this exact crash, not yet fixed or wired into app.py.
-2. [blocker] app.py can't tell "read failed" from "no questions" — only the
-   alert half of R4/A5 fires, never `st.error`. Not started.
-3. [minor] app.py's try/except nets (~1243, ~1670) don't catch `bq_base`'s
-   `SystemExit`, and don't alert when they do catch something. Not started.
-4. [minor] `merge_into_tickets` R3 (drop questions when a ticket filter is
-   active) not implemented. Not started.
-5. [minor] `_member_names` has no `client_id` filter (every other
-   `core_members` query in the repo has one) and no-name members get `""`
-   not the `"Member <id>"` fallback. Not started.
-6. [minor] `ARRAY_AGG` has no tie-break on equal timestamps (nondeterministic
-   status); also check whether `core_members` is really cross-region from
-   `private_chat` (brief's stated reason for two queries) via `bq show` —
-   if not, R1 wants one query. Not started.
-7. [minor] the guard's whole-codebase scan test doesn't assert its file list
-   is non-empty / includes `coach_inbox.py`. Not started.
-8. [minor→in progress] `test_coach_inbox.py`'s merge fixtures lack
-   `thread_id`/`urgency`/`ticket_status` and two-threads-one-member — being
-   added now as part of fixing #1.
-
-Next: finish #1 (fix `ticket_group_key`, wire into app.py's three call
-sites, green), then #2-#7 in order, each its own commit, each red-then-green.
-Then record this review + verdict in `## Agentic review`, full suite,
-`wt-done.sh --check`, report range to `helpdesk-opzichter`, stop.
+Next: commit #5, then #6 (ARRAY_AGG tie-break + check core_members region via
+`bq show`, record evidence in Spec proposals if not EU), #7 (assert
+`_tracked_py_files()` non-empty/includes coach_inbox.py, red first), then
+record the review + verdict in a new `## Agentic review` section, full
+suite, `wt-done.sh --check`, report the commit range to `helpdesk-opzichter`,
+stop.
 
 Traps (with dates):
 - 2026-09-25 (from overseer memory): `bq_writes.trigger_assignment_refresh()`
