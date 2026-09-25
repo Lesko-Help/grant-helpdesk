@@ -181,3 +181,24 @@ def test_load_member_questions_empty_tables_returns_empty_frame():
         "content_id", "source", "member_id", "member_name", "topic",
         "subject", "created_at", "last_activity_at", "messages", "status",
     ]
+
+
+# ── waiting_count / tickets_tab_label (A3) ──────────────────────────────────
+
+def test_waiting_count_counts_only_waiting_rows():
+    # R1: count of status == "waiting", ignoring answered rows.
+    questions = pd.DataFrame([
+        {"status": "waiting"}, {"status": "waiting"}, {"status": "waiting"},
+        {"status": "answered"}, {"status": "answered"},
+    ])
+    assert coach_inbox.waiting_count(questions) == 3
+
+
+def test_waiting_count_empty_frame_is_zero():
+    assert coach_inbox.waiting_count(pd.DataFrame(columns=["status"])) == 0
+
+
+def test_tickets_tab_label_shows_count_only_when_positive():
+    # R2: "🎫 Tickets (N new)" when N > 0, plain "🎫 Tickets" otherwise.
+    assert coach_inbox.tickets_tab_label(0) == "🎫 Tickets"
+    assert coach_inbox.tickets_tab_label(3) == "🎫 Tickets (3 new)"

@@ -108,6 +108,28 @@ def _member_names(client, member_ids: list) -> dict:
     return dict(zip(df["member_id"], df["full_name"]))
 
 
+def waiting_count(questions: pd.DataFrame) -> int:
+    """
+    Input: the frame from load_member_questions. Output: how many threads
+    are waiting on a coach reply, so the Tickets tab can show it at a
+    glance without a coach opening each thread.
+    """
+    if questions.empty:
+        return 0
+    return int((questions["status"] == "waiting").sum())
+
+
+def tickets_tab_label(waiting: int) -> str:
+    """
+    Input: the count from waiting_count. Output: the Tickets tab's own
+    label — plain when there is nothing new, a count when there is,
+    so a coach can tell from the tab bar alone whether to look.
+    """
+    if waiting > 0:
+        return f"🎫 Tickets ({waiting} new)"
+    return "🎫 Tickets"
+
+
 def merge_into_tickets(tickets: pd.DataFrame, questions: pd.DataFrame) -> pd.DataFrame:
     """
     Puts member questions into the same list a coach already scrolls — the

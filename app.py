@@ -1231,8 +1231,15 @@ if not st.session_state.show_filters:
         st.session_state.show_filters = True
         st.rerun()
 
+# Tab labels are fixed at the moment st.tabs() is called, before tab_main's
+# own body runs below — so the waiting-question count has to be read here,
+# not inside tab_main where the rest of that data loads.
+_tickets_tab_label = coach_inbox.tickets_tab_label(
+    coach_inbox.waiting_count(load_member_questions())
+)
+
 tab_main, tab_convos, tab_reports, tab_train, tab_replies, tab_settings, tab_admin, tab_inbox = st.tabs(
-    ["🎫 Tickets", "💬 Conversations", "📊 Reports", "🔍 Review AI", "📋 Replies", "⚙️ Settings", "👥 Admin", "📬 Inbox"]
+    [_tickets_tab_label, "💬 Conversations", "📊 Reports", "🔍 Review AI", "📋 Replies", "⚙️ Settings", "👥 Admin", "📬 Inbox"]
 )
 
 # The last entry differs per lane: from Tickets you push a row OUT to
