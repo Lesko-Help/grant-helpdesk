@@ -105,6 +105,17 @@ def _fixture_frames():
     return tickets, questions
 
 
+def test_should_include_questions_only_when_every_filter_is_all():
+    # R3: urgency, domain and space have no meaning for a private-chat
+    # thread — a ticket-only field — so a coach narrowing any one of them
+    # must not have questions falsely stay in the list.
+    assert coach_inbox.should_include_questions("All", "All") is True
+    assert coach_inbox.should_include_questions("All", "All", "All") is True
+    assert coach_inbox.should_include_questions("Urgent", "All") is False
+    assert coach_inbox.should_include_questions("All", "Housing") is False
+    assert coach_inbox.should_include_questions("All", "All", "General") is False
+
+
 def test_merge_into_tickets_puts_waiting_questions_first_then_newest_activity():
     # R1: waiting member questions on top, then everything else newest
     # last_activity_at first (tickets fall back to created_at).

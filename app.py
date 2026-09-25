@@ -1669,6 +1669,11 @@ with tab_main:
     _member_questions["body_preview"] = _member_questions["messages"].apply(
         lambda msgs: msgs[-1]["body"] if msgs else ""
     )
+    # R3: urgency/domain/space have no meaning for a private-chat thread, so
+    # narrowing any one of them away from "All" drops questions out of the
+    # list entirely rather than leaving a false positive in a filtered view.
+    if not coach_inbox.should_include_questions(filter_urgency, filter_domain):
+        _member_questions = _member_questions.iloc[0:0]
     tickets = coach_inbox.merge_into_tickets(tickets, _member_questions)
 
     # ── Ticket list ───────────────────────────────────────────────────────────

@@ -203,6 +203,22 @@ def ticket_group_key(row) -> str:
     return f"{row['member_id']}|{tid}"
 
 
+def should_include_questions(filter_urgency: str, filter_domain: str, filter_space: str = "All") -> bool:
+    """
+    Input: the sidebar's urgency, domain and space filter values — space
+    defaults to "All" since app.py has no space filter yet. Output: whether
+    merge_into_tickets should be handed any member questions at all.
+
+    R3: none of urgency, domain or space narrows a private-chat thread —
+    they are ticket-only fields — so once a coach picks anything other than
+    "All" for one of them, a question row could only ever be a false
+    positive in that filtered list. Deciding this up front, before the
+    merge, keeps the "no meaning for a thread" rule in one place instead of
+    guessing afterwards which merged rows to drop.
+    """
+    return filter_urgency == "All" and filter_domain == "All" and filter_space == "All"
+
+
 def merge_into_tickets(tickets: pd.DataFrame, questions: pd.DataFrame) -> pd.DataFrame:
     """
     Puts member questions into the same list a coach already scrolls — the
