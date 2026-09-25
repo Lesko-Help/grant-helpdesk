@@ -1235,21 +1235,19 @@ if not st.session_state.show_filters:
 # own body runs below — so the waiting-question count has to be read here,
 # not inside tab_main where the rest of that data loads.
 #
-# load_member_questions() itself already catches a failed BigQuery read and
-# alerts (coach_inbox.report_source_failure); this try/except is a second,
-# narrower net for the one thing it cannot catch that way — bq_base failing
-# to build a client at all (e.g. missing local credentials) — so that, too,
-# surfaces to whoever is watching the app instead of crashing the page.
-try:
-    _member_questions_for_label = load_member_questions()
-    if coach_inbox.read_failed():
-        st.error("Could not load member questions — see the coach-inbox alert log.")
-    _tickets_tab_label = coach_inbox.tickets_tab_label(
-        coach_inbox.waiting_count(_member_questions_for_label)
-    )
-except Exception as _member_questions_err:
-    st.error(f"Could not load member questions: {_member_questions_err}")
-    _tickets_tab_label = "🎫 Tickets"
+# load_member_questions() itself catches a failed BigQuery read, alerts, and
+# reports it via coach_inbox.read_failed() (checked below) — no try/except
+# needed here. A wrapping try/except was tried and dropped: bq_base's own
+# client construction can raise SystemExit, which `except Exception` does
+# not catch, and bq_client already imports bq_base at app.py's own top-level
+# import — so a client-construction failure crashes the app before this line
+# ever runs, and a try/except here could never have caught it anyway.
+_member_questions_for_label = load_member_questions()
+if coach_inbox.read_failed():
+    st.error("Could not load member questions — see the coach-inbox alert log.")
+_tickets_tab_label = coach_inbox.tickets_tab_label(
+    coach_inbox.waiting_count(_member_questions_for_label)
+)
 
 tab_main, tab_convos, tab_reports, tab_train, tab_replies, tab_settings, tab_admin, tab_inbox = st.tabs(
     [_tickets_tab_label, "💬 Conversations", "📊 Reports", "🔍 Review AI", "📋 Replies", "⚙️ Settings", "👥 Admin", "📬 Inbox"]
@@ -1663,16 +1661,10 @@ with tab_main:
     # (spec's own column set); `body_preview` is view-layer only — the most
     # recent message's body — so render_ticket_table can show it like any
     # other row without load_member_questions needing to know about display.
-    # Same narrower net as the tab-label call above (bq_base client
-    # construction, not a query itself, is the one failure
-    # load_member_questions cannot catch and alert on its own).
-    try:
-        _member_questions = load_member_questions()
-        if coach_inbox.read_failed():
-            st.error("Could not load member questions — see the coach-inbox alert log.")
-    except Exception as _member_questions_err:
-        st.error(f"Could not load member questions: {_member_questions_err}")
-        _member_questions = pd.DataFrame(columns=["messages"])
+    # See the tab-label call above for why there is no try/except here.
+    _member_questions = load_member_questions()
+    if coach_inbox.read_failed():
+        st.error("Could not load member questions — see the coach-inbox alert log.")
     _member_questions = _member_questions.copy()
     _member_questions["body_preview"] = _member_questions["messages"].apply(
         lambda msgs: msgs[-1]["body"] if msgs else ""
