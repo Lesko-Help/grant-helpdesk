@@ -64,6 +64,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PROJECT="${PROJECT:-bigtribebuilders}"
 JOB="${JOB:-poll-dataform-failures}"
+SERVICE="${SERVICE:-grant-helpdesk}"
 CHANNEL_NAME="${CHANNEL_NAME:-Martin (email)}"
 
 TOKEN="$(gcloud auth print-access-token)"
@@ -262,6 +263,64 @@ apply_policy "$TITLE_SILENCE" "$PAYLOAD_SILENCE"
 
 echo
 echo "Policies now watching ${JOB} in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"
+curl -s -H "Authorization: Bearer $TOKEN" "${API}/alertPolicies" | python3 -c "
+import json,sys
+for p in json.load(sys.stdin).get('alertPolicies',[]):
+    print('  -', p.get('displayName'))"
+
+# ── SERVICE POLICIES: the grant-helpdesk app itself ─────────────────────────
+# coach-inbox-alert brief, slice B. Everything above this point watches
+# poll-dataform-failures, a Cloud Run *job*. The app is a Cloud Run
+# *service*, which Monitoring addresses differently
+# (resource.type="cloud_run_revision" + service_name, not "cloud_run_job" +
+# job_name) — same two-policy shape as above (log-match can't carry a 24h
+# re-notify; a conditionThreshold on a backing log metric can), built by the
+# service-scoped functions in alert_payloads.py so this block and
+# tests/test_deploy_alerts_payloads.py share one code path, same as the job
+# block above.
+echo
+echo "==> now applying policies for service ${SERVICE}"
+
+TITLE_SERVICE="BTB-ALERT ${PROJECT} — ${SERVICE} reported a BTB_ALERT"
+PAYLOAD_SERVICE=$(python3 "$SCRIPT_DIR/alert_payloads.py" service-log-match-policy \
+  "$TITLE_SERVICE" "$SERVICE" "$PROJECT" "$CHANNEL")
+apply_policy "$TITLE_SERVICE" "$PAYLOAD_SERVICE"
+
+# ── the log metric: one count per BTB_ALERT line from ${SERVICE} ────────────
+SERVICE_METRIC_NAME="${SERVICE//-/_}_btb_alert_count"
+SERVICE_METRIC_FILTER=$(python3 "$SCRIPT_DIR/alert_payloads.py" service-metric-filter "$SERVICE")
+SERVICE_METRIC_DESCRIBE_ERR="$(mktemp)"
+# Replaces, not adds to, the job block's own EXIT trap above — bash keeps only
+# the last handler registered for a given signal — so this one removes both
+# temp files, or the job block's would leak.
+trap 'rm -f "$METRIC_DESCRIBE_ERR" "$SERVICE_METRIC_DESCRIBE_ERR"' EXIT
+if gcloud logging metrics describe "$SERVICE_METRIC_NAME" --project "$PROJECT" >/dev/null 2>"$SERVICE_METRIC_DESCRIBE_ERR"; then
+  EXISTING_SERVICE_METRIC_FILTER=$(gcloud logging metrics describe "$SERVICE_METRIC_NAME" --project "$PROJECT" --format='value(filter)')
+  if [ "$EXISTING_SERVICE_METRIC_FILTER" = "$SERVICE_METRIC_FILTER" ]; then
+    echo "==> metric '$SERVICE_METRIC_NAME' exists and matches — leaving it"
+  else
+    echo "==> metric '$SERVICE_METRIC_NAME' filter has drifted from this file — updating"
+    gcloud logging metrics update "$SERVICE_METRIC_NAME" --project "$PROJECT" --log-filter="$SERVICE_METRIC_FILTER" >/dev/null
+  fi
+elif grep -q "NOT_FOUND" "$SERVICE_METRIC_DESCRIBE_ERR"; then
+  echo "==> creating metric '$SERVICE_METRIC_NAME'"
+  gcloud logging metrics create "$SERVICE_METRIC_NAME" --project "$PROJECT" \
+    --description="One count per BTB_ALERT line from the ${SERVICE} service. Backs the renotifying metric-threshold policy below — see docs/specs/modules/coach_inbox.md." \
+    --log-filter="$SERVICE_METRIC_FILTER" >/dev/null
+else
+  echo "ERROR: could not look up metric '$SERVICE_METRIC_NAME' (not a NOT_FOUND) — stopping, nothing changed:"
+  cat "$SERVICE_METRIC_DESCRIBE_ERR"
+  exit 1
+fi
+
+# ── the renotifying policy on top of it ──────────────────────────────────────
+TITLE_SERVICE_METRIC="BTB-ALERT ${PROJECT} — ${SERVICE} reported a BTB_ALERT (renotifies every 24h)"
+PAYLOAD_SERVICE_METRIC=$(python3 "$SCRIPT_DIR/alert_payloads.py" service-threshold-policy \
+  "$TITLE_SERVICE_METRIC" "$SERVICE" "$PROJECT" "$CHANNEL" "$SERVICE_METRIC_NAME")
+apply_policy "$TITLE_SERVICE_METRIC" "$PAYLOAD_SERVICE_METRIC"
+
+echo
+echo "Policies now watching ${SERVICE} in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"
 curl -s -H "Authorization: Bearer $TOKEN" "${API}/alertPolicies" | python3 -c "
 import json,sys
 for p in json.load(sys.stdin).get('alertPolicies',[]):
