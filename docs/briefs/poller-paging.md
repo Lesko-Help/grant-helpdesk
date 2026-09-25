@@ -14,15 +14,25 @@ here, something skipped that step.)
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+1 blocker: alerts held until after the repo loop were dropped if a later invocation raised.
+2 minor: pageToken was glued into the URL unencoded.
+3 minor: nothing stopped a runaway loop on a repeated nextPageToken.
+4 minor: no test covered an HTTP error on page 2.
+5 minor: the alert summary had lost the "Dataform action failed" wording.
+6 minor (predates this branch): the "re-checked next run" comment was wrong for later invocations; it is now a known limit.
+8 minor: missing docstrings.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1 → 90064f2
+2 → 1cbdb81
+3 → 4a878f0
+4 → 74d9738
+5 → ac64e88
+6 → 90064f2
+8 → 002f4d9
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
