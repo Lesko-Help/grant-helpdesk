@@ -58,6 +58,13 @@
 # completed_execution_count metric, watching for 5400s (90 min: the hourly
 # schedule plus a margin) with no successful execution. No new log metric
 # needed — see that brief's Architecture, "Rejected alternative".
+#
+# SERVICE POLICIES BELOW: everything above this point watches
+# poll-dataform-failures, a Cloud Run job. The last two policies in this
+# script instead watch grant-helpdesk, the app itself — a Cloud Run
+# service, which Monitoring addresses differently (resource.type=
+# "cloud_run_revision" + service_name, not "cloud_run_job" + job_name). See
+# docs/briefs/coach-inbox-alert.md, slice B, for why and what they cover.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -261,13 +268,6 @@ PAYLOAD_SILENCE=$(python3 "$SCRIPT_DIR/alert_payloads.py" absence-policy \
   "$TITLE_SILENCE" "$JOB" "$PROJECT" "$CHANNEL")
 apply_policy "$TITLE_SILENCE" "$PAYLOAD_SILENCE"
 
-echo
-echo "Policies now watching ${JOB} in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"
-curl -s -H "Authorization: Bearer $TOKEN" "${API}/alertPolicies" | python3 -c "
-import json,sys
-for p in json.load(sys.stdin).get('alertPolicies',[]):
-    print('  -', p.get('displayName'))"
-
 # ── SERVICE POLICIES: the grant-helpdesk app itself ─────────────────────────
 # coach-inbox-alert brief, slice B. Everything above this point watches
 # poll-dataform-failures, a Cloud Run *job*. The app is a Cloud Run
@@ -320,7 +320,7 @@ PAYLOAD_SERVICE_METRIC=$(python3 "$SCRIPT_DIR/alert_payloads.py" service-thresho
 apply_policy "$TITLE_SERVICE_METRIC" "$PAYLOAD_SERVICE_METRIC"
 
 echo
-echo "Policies now watching ${SERVICE} in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"
+echo "Policies in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"
 curl -s -H "Authorization: Bearer $TOKEN" "${API}/alertPolicies" | python3 -c "
 import json,sys
 for p in json.load(sys.stdin).get('alertPolicies',[]):
