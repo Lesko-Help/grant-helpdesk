@@ -206,6 +206,107 @@ def threshold_policy(title, job, project, channel, metric_name):
     }
 
 
+SILENCE_WINDOW_SECONDS = 5400  # 1.5x the hourly Scheduler trigger: 3600s
+# schedule + 1800s margin. The margin covers the job's own 120s timeout, the
+# Scheduler's own retry/deadline window and Monitoring's ~120s ingest delay,
+# so one missed or failed run pages about 33 min after it was due, not right
+# at the schedule boundary where a normal run's own lag could false-page.
+# See docs/briefs/poller-heartbeat.md, Architecture, "Margin".
+
+
+def absence_policy(title, job, project, channel, window_seconds=SILENCE_WINDOW_SECONDS):
+    """Input: display title, job name, GCP project, a notification channel's
+    resource name, and the silence window in seconds (defaults to
+    SILENCE_WINDOW_SECONDS). Output: the AlertPolicy dict for a
+    conditionAbsent policy that fires when the job has had no successful
+    execution (Cloud Run's own run.googleapis.com/job/completed_execution_count
+    metric, result="succeeded") within that window, ready to json.dumps into
+    the Monitoring API's create/patch body. Why: the BTB_ALERT policies above
+    only page when the job runs and logs a failure line — if the job or its
+    Scheduler trigger stops running at all, those go quiet, and quiet reads
+    as "all fine" (docs/briefs/poller-heartbeat.md, Product). Watching Cloud
+    Run's own built-in metric needs no change to poll_dataform_failures.py
+    and no new log metric or object to keep in sync (see that brief's
+    Architecture, "Rejected alternative").
+    """
+    content = (
+        f"No successful run of {job} in the last {window_seconds // 60} "
+        "minutes (its hourly schedule plus a margin).\n\n"
+        "Check the last run:\n"
+        f"  gcloud run jobs executions list --job {job} --region "
+        f"europe-west1 --project {project} --limit 5\n\n"
+        "Usual causes:\n"
+        f"  - Scheduler job {job}-hourly is paused, deleted, or itself "
+        "failing to trigger — check it in Cloud Scheduler.\n"
+        f"  - {job} is running but exiting non-zero — see the separate "
+        f'"any Cloud Run job execution failed" alert for this job.\n'
+        "  - The job's container image is broken (bad deploy, missing "
+        "credentials) and every execution fails before it can succeed.\n\n"
+        "Known limit: this alert only proves a run finished with exit 0 — "
+        "it does not catch a blind poller that runs fine but reads too "
+        "little (see docs/briefs/poller-heartbeat.md, Product). Until "
+        "worktree poller-paging lands, the job reads only page 1 of "
+        "Dataform invocations and still exits 0.\n\n"
+        "To resume: fix the cause above, then either wait for the next "
+        "hourly run or trigger one by hand:\n"
+        f"  gcloud run jobs execute {job} --region europe-west1 --project "
+        f"{project}\n"
+        "The incident closes automatically on the next successful run."
+    )
+    return {
+        "displayName": title,
+        "documentation": {
+            "subject": title,
+            "content": content,
+            "mimeType": "text/markdown",
+        },
+        "conditions": [{
+            "displayName": f"no successful run of {job} in the window",
+            "conditionAbsent": {
+                "filter": (
+                    'resource.type="cloud_run_job" AND '
+                    'metric.type="run.googleapis.com/job/completed_execution_count" '
+                    f'AND resource.labels.job_name="{job}" '
+                    'AND metric.labels.result="succeeded"'
+                ),
+                "duration": f"{window_seconds}s",
+                "aggregations": [{
+                    "alignmentPeriod": "300s",
+                    "perSeriesAligner": "ALIGN_SUM",
+                    "crossSeriesReducer": "REDUCE_SUM",
+                }],
+            },
+        }],
+        "combiner": "OR",
+        "enabled": True,
+        "alertStrategy": {
+            # 7 days is fine for autoClose here even though a silence can, by
+            # definition, run longer than that: Monitoring re-notifies every
+            # renotifyInterval regardless of autoClose, so a silence past 7
+            # days does not go quiet — it keeps re-notifying under a fresh
+            # incident instead of the same one. Checked live during the
+            # pause/resume fire drill (brief's Deploy implied), not just
+            # assumed.
+            "autoClose": "604800s",
+            "notificationChannelStrategy": [{
+                "notificationChannelNames": [channel],
+                # 86400s (24h) exactly — unlike threshold_policy()'s 82800s
+                # workaround above, this does NOT need to stay under its
+                # condition's window. That workaround exists because a
+                # conditionThreshold's rolling-sum window can clear and
+                # auto-resolve the incident before a same-length
+                # renotifyInterval would fire. conditionAbsent has no such
+                # window to clear while the condition is still true — it
+                # just keeps being absent — so renotifyInterval can equal
+                # the "renotify every 24h" requirement exactly. Do not
+                # shorten this to match the sibling policy.
+                "renotifyInterval": "86400s",
+            }],
+        },
+        "notificationChannels": [channel],
+    }
+
+
 def same_policy(existing, want):
     """Input: two AlertPolicy dicts — `existing` as Monitoring's API returns
     it for a live policy, `want` as this script's own payload builders
@@ -250,6 +351,7 @@ def _main(argv):
             "usage: alert_payloads.py metric-filter JOB\n"
             "       alert_payloads.py log-match-policy TITLE JOB PROJECT CHANNEL\n"
             "       alert_payloads.py threshold-policy TITLE JOB PROJECT CHANNEL METRIC_NAME\n"
+            "       alert_payloads.py absence-policy TITLE JOB PROJECT CHANNEL\n"
             "       alert_payloads.py same-policy EXISTING_JSON WANT_JSON\n"
         )
         return 1
@@ -262,6 +364,9 @@ def _main(argv):
     elif kind == "threshold-policy" and len(argv) == 7:
         title, job, project, channel, metric_name = argv[2:7]
         print(json.dumps(threshold_policy(title, job, project, channel, metric_name)))
+    elif kind == "absence-policy" and len(argv) == 6:
+        title, job, project, channel = argv[2:6]
+        print(json.dumps(absence_policy(title, job, project, channel)))
     elif kind == "same-policy" and len(argv) == 4:
         existing, want = json.loads(argv[2]), json.loads(argv[3])
         print("True" if same_policy(existing, want) else "False")
