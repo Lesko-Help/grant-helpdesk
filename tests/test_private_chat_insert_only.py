@@ -38,16 +38,22 @@ def _find_violations(text: str) -> list[str]:
 
 def _tracked_py_files() -> list[Path]:
     """
-    Input: none. Output: every .py file git tracks in this repo — the
-    guard's job is to cover the whole codebase, not just this app's own
-    modules, since any file could in principle import bigquery and query
-    private_chat directly.
+    Input: none. Output: every .py file git tracks in this repo, except this
+    guard's own file — its docstring and _FORBIDDEN/_GUARDED_TABLES constants
+    necessarily spell out the very keywords and table names it looks for, the
+    same self-match problem test_guard_catches_a_real_violation's fixture
+    already works around by building its string at runtime. The guard's job
+    is to cover the rest of the codebase, not itself.
     """
     result = subprocess.run(
         ["git", "ls-files", "*.py"],
         cwd=_REPO_ROOT, capture_output=True, text=True, check=True,
     )
-    return [_REPO_ROOT / line for line in result.stdout.splitlines() if line]
+    this_file = Path(__file__).resolve()
+    return [
+        _REPO_ROOT / line for line in result.stdout.splitlines()
+        if line and (_REPO_ROOT / line).resolve() != this_file
+    ]
 
 
 def test_guard_catches_a_real_violation():

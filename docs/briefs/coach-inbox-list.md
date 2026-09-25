@@ -227,23 +227,38 @@ Done:
   `private_messages`/`private_threads`. Proved red twice on purpose (each
   reverted before committing): a no-op detector let a seeded violation
   through; a real violation temporarily appended to `coach_inbox.py` failed
-  the whole-codebase scan. Full suite green after revert: 86/86.
-- All four slices reported to `helpdesk-opzichter` as "slice done - continue
-  or re-steer?"; each time Martin answered "Continue to <next>". Gate is
-  strictly stop-after-every-slice-and-wait — a slice's own go-ahead does NOT
-  cover the next one, no assuming a blanket pass-through.
+  the whole-codebase scan.
+- Merged `origin/main` (91cf1cb, no conflicts): brought in root `raillog.py`
+  (worktree B), the filled-in `report_source_failure`/`raillog.alert` spec
+  sections, and B's own alert infra — none of it in this worktree's scope.
+- A5 (read failure -> alert + `st.error`), committed this window:
+  `coach_inbox.report_source_failure(operation, err)` calls
+  `raillog.alert("coach-inbox", "SOURCE_FAILED", f"private_chat {operation}
+  failed: {type(err).__name__}")` — never the exception's own message, since
+  it could quote a member's words back into a log a wider team reads.
+  `load_member_questions`'s query logic is now in a try/except that calls it
+  and returns an empty `_QUESTION_COLUMNS` frame on any read failure. Found
+  and fixed a pre-existing self-match bug in A4's own guard while getting the
+  suite green: its docstring and `_FORBIDDEN`/`_GUARDED_TABLES` constants
+  spelled out the very keywords+tables it scans for, so the guard flagged
+  itself — fixed by excluding the guard's own file from
+  `_tracked_py_files()`, the same self-reference problem the fixture string
+  already worked around. `app.py` wraps both `load_member_questions()` call
+  sites (tab-label count, `tab_main` body) in try/except -> `st.error`: a
+  second, narrower net for the one failure `load_member_questions` can't
+  catch itself (bq_base failing to build a client at all, e.g. missing
+  local credentials), so that too reaches the page instead of crashing it.
+  Full suite green: 106/106.
+- All five slices reported to `helpdesk-opzichter` as "slice done - continue
+  or re-steer?"; each time Martin answered "Continue to <next>". Gate was
+  strictly stop-after-every-slice-and-wait throughout — a slice's own
+  go-ahead never covered the next one.
 
 Holding:
-- Just committed A4 (`07043fe`). About to send the A4 report and wait for
-  Martin's answer before touching A5.
+- A5 committed. About to run `wt-done.sh --check`, then send the final
+  "slice A5 done" report and stop — review and landing are the overseer's.
 
-Next (once unblocked):
-1. Report A4 done to `helpdesk-opzichter`, wait for the answer.
-2. Before A5: `git fetch` + merge `origin/main` (gets root `raillog.py` from
-   coach-inbox-alert, landed at 458922e). Only then wire
-   `report_source_failure` (`raillog.alert("coach-inbox", "SOURCE_FAILED", ...)`)
-   + `st.error` into `load_member_questions`'s error path (R4's alert half)
-   and into `app.py`'s rendering. This is the last slice in this brief.
+Next: none for this worktree. This was the last slice in this brief.
 
 Traps (with dates):
 - 2026-09-25 (from overseer memory): `bq_writes.trigger_assignment_refresh()`

@@ -12,6 +12,7 @@ import pandas as pd
 from google.cloud import bigquery
 
 import config
+import raillog
 
 _QUESTION_COLUMNS = [
     "content_id", "source", "member_id", "member_name", "topic", "subject",
@@ -38,51 +39,78 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
 
     Why: the Tickets tab needs one row per thread, not per message, and
     needs to know at a glance whether a reply is owed.
+
+    R4: when the read itself fails (bad credentials, missing dataset, a
+    BigQuery outage), it reports the failure via report_source_failure and
+    returns an empty frame with the usual columns rather than raising, so
+    the rest of the Tickets tab still renders the MN tickets it does have.
     """
     if client is None:
         from bq_base import client as _default_client
         client = _default_client
 
     dataset = config.PRIVATE_CHAT_DATASET
-    threads_sql = f"""
-        SELECT
-            t.thread_id,
-            t.member_id,
-            t.subject,
-            t.topic,
-            t.created_at AS thread_created_at,
-            ARRAY_AGG(
-                STRUCT(m.author_role AS author_role, m.body AS body, m.created_at AS created_at)
-                ORDER BY m.created_at
-            ) AS messages
-        FROM `{dataset}.private_threads` t
-        JOIN `{dataset}.private_messages` m ON m.thread_id = t.thread_id
-        GROUP BY t.thread_id, t.member_id, t.subject, t.topic, t.created_at
-    """
-    threads = client.query(threads_sql).to_dataframe()
-    if threads.empty:
+    try:
+        threads_sql = f"""
+            SELECT
+                t.thread_id,
+                t.member_id,
+                t.subject,
+                t.topic,
+                t.created_at AS thread_created_at,
+                ARRAY_AGG(
+                    STRUCT(m.author_role AS author_role, m.body AS body, m.created_at AS created_at)
+                    ORDER BY m.created_at
+                ) AS messages
+            FROM `{dataset}.private_threads` t
+            JOIN `{dataset}.private_messages` m ON m.thread_id = t.thread_id
+            GROUP BY t.thread_id, t.member_id, t.subject, t.topic, t.created_at
+        """
+        threads = client.query(threads_sql).to_dataframe()
+        if threads.empty:
+            return pd.DataFrame(columns=_QUESTION_COLUMNS)
+
+        member_ids = sorted({int(mid) for mid in threads["member_id"].dropna().unique()})
+        names = _member_names(client, member_ids)
+
+        records = []
+        for row in threads.itertuples():
+            messages = list(row.messages)
+            last_message = messages[-1]
+            records.append({
+                "content_id": f"pc:{row.thread_id}",
+                "source": "member_question",
+                "member_id": row.member_id,
+                "member_name": names.get(row.member_id, f"Member {row.member_id}"),
+                "topic": row.topic,
+                "subject": row.subject,
+                "created_at": row.thread_created_at,
+                "last_activity_at": last_message["created_at"],
+                "messages": messages,
+                "status": "waiting" if last_message["author_role"] == "member" else "answered",
+            })
+        return pd.DataFrame.from_records(records, columns=_QUESTION_COLUMNS)
+    except Exception as err:
+        report_source_failure("read", err)
         return pd.DataFrame(columns=_QUESTION_COLUMNS)
 
-    member_ids = sorted({int(mid) for mid in threads["member_id"].dropna().unique()})
-    names = _member_names(client, member_ids)
 
-    records = []
-    for row in threads.itertuples():
-        messages = list(row.messages)
-        last_message = messages[-1]
-        records.append({
-            "content_id": f"pc:{row.thread_id}",
-            "source": "member_question",
-            "member_id": row.member_id,
-            "member_name": names.get(row.member_id, f"Member {row.member_id}"),
-            "topic": row.topic,
-            "subject": row.subject,
-            "created_at": row.thread_created_at,
-            "last_activity_at": last_message["created_at"],
-            "messages": messages,
-            "status": "waiting" if last_message["author_role"] == "member" else "answered",
-        })
-    return pd.DataFrame.from_records(records, columns=_QUESTION_COLUMNS)
+def report_source_failure(operation: str, err: Exception) -> None:
+    """
+    Input: which private_chat operation failed ("read" so far) and the
+    exception it raised. Output: none — logs one BTB_ALERT line via
+    raillog.alert, so a failed read is never silently lost to an empty
+    Tickets tab.
+
+    Only the exception's own type name goes into the line, never its
+    message: a BigQuery error can quote back query text or, worse, a
+    member's private words, and this line is read by a wider team than
+    the one thread it might be about.
+    """
+    raillog.alert(
+        "coach-inbox", "SOURCE_FAILED",
+        f"private_chat {operation} failed: {type(err).__name__}",
+    )
 
 
 def _member_names(client, member_ids: list) -> dict:

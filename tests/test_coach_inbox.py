@@ -202,3 +202,55 @@ def test_tickets_tab_label_shows_count_only_when_positive():
     # R2: "🎫 Tickets (N new)" when N > 0, plain "🎫 Tickets" otherwise.
     assert coach_inbox.tickets_tab_label(0) == "🎫 Tickets"
     assert coach_inbox.tickets_tab_label(3) == "🎫 Tickets (3 new)"
+
+
+# ── report_source_failure / load_member_questions read failure (A5) ────────
+
+class _RaisingBigQueryClient:
+    """Stands in for a client whose query() fails outright — a bad
+    credential, a missing dataset, a BigQuery outage — so
+    load_member_questions's own error path can be proven without ever
+    touching real BigQuery."""
+
+    def query(self, sql, job_config=None):
+        raise RuntimeError("could not reach BigQuery")
+
+
+def test_report_source_failure_line_and_no_message_leak(capsys):
+    # R1: exact BTB_ALERT line, naming the operation and the exception's own
+    # type. R2: the exception's message never appears in it — it could be
+    # quoting a member's own words back into a log a wider team reads.
+    err = RuntimeError("member said: I need help paying rent")
+    coach_inbox.report_source_failure("read", err)
+    out = capsys.readouterr().out.strip()
+
+    assert out == (
+        '{"severity": "ERROR", "message": '
+        '"BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: '
+        'private_chat read failed: RuntimeError"}'
+    )
+    assert "member said" not in out
+    assert "rent" not in out
+
+
+def test_load_member_questions_read_failure_returns_empty_frame_and_alerts(capsys):
+    # R4 (error half): a client whose query() raises -> load_member_questions
+    # never raises itself, returns an empty frame with the usual columns, and
+    # logs exactly one BTB_ALERT SOURCE_FAILED line.
+    fake = _RaisingBigQueryClient()
+
+    result = coach_inbox.load_member_questions(client=fake)
+
+    assert result.empty
+    assert list(result.columns) == [
+        "content_id", "source", "member_id", "member_name", "topic",
+        "subject", "created_at", "last_activity_at", "messages", "status",
+    ]
+
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1
+    assert out[0] == (
+        '{"severity": "ERROR", "message": '
+        '"BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: '
+        'private_chat read failed: RuntimeError"}'
+    )
