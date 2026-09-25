@@ -66,6 +66,33 @@ def _question_row(content_id, member_id, member_name, created_at, last_activity_
     }
 
 
+def _full_ticket_row(content_id, member_id, member_name, created_at, thread_id, urgency, ticket_status):
+    return {
+        "content_id": content_id,
+        "member_id": member_id,
+        "member_name": member_name,
+        "created_at": created_at,
+        "thread_id": thread_id,
+        "urgency": urgency,
+        "ticket_status": ticket_status,
+    }
+
+
+def _realistic_fixture_frames():
+    # Shaped like the frame render_ticket_table actually consumes (finding 8):
+    # tickets carry thread_id/urgency/ticket_status, and member 5 has two
+    # separate private-chat threads — the case finding 1's bug collapsed.
+    tickets = pd.DataFrame([
+        _full_ticket_row("t1", 1, "Alice", "2026-09-20T10:00:00Z", "post_100", "normal", "open"),
+        _full_ticket_row("t2", 2, "Bob",   "2026-09-23T10:00:00Z", None,        "urgent", "open"),
+    ])
+    questions = pd.DataFrame([
+        _question_row("pc:th1", 5, "Eve", "2026-09-22T10:00:00Z", "2026-09-22T12:00:00Z", "waiting"),
+        _question_row("pc:th2", 5, "Eve", "2026-09-21T10:00:00Z", "2026-09-21T15:00:00Z", "waiting"),
+    ])
+    return tickets, questions
+
+
 def _fixture_frames():
     tickets = pd.DataFrame([
         _ticket_row("t1", 1, "Alice", "2026-09-20T10:00:00Z"),
@@ -111,6 +138,34 @@ def test_merge_into_tickets_hardcoded_thread_tracer():
     assert len(merged) == 1
     assert merged.iloc[0]["source"] == "member_question"
     assert merged.iloc[0]["content_id"] == "pc:thread-hardcoded-1"
+
+
+# ── ticket_group_key (review finding 1 / finding 8) ─────────────────────────
+
+def test_ticket_group_key_keeps_two_threads_from_one_member_apart():
+    # Finding 1: after the merge, a member-question row has no thread_id of
+    # its own — pd.concat fills it with NaN, and `NaN or ""` stays NaN (NaN
+    # is truthy), so both of this member's threads used to key as "5|nan"
+    # and collapse into one bogus render group. Each question row must key
+    # on its own content_id so it never groups with any other row.
+    tickets, questions = _realistic_fixture_frames()
+    merged = coach_inbox.merge_into_tickets(tickets, questions)
+    keys = merged.apply(coach_inbox.ticket_group_key, axis=1)
+    assert keys.nunique() == len(merged)
+
+
+def test_ticket_group_key_still_groups_a_real_tickets_thread():
+    # Real MN tickets replying on the same forum thread must still share a
+    # group key — this must not regress while fixing finding 1.
+    tickets, questions = _realistic_fixture_frames()
+    tickets = pd.concat([tickets, pd.DataFrame([
+        _full_ticket_row("t3", 1, "Alice", "2026-09-24T10:00:00Z", "post_100", "critical", "open"),
+    ])], ignore_index=True)
+    merged = coach_inbox.merge_into_tickets(tickets, questions)
+    keys = merged.apply(coach_inbox.ticket_group_key, axis=1)
+    t1_key = keys[merged["content_id"] == "t1"].iloc[0]
+    t3_key = keys[merged["content_id"] == "t3"].iloc[0]
+    assert t1_key == t3_key
 
 
 # ── load_member_questions (A2) ──────────────────────────────────────────────

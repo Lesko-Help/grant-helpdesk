@@ -158,6 +158,31 @@ def tickets_tab_label(waiting: int) -> str:
     return "🎫 Tickets"
 
 
+def ticket_group_key(row) -> str:
+    """
+    Input: one row from the merged Tickets-tab frame (a real ticket or a
+    member question). Output: a string key so render_ticket_table can group
+    several ticket rows that reply on the same forum thread under one line.
+
+    A member-question row never shares a group with anything else — each
+    private-chat thread is already its own row in load_member_questions's
+    output — so it always keys on its own content_id. A real ticket keys on
+    member_id + thread_id when it has one, else falls back to its own
+    content_id too. thread_id can arrive as NaN (a float) once this row has
+    passed through merge_into_tickets's pd.concat, which fills a column a
+    row's own frame never had — this checks pd.isna rather than `tid or ""`,
+    since NaN is truthy and would silently defeat that check (this was
+    review finding 1: two threads from one member both keyed as "id|nan"
+    and collapsed into one bogus, crashing render group).
+    """
+    if row.get("source") == "member_question":
+        return str(row["content_id"])
+    tid = row.get("thread_id")
+    if pd.isna(tid) or tid == "":
+        return str(row["content_id"])
+    return f"{row['member_id']}|{tid}"
+
+
 def merge_into_tickets(tickets: pd.DataFrame, questions: pd.DataFrame) -> pd.DataFrame:
     """
     Puts member questions into the same list a coach already scrolls — the

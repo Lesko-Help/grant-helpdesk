@@ -1285,12 +1285,8 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
     # space_id → name, fetched once for the whole list (cached 24h).
     _space_names = load_space_names()
 
-    def _gk(r):
-        tid = r.get("thread_id") or ""
-        return f"{r['member_id']}|{tid}" if tid else str(r["content_id"])
-
     tickets = tickets.copy()
-    tickets["_gk"] = tickets.apply(_gk, axis=1)
+    tickets["_gk"] = tickets.apply(coach_inbox.ticket_group_key, axis=1)
 
     seen_gk: dict = {}
     for idx, row in tickets.iterrows():
@@ -1682,8 +1678,7 @@ with tab_main:
     # Count unique member+thread groups — this is what the user actually sees,
     # not raw ticket rows (multiple comments from one member in one thread = 1 row).
     _unique_groups = tickets.apply(
-        lambda r: f"{r['member_id']}|{r['thread_id']}" if r.get("thread_id") else str(r["content_id"]),
-        axis=1,
+        coach_inbox.ticket_group_key, axis=1
     ).nunique() if not tickets.empty else 0
     _PAGE_SIZE = 25
     _n_pages = max(1, -(-_unique_groups // _PAGE_SIZE))
