@@ -9,6 +9,103 @@ function this module will need later is not stubbed in ahead of time.
 """
 
 import pandas as pd
+from google.cloud import bigquery
+
+import config
+
+_QUESTION_COLUMNS = [
+    "content_id", "source", "member_id", "member_name", "topic", "subject",
+    "created_at", "last_activity_at", "messages", "status",
+]
+
+
+def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFrame:
+    """
+    Reads every member's private-question thread, with its messages, from
+    the questions zone's own tables (config.PRIVATE_CHAT_DATASET).
+
+    Input: an optional BigQuery client — tests always pass a fake, so
+    importing this module never needs live credentials; the real app calls
+    it with no argument and gets bq_base's shared client at CALL time (the
+    import below is inside the function, not at module load).
+
+    Output: one row per thread — content_id ("pc:" + thread_id), member_id,
+    member_name (from core_members, else "Member <id>"), topic, subject,
+    created_at (the thread's own), last_activity_at (its newest message),
+    messages (list of {author_role, body, created_at}, oldest first), and
+    status ("waiting" when the member spoke last, "answered" when a coach
+    did).
+
+    Why: the Tickets tab needs one row per thread, not per message, and
+    needs to know at a glance whether a reply is owed.
+    """
+    if client is None:
+        from bq_base import client as _default_client
+        client = _default_client
+
+    dataset = config.PRIVATE_CHAT_DATASET
+    threads_sql = f"""
+        SELECT
+            t.thread_id,
+            t.member_id,
+            t.subject,
+            t.topic,
+            t.created_at AS thread_created_at,
+            ARRAY_AGG(
+                STRUCT(m.author_role AS author_role, m.body AS body, m.created_at AS created_at)
+                ORDER BY m.created_at
+            ) AS messages
+        FROM `{dataset}.private_threads` t
+        JOIN `{dataset}.private_messages` m ON m.thread_id = t.thread_id
+        GROUP BY t.thread_id, t.member_id, t.subject, t.topic, t.created_at
+    """
+    threads = client.query(threads_sql).to_dataframe()
+    if threads.empty:
+        return pd.DataFrame(columns=_QUESTION_COLUMNS)
+
+    member_ids = sorted({int(mid) for mid in threads["member_id"].dropna().unique()})
+    names = _member_names(client, member_ids)
+
+    records = []
+    for row in threads.itertuples():
+        messages = list(row.messages)
+        last_message = messages[-1]
+        records.append({
+            "content_id": f"pc:{row.thread_id}",
+            "source": "member_question",
+            "member_id": row.member_id,
+            "member_name": names.get(row.member_id, f"Member {row.member_id}"),
+            "topic": row.topic,
+            "subject": row.subject,
+            "created_at": row.thread_created_at,
+            "last_activity_at": last_message["created_at"],
+            "messages": messages,
+            "status": "waiting" if last_message["author_role"] == "member" else "answered",
+        })
+    return pd.DataFrame.from_records(records, columns=_QUESTION_COLUMNS)
+
+
+def _member_names(client, member_ids: list) -> dict:
+    """
+    Input: a BigQuery client and the member ids seen in this batch of
+    threads. Output: {member_id: full name} for the ones core_members
+    knows, so load_member_questions can fall back to "Member <id>" for the
+    rest without a query per thread.
+    """
+    if not member_ids:
+        return {}
+    sql = f"""
+        SELECT
+            member_id,
+            TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) AS full_name
+        FROM `{config.PROJECT_ID}.dataform.core_members`
+        WHERE member_id IN UNNEST(@member_ids)
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ArrayQueryParameter("member_ids", "INT64", member_ids)]
+    )
+    df = client.query(sql, job_config=job_config).to_dataframe()
+    return dict(zip(df["member_id"], df["full_name"]))
 
 
 def merge_into_tickets(tickets: pd.DataFrame, questions: pd.DataFrame) -> pd.DataFrame:

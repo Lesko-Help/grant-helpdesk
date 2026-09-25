@@ -2,12 +2,48 @@
 Offline proof for coach_inbox.py — see docs/specs/modules/coach_inbox.md.
 
 Slice A1 (docs/briefs/coach-inbox-list.md): the merge_into_tickets tracer.
-Nothing here touches BigQuery — fixture frames only.
+Slice A2: load_member_questions, against a fake BigQuery client — never the
+real one, so this file never needs live credentials or touches BigQuery.
 """
 
 import pandas as pd
 
 import coach_inbox
+
+
+# ── load_member_questions fakes (A2) ────────────────────────────────────────
+
+class _FakeQueryResult:
+    """Stands in for a google.cloud.bigquery QueryJob: only .to_dataframe()
+    is ever called on it by coach_inbox.load_member_questions."""
+
+    def __init__(self, df):
+        self._df = df
+
+    def to_dataframe(self):
+        return self._df
+
+
+class _FakeBigQueryClient:
+    """Stands in for google.cloud.bigquery.Client. load_member_questions
+    sends two queries (threads+messages, then core_members names) — this
+    routes each to its canned frame by sniffing the SQL text, since a fake
+    has no real tables to query against."""
+
+    def __init__(self, threads_df, names_df):
+        self._threads_df = threads_df
+        self._names_df = names_df
+        self.queries = []
+
+    def query(self, sql, job_config=None):
+        self.queries.append(sql)
+        if "core_members" in sql:
+            return _FakeQueryResult(self._names_df)
+        return _FakeQueryResult(self._threads_df)
+
+
+def _msg(author_role, body, created_at):
+    return {"author_role": author_role, "body": body, "created_at": created_at}
 
 
 def _ticket_row(content_id, member_id, member_name, created_at):
@@ -75,3 +111,73 @@ def test_merge_into_tickets_hardcoded_thread_tracer():
     assert len(merged) == 1
     assert merged.iloc[0]["source"] == "member_question"
     assert merged.iloc[0]["content_id"] == "pc:thread-hardcoded-1"
+
+
+# ── load_member_questions (A2) ──────────────────────────────────────────────
+
+def test_load_member_questions_builds_rows_from_threads_and_messages():
+    # R1/R2: one row per thread, tagged and named; R3: status from the
+    # newest message's author_role (member -> waiting, coach -> answered).
+    threads_df = pd.DataFrame([
+        {
+            "thread_id": "th1",
+            "member_id": 111,
+            "subject": "Rent help",
+            "topic": "housing",
+            "thread_created_at": "2026-09-20T08:00:00Z",
+            "messages": [
+                _msg("member", "Can you help with rent?", "2026-09-20T08:00:00Z"),
+                _msg("coach", "Sure, let's talk", "2026-09-20T09:00:00Z"),
+            ],
+        },
+        {
+            "thread_id": "th2",
+            "member_id": 222,
+            "subject": "Car repair",
+            "topic": "cars",
+            "thread_created_at": "2026-09-21T08:00:00Z",
+            "messages": [
+                _msg("member", "My car broke down", "2026-09-21T08:00:00Z"),
+            ],
+        },
+    ])
+    names_df = pd.DataFrame([{"member_id": 111, "full_name": "Carol Smith"}])
+    fake = _FakeBigQueryClient(threads_df, names_df)
+
+    result = coach_inbox.load_member_questions(client=fake)
+
+    by_id = {row["content_id"]: row for _, row in result.iterrows()}
+    assert set(by_id) == {"pc:th1", "pc:th2"}
+
+    th1 = by_id["pc:th1"]
+    assert th1["source"] == "member_question"
+    assert th1["member_id"] == 111
+    assert th1["member_name"] == "Carol Smith"  # found in core_members
+    assert th1["topic"] == "housing"
+    assert th1["subject"] == "Rent help"
+    assert th1["created_at"] == "2026-09-20T08:00:00Z"
+    assert th1["last_activity_at"] == "2026-09-20T09:00:00Z"
+    assert [m["author_role"] for m in th1["messages"]] == ["member", "coach"]
+    assert th1["status"] == "answered"
+
+    th2 = by_id["pc:th2"]
+    assert th2["member_name"] == "Member 222"  # not in core_members -> fallback
+    assert th2["status"] == "waiting"
+
+
+def test_load_member_questions_empty_tables_returns_empty_frame():
+    # R4 (partial — the empty-tables half only; the error/alert half is A5):
+    # no threads at all -> empty frame with the right columns, no crash.
+    empty_threads = pd.DataFrame(
+        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at", "messages"]
+    )
+    empty_names = pd.DataFrame(columns=["member_id", "full_name"])
+    fake = _FakeBigQueryClient(empty_threads, empty_names)
+
+    result = coach_inbox.load_member_questions(client=fake)
+
+    assert result.empty
+    assert list(result.columns) == [
+        "content_id", "source", "member_id", "member_name", "topic",
+        "subject", "created_at", "last_activity_at", "messages", "status",
+    ]

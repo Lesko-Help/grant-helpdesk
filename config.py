@@ -73,6 +73,12 @@ SPACE_NAMES_TABLE       = f"{PROJECT_ID}.{DATASET}.space_names"
 MN_NETWORK_ID  = "4022250"
 MN_API_BASE    = "https://api.mn.co/admin/v1"
 
+# The questions zone's own project/dataset (EU, owned by that zone — not this
+# app's DATASET above). coach_inbox.load_member_questions reads private_threads
+# and private_messages from here; nothing in this app ever writes here except
+# an INSERT into private_messages (the later reply slice).
+PRIVATE_CHAT_DATASET = "lesko-486515.private_chat"
+
 # Colleagues a coach can @mention from the answer pop-up. The display name is
 # what MN renders in the mention (MN does not look it up by id), so keep it the
 # person's real name. member_id is their Mighty Networks member id.

@@ -359,6 +359,12 @@ def load_open_stats():
 def load_daily_stats():
     return bq_client.get_daily_stats()
 
+@st.cache_data(ttl=120)
+def load_member_questions():
+    # Shorter TTL than the other loaders: this is the one thing in the tab a
+    # coach expects to see change within a minute of a member writing in.
+    return coach_inbox.load_member_questions()
+
 @st.cache_data(ttl=300)
 def load_report(report_type: str, date_from: str, date_to: str):
     return bq_client.get_report_data(report_type, date_from, date_to)
@@ -1636,22 +1642,17 @@ with tab_main:
                     st.success(f"Closed {_bc_closed} tickets.")
                     st.rerun()
 
-    # ── Member questions (coach_inbox, slice A1 tracer) ──────────────────────
-    # One hardcoded thread, standing in for the real BigQuery read
-    # (coach_inbox.load_member_questions, slice A2) so merge_into_tickets and
-    # its Tickets-tab rendering can be proven before that read exists.
-    _hardcoded_member_question = pd.DataFrame([{
-        "content_id": "pc:thread-hardcoded-1",
-        "source": "member_question",
-        "member_id": 999999,
-        "member_name": "Anna K.",
-        "thread_id": "thread-hardcoded-1",
-        "created_at": "2026-09-25T09:00:00Z",
-        "last_activity_at": "2026-09-25T09:00:00Z",
-        "status": "waiting",
-        "body_preview": "Can I get help with rent this month?",
-    }])
-    tickets = coach_inbox.merge_into_tickets(tickets, _hardcoded_member_question)
+    # ── Member questions (coach_inbox, slice A2: real private_chat read) ─────
+    # load_member_questions returns one row per thread with a `messages` list
+    # (spec's own column set); `body_preview` is view-layer only — the most
+    # recent message's body — so render_ticket_table can show it like any
+    # other row without load_member_questions needing to know about display.
+    _member_questions = load_member_questions()
+    _member_questions = _member_questions.copy()
+    _member_questions["body_preview"] = _member_questions["messages"].apply(
+        lambda msgs: msgs[-1]["body"] if msgs else ""
+    )
+    tickets = coach_inbox.merge_into_tickets(tickets, _member_questions)
 
     # ── Ticket list ───────────────────────────────────────────────────────────
     # Count unique member+thread groups — this is what the user actually sees,
