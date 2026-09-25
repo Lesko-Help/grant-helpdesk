@@ -206,6 +206,65 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-In flight (file:line):
+- Brief filled in and committed (commit 38778be): done-when, may-touch, deploy
+  implied, context (incl. overseer's memory message of 2026-09-25).
+- Slice A1 tracer built, not yet committed:
+  - `coach_inbox.py` (new): `merge_into_tickets(tickets, questions)` — R1
+    (waiting questions first, then everything newest `last_activity_at`
+    first) + R2 (`source` column: `ticket` / `member_question`).
+  - `tests/test_coach_inbox.py` (new): 3 tests, all green —
+    `test_merge_into_tickets_puts_waiting_questions_first_then_newest_activity`,
+    `test_merge_into_tickets_assigns_source_column`,
+    `test_merge_into_tickets_hardcoded_thread_tracer`.
+  - Red-then-green proven by hand: moved `coach_inbox.py` to the scratchpad
+    dir, reran `pytest tests/test_coach_inbox.py -k merge` → `ModuleNotFoundError`
+    (red), moved it back → 3 passed (green).
+  - `app.py`: added `import pandas as pd`, `import coach_inbox`; in
+    `tab_main`, right before the "Ticket list" section, built one hardcoded
+    member-question row and called `coach_inbox.merge_into_tickets(tickets,
+    _hardcoded_member_question)`; in `render_ticket_table`, added
+    `_is_question = row.get("source") == "member_question"` gating: a
+    "Member question" badge (inline style, no new CSS file — none of the
+    `lesko-ui`/`static` CSS files are in this brief's May touch) prepended to
+    the member-name div, a "waiting"/"✓ Answered" status string instead of
+    the urgency dot, and the action `st.selectbox` skipped entirely (`if not
+    _is_question:` around it) — no dropdown for member questions yet, per
+    the spec's R2 and the gate's mock-up.
+  - `python3 -c "import ast; ast.parse(open('app.py').read())"` → syntax OK.
+
+In flight (coach_inbox-list.md, this file):
+- Have NOT yet: run the local app for the A1 screenshot proof (needs
+  `DEV_USER=... streamlit run app.py`, possibly with `HELPDESK_PREVIEW=1`
+  since this slice must not touch real BigQuery writes — reads of the real
+  `grant_tickets`/`ticket_metadata` tables are fine, ADC is available in this
+  shell). Have NOT yet committed the A1 diff (`coach_inbox.py`,
+  `tests/test_coach_inbox.py`, `app.py`). Have NOT yet messaged the overseer
+  "slice K done - continue or re-steer?" for A1.
+
 Next:
+1. Run the app locally (`DEV_USER=martin.j.menke@gmail.com streamlit run
+   app.py`, or the `run` skill), confirm the "Member question" badge row
+   renders in the Tickets tab, screenshot it.
+2. `git add -N .`, review `git diff HEAD`, commit A1 as one commit (message:
+   what changed, which invariant — read-only, no `private_chat` write yet).
+3. `git add -N .` + `git status` clean check, then message
+   `helpdesk-opzichter` via SendMessage: "slice A1 done - continue or
+   re-steer?" + one-line summary + the proof line (pytest -k merge green,
+   red first; screenshot). Wait for its reply before starting A2 (real
+   `load_member_questions` read against `private_chat`, needs
+   `config.PRIVATE_CHAT_DATASET` — not added yet, deferred to A2 by design).
+4. Do not implement `load_member_questions`, `waiting_count`, or
+   `report_source_failure` yet — those are A2/A3/A5, still `<!-- spec:stub
+   -->`-free but out of scope for A1's own commit.
+
 Traps (with dates):
+- 2026-09-25 (from overseer memory): `bq_writes.trigger_assignment_refresh()`
+  fires a REMOTE Dataform run; pytest has triggered it before and rebuilt
+  `grant_tickets` from committed `.sqlx`, damaging live data. Keep tests
+  offline, no live BQ writes, no Dataform, no new `.sqlx` this slice.
+- 2026-09-25: `private_chat.private_threads`/`private_messages` are EMPTY and
+  the zone's writes are off — A2's "local run against the real tables" proof
+  will show an empty frame, not seeded data; that's expected, not a bug.
+- 2026-09-25: no CSS file (`lesko-ui/*.css`, `static/*.css`) is in this
+  brief's May touch — the "Member question" badge uses an inline `style=`
+  span, not a new CSS class, to stay in scope.
