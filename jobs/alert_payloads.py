@@ -15,6 +15,9 @@ Run directly to print one payload to stdout:
   python3 jobs/alert_payloads.py metric-filter poll-dataform-failures
   python3 jobs/alert_payloads.py threshold-policy TITLE poll-dataform-failures \
       bigtribebuilders CHANNEL METRIC_NAME
+  python3 jobs/alert_payloads.py service-metric-filter grant-helpdesk
+  python3 jobs/alert_payloads.py service-threshold-policy TITLE grant-helpdesk \
+      bigtribebuilders CHANNEL METRIC_NAME
 """
 
 import json
@@ -206,6 +209,157 @@ def threshold_policy(title, job, project, channel, metric_name):
     }
 
 
+APP_REPO = "grant-helpdesk"  # matches raillog.py's REPO in both root and jobs/ copies
+
+
+def service_metric_log_filter(service):
+    """Input: a Cloud Run *service* name (the app itself, not a scheduled
+    job). Output: the Cloud Logging filter string selecting this repo's own
+    BTB_ALERT lines from that service's revisions. Why: resource.type alone
+    (cloud_run_revision) already tells services apart from jobs, but not one
+    service's BTB_ALERT lines from another service's in the same GCP
+    project, the way job_name already does for a job — so this filter also
+    requires the "BTB_ALERT grant-helpdesk/" text prefix raillog.alert()
+    always writes for this repo. No severity clause: a Cloud Run print() of
+    {"severity": "ERROR", ...} lands in textPayload, not a queryable
+    severity field (confirmed live 2026-09-24 — see the coach-inbox-alert
+    brief, Context, trap 4).
+    """
+    prefix = f"BTB_ALERT {APP_REPO}/"
+    return (
+        f'resource.type="cloud_run_revision" AND resource.labels.service_name="{service}" '
+        f'AND (textPayload:"{prefix}" OR jsonPayload.message:"{prefix}")'
+    )
+
+
+def service_log_match_policy(title, service, project, channel):
+    """Input: display title, Cloud Run service name, GCP project, and a
+    notification channel's resource name. Output: the AlertPolicy dict for a
+    conditionMatchedLog (log-based) policy that pages the instant a
+    BTB_ALERT line appears in that service's logs, ready to json.dumps into
+    the Monitoring API's create/patch body. Why: same shape as
+    log_match_policy() above for the job, scoped to a Cloud Run service
+    instead — see that function's own docstring for why
+    notificationChannelStrategy must not appear in this policy's
+    alertStrategy (Monitoring rejects it on a log-based policy).
+    """
+    content = (
+        f"The grant-helpdesk Cloud Run service called raillog.alert() (root "
+        "raillog.py). Codes: AUTH_FAILED, SOURCE_FAILED, SOURCE_EMPTY, "
+        "ASSERTION_FAILED, QUOTA, STALE, UNEXPECTED — the code is in the "
+        "message itself.\n\n"
+        "As of 2026-09-25 the only caller is coach_inbox.py's "
+        "report_source_failure(), for a private_chat read or write failure "
+        "(docs/specs/modules/coach_inbox.md).\n\n"
+        "Read the full line in Cloud Logging:\n"
+        f"  gcloud logging read 'resource.type=\"cloud_run_revision\" AND "
+        f'resource.labels.service_name="{service}" AND (textPayload:"BTB_ALERT '
+        f'{APP_REPO}/" OR jsonPayload.message:"BTB_ALERT {APP_REPO}/")\' '
+        f"--project {project} --limit 5"
+    )
+    return {
+        "displayName": title,
+        "documentation": {
+            "subject": title,
+            "content": content,
+            "mimeType": "text/markdown",
+        },
+        "conditions": [{
+            "displayName": "a BTB_ALERT line appeared in the grant-helpdesk service logs",
+            "conditionMatchedLog": {
+                "filter": service_metric_log_filter(service),
+            },
+        }],
+        "combiner": "OR",
+        "enabled": True,
+        "alertStrategy": {
+            "notificationRateLimit": {"period": "1800s"},
+            "autoClose": "604800s",
+        },
+        "notificationChannels": [channel],
+    }
+
+
+def service_threshold_policy(title, service, project, channel, metric_name):
+    """Input: display title, Cloud Run service name, GCP project, a
+    notification channel's resource name, and the log metric's name. Output:
+    the AlertPolicy dict for a conditionThreshold policy on that metric,
+    ready to json.dumps into the Monitoring API's create/patch body. Why:
+    same reasoning as threshold_policy() above for the job — a
+    conditionMatchedLog policy cannot carry the 24h re-notify, so this is the
+    twin policy that can, scoped to the Cloud Run service instead of a job.
+    """
+    content = (
+        f"The grant-helpdesk service logged one or more BTB_ALERT lines in "
+        f"the last 24 hours (metric logging.googleapis.com/user/{metric_name}). "
+        "This is the renotifying twin of the log-match policy on the same "
+        "service.\n\n"
+        "Read the full line in Cloud Logging:\n"
+        f"  gcloud logging read 'resource.type=\"cloud_run_revision\" AND "
+        f'resource.labels.service_name="{service}" AND (textPayload:"BTB_ALERT '
+        f'{APP_REPO}/" OR jsonPayload.message:"BTB_ALERT {APP_REPO}/")\' '
+        f"--project {project} --limit 5"
+    )
+    return {
+        "displayName": title,
+        "documentation": {
+            "subject": title,
+            "content": content,
+            "mimeType": "text/markdown",
+        },
+        "conditions": [{
+            "displayName": "the BTB_ALERT metric rose above 0",
+            "conditionThreshold": {
+                # resource.type is required here even though the metric's own
+                # log-filter already scopes to cloud_run_revision — Monitoring
+                # rejects a conditionThreshold filter with no resource.type
+                # restriction of its own (same trap as the job's
+                # threshold_policy(), confirmed live 2026-09-24 for this
+                # service too — see the coach-inbox-alert brief, Context,
+                # trap 2).
+                "filter": (
+                    f'metric.type="logging.googleapis.com/user/{metric_name}" '
+                    'AND resource.type="cloud_run_revision"'
+                ),
+                "comparison": "COMPARISON_GT",
+                "thresholdValue": 0,
+                "duration": "0s",
+                # Same 86400s/ALIGN_SUM reasoning as threshold_policy() above:
+                # a 60s window on a DELTA counter reports a genuine 0 as soon
+                # as BTB_ALERT lines stop, auto-resolving before a 24h
+                # renotify could ever fire.
+                #
+                # evaluationMissingData is deliberately left unset for the
+                # same reason as the job policy: the API rejects it paired
+                # with duration "0s" (confirmed live 2026-09-24 — see the
+                # coach-inbox-alert brief, Context, trap 3).
+                "aggregations": [{
+                    "alignmentPeriod": "86400s",
+                    "perSeriesAligner": "ALIGN_SUM",
+                    "crossSeriesReducer": "REDUCE_SUM",
+                }],
+            },
+        }],
+        "combiner": "OR",
+        "enabled": True,
+        "alertStrategy": {
+            # No notificationRateLimit here — same mirror-image trap as the
+            # job's threshold_policy(): Monitoring accepts that field only on
+            # log-based policies.
+            "autoClose": "604800s",
+            "notificationChannelStrategy": [{
+                "notificationChannelNames": [channel],
+                # 82800s (23h), one hour under the 86400s alignmentPeriod —
+                # same reasoning as threshold_policy() above (round-4 review
+                # blocker #9): keeps the re-notify firing while the rolling
+                # sum is still >0, instead of after it has already cleared.
+                "renotifyInterval": "82800s",
+            }],
+        },
+        "notificationChannels": [channel],
+    }
+
+
 SILENCE_WINDOW_SECONDS = 5400  # 1.5x the hourly Scheduler trigger: 3600s
 # schedule + 1800s margin. The margin covers the job's own 120s timeout, the
 # Scheduler's own retry/deadline window and Monitoring's ~120s ingest delay,
@@ -352,6 +506,9 @@ def _main(argv):
             "       alert_payloads.py log-match-policy TITLE JOB PROJECT CHANNEL\n"
             "       alert_payloads.py threshold-policy TITLE JOB PROJECT CHANNEL METRIC_NAME\n"
             "       alert_payloads.py absence-policy TITLE JOB PROJECT CHANNEL\n"
+            "       alert_payloads.py service-metric-filter SERVICE\n"
+            "       alert_payloads.py service-log-match-policy TITLE SERVICE PROJECT CHANNEL\n"
+            "       alert_payloads.py service-threshold-policy TITLE SERVICE PROJECT CHANNEL METRIC_NAME\n"
             "       alert_payloads.py same-policy EXISTING_JSON WANT_JSON\n"
         )
         return 1
@@ -367,6 +524,14 @@ def _main(argv):
     elif kind == "absence-policy" and len(argv) == 6:
         title, job, project, channel = argv[2:6]
         print(json.dumps(absence_policy(title, job, project, channel)))
+    elif kind == "service-metric-filter" and len(argv) == 3:
+        print(service_metric_log_filter(argv[2]))
+    elif kind == "service-log-match-policy" and len(argv) == 6:
+        title, service, project, channel = argv[2:6]
+        print(json.dumps(service_log_match_policy(title, service, project, channel)))
+    elif kind == "service-threshold-policy" and len(argv) == 7:
+        title, service, project, channel, metric_name = argv[2:7]
+        print(json.dumps(service_threshold_policy(title, service, project, channel, metric_name)))
     elif kind == "same-policy" and len(argv) == 4:
         existing, want = json.loads(argv[2]), json.loads(argv[3])
         print("True" if same_policy(existing, want) else "False")

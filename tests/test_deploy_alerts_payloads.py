@@ -21,10 +21,13 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "jobs"))
 
 from alert_payloads import (  # noqa: E402
     absence_policy, log_match_policy, metric_log_filter, same_policy,
-    threshold_policy)
+    service_log_match_policy, service_metric_log_filter,
+    service_threshold_policy, threshold_policy)
 
 CHANNEL = "projects/bigtribebuilders/notificationChannels/4324299381952164741"
 METRIC_NAME = "poll_dataform_failures_btb_alert_count"
+SERVICE = "grant-helpdesk"
+SERVICE_METRIC_NAME = "grant_helpdesk_btb_alert_count"
 
 
 def test_metric_log_filter_scopes_to_job_and_btb_alert():
@@ -290,3 +293,163 @@ def test_same_policy_absence_round_trip():
     drifted = json.loads(json.dumps(want))
     drifted["conditions"][0]["conditionAbsent"]["duration"] = "9000s"
     assert same_policy(drifted, want) is False
+
+
+# ── service-scoped policies: the grant-helpdesk app itself ──────────────────
+# coach-inbox-alert brief, slice B2. The app is a Cloud Run *service*
+# (resource.type="cloud_run_revision", resource.labels.service_name), not a
+# job — everything above this point watches poll-dataform-failures, a job.
+# Both kinds of BTB_ALERT line share one Cloud Logging project, so the
+# service filter also requires the "BTB_ALERT grant-helpdesk/" text prefix
+# (overseer memory trap 4, 2026-09-25) — resource.type alone already tells
+# jobs and services apart, but not one service's own BTB_ALERT lines from
+# another service's, if one is ever deployed in the same project.
+
+def test_service_metric_log_filter_scopes_to_service_and_repo_prefix():
+    filt = service_metric_log_filter(SERVICE)
+    assert 'resource.type="cloud_run_revision"' in filt
+    assert f'resource.labels.service_name="{SERVICE}"' in filt
+    assert 'textPayload:"BTB_ALERT grant-helpdesk/"' in filt
+    assert 'jsonPayload.message:"BTB_ALERT grant-helpdesk/"' in filt
+    assert '"severity"' not in filt  # trap 4: severity never lands where this filter can see it
+
+
+def test_service_log_match_policy_filter_matches_service_metric_log_filter():
+    policy = service_log_match_policy("TITLE", SERVICE, "bigtribebuilders", CHANNEL)
+    cond = policy["conditions"][0]["conditionMatchedLog"]
+    assert cond["filter"] == service_metric_log_filter(SERVICE)
+
+
+def test_service_log_match_policy_has_no_notification_channel_strategy():
+    # Same trap as the job policy (round-3 review blocker #1 / overseer trap
+    # 1): Monitoring rejects notificationChannelStrategy on a
+    # conditionMatchedLog (log-based) policy.
+    policy = service_log_match_policy("TITLE", SERVICE, "bigtribebuilders", CHANNEL)
+    strategy = policy["alertStrategy"]
+    assert "notificationChannelStrategy" not in strategy
+    assert strategy["notificationRateLimit"] == {"period": "1800s"}
+    assert strategy["autoClose"] == "604800s"
+
+
+def test_service_threshold_policy_condition_names_resource_type():
+    # Overseer trap 2: a conditionThreshold on a log-based metric must
+    # restrict resource.type itself, even though the metric's own filter
+    # already scopes to cloud_run_revision — Monitoring rejects CREATE
+    # without it.
+    policy = service_threshold_policy(
+        "TITLE", SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
+    cond = policy["conditions"][0]["conditionThreshold"]
+    assert 'resource.type="cloud_run_revision"' in cond["filter"]
+    assert f'metric.type="logging.googleapis.com/user/{SERVICE_METRIC_NAME}"' in cond["filter"]
+
+
+def test_service_threshold_policy_stays_open_for_a_full_day():
+    policy = service_threshold_policy(
+        "TITLE", SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
+    cond = policy["conditions"][0]["conditionThreshold"]
+    assert cond["aggregations"][0]["alignmentPeriod"] == "86400s"
+    assert cond["aggregations"][0]["perSeriesAligner"] == "ALIGN_SUM"
+
+
+def test_service_threshold_policy_renotifies_every_24h_and_has_no_rate_limit():
+    policy = service_threshold_policy(
+        "TITLE", SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
+    strategy = policy["alertStrategy"]
+    assert "notificationRateLimit" not in strategy
+    assert strategy["notificationChannelStrategy"] == [{
+        "notificationChannelNames": [CHANNEL],
+        "renotifyInterval": "82800s",
+    }]
+
+
+def test_service_threshold_policy_evaluation_missing_data_absent_or_has_nonzero_duration():
+    # Overseer trap 3: evaluationMissingData paired with duration "0s" is
+    # rejected outright — same constraint as the job policy.
+    policy = service_threshold_policy(
+        "TITLE", SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
+    cond = policy["conditions"][0]["conditionThreshold"]
+    if "evaluationMissingData" in cond:
+        assert cond["duration"] != "0s"
+
+
+def test_service_threshold_policy_renotify_interval_is_shorter_than_alignment_period():
+    policy = service_threshold_policy(
+        "TITLE", SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
+    cond = policy["conditions"][0]["conditionThreshold"]
+    strategy = policy["alertStrategy"]["notificationChannelStrategy"][0]
+    alignment_period = int(cond["aggregations"][0]["alignmentPeriod"].rstrip("s"))
+    renotify_interval = int(strategy["renotifyInterval"].rstrip("s"))
+    assert renotify_interval < alignment_period
+
+
+def test_service_threshold_policy_subject_keeps_btb_alert_prefix():
+    # Overseer trap 5: the subject lives in documentation.subject and starts
+    # "BTB-ALERT bigtribebuilders".
+    policy = service_threshold_policy(
+        "BTB-ALERT bigtribebuilders — grant-helpdesk reported a BTB_ALERT (renotifies every 24h)",
+        SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
+    assert policy["documentation"]["subject"].startswith("BTB-ALERT bigtribebuilders")
+
+
+def test_service_threshold_policy_is_valid_json():
+    policy = service_threshold_policy(
+        "TITLE", SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
+    json.dumps(policy)  # must not raise
+
+
+def test_service_log_match_policy_is_valid_json():
+    policy = service_log_match_policy("TITLE", SERVICE, "bigtribebuilders", CHANNEL)
+    json.dumps(policy)  # must not raise
+
+
+def test_cli_service_metric_filter_matches_direct_call():
+    result = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "jobs", "alert_payloads.py"),
+         "service-metric-filter", SERVICE],
+        capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == service_metric_log_filter(SERVICE)
+
+
+def test_cli_service_log_match_policy_matches_direct_call():
+    result = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "jobs", "alert_payloads.py"),
+         "service-log-match-policy", "TITLE", SERVICE, "bigtribebuilders", CHANNEL],
+        capture_output=True, text=True, check=True)
+    via_cli = json.loads(result.stdout)
+    via_call = service_log_match_policy("TITLE", SERVICE, "bigtribebuilders", CHANNEL)
+    assert via_cli == via_call
+
+
+def test_cli_service_threshold_policy_matches_direct_call():
+    result = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "jobs", "alert_payloads.py"),
+         "service-threshold-policy", "TITLE", SERVICE, "bigtribebuilders", CHANNEL,
+         SERVICE_METRIC_NAME],
+        capture_output=True, text=True, check=True)
+    via_cli = json.loads(result.stdout)
+    via_call = service_threshold_policy(
+        "TITLE", SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
+    assert via_cli == via_call
+
+
+def test_same_policy_service_threshold_round_trip():
+    # same_policy() is shared with the job policies — this proves it also
+    # reconciles the service policy's own API-omitted-defaults shape.
+    want = service_threshold_policy(
+        "TITLE", SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
+    existing = json.loads(json.dumps(want))
+    existing["conditions"][0]["name"] = "projects/bigtribebuilders/alertPolicies/789/conditions/012"
+    del existing["conditions"][0]["conditionThreshold"]["thresholdValue"]
+    del existing["conditions"][0]["conditionThreshold"]["duration"]
+    assert same_policy(existing, want) is True
+
+    drifted = json.loads(json.dumps(want))
+    drifted["conditions"][0]["conditionThreshold"]["filter"] = 'metric.type="something-else"'
+    assert same_policy(drifted, want) is False
+
+
+def test_service_metric_name_matches_deploy_alerts_naming():
+    # jobs/deploy-alerts.sh derives METRIC_NAME as "${SERVICE//-/_}_btb_alert_count"
+    # for the job block — the service block must use the same substitution so
+    # a coach reading one policy's metric name can guess the other's.
+    assert SERVICE_METRIC_NAME == SERVICE.replace("-", "_") + "_btb_alert_count"
