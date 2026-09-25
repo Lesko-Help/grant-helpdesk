@@ -309,3 +309,20 @@ def test_load_member_questions_read_failure_returns_empty_frame_and_alerts(capsy
         '"BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: '
         'private_chat read failed: RuntimeError"}'
     )
+
+
+def test_read_failed_true_after_a_failure_and_false_after_a_success(capsys):
+    # Finding 2: an empty frame from a failed read looks identical to an
+    # empty frame from a genuinely-empty result, so app.py cannot show its
+    # own st.error from the returned frame alone — it needs to ask
+    # read_failed() too.
+    coach_inbox.load_member_questions(client=_RaisingBigQueryClient())
+    capsys.readouterr()  # drop the alert line, not this test's concern
+    assert coach_inbox.read_failed() is True
+
+    empty_threads = pd.DataFrame(
+        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at", "messages"]
+    )
+    empty_names = pd.DataFrame(columns=["member_id", "full_name"])
+    coach_inbox.load_member_questions(client=_FakeBigQueryClient(empty_threads, empty_names))
+    assert coach_inbox.read_failed() is False

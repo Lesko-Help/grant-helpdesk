@@ -19,6 +19,11 @@ _QUESTION_COLUMNS = [
     "created_at", "last_activity_at", "messages", "status",
 ]
 
+# Set by load_member_questions on every call, read by read_failed(): a failed
+# read and a genuinely-empty result both come back as the same empty frame,
+# so this is the only way app.py can tell them apart and show its own st.error.
+_last_read_failed = False
+
 
 def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFrame:
     """
@@ -45,6 +50,9 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
     returns an empty frame with the usual columns rather than raising, so
     the rest of the Tickets tab still renders the MN tickets it does have.
     """
+    global _last_read_failed
+    _last_read_failed = False
+
     if client is None:
         from bq_base import client as _default_client
         client = _default_client
@@ -91,8 +99,20 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
             })
         return pd.DataFrame.from_records(records, columns=_QUESTION_COLUMNS)
     except Exception as err:
+        _last_read_failed = True
         report_source_failure("read", err)
         return pd.DataFrame(columns=_QUESTION_COLUMNS)
+
+
+def read_failed() -> bool:
+    """
+    Input: none. Output: whether the most recent load_member_questions call
+    hit a read failure (already reported via report_source_failure) rather
+    than genuinely finding zero questions — both return an identical empty
+    frame, so this is the only way a caller can tell the two apart and
+    decide whether to show its own st.error.
+    """
+    return _last_read_failed
 
 
 def report_source_failure(operation: str, err: Exception) -> None:

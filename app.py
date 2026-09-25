@@ -1241,8 +1241,11 @@ if not st.session_state.show_filters:
 # to build a client at all (e.g. missing local credentials) — so that, too,
 # surfaces to whoever is watching the app instead of crashing the page.
 try:
+    _member_questions_for_label = load_member_questions()
+    if coach_inbox.read_failed():
+        st.error("Could not load member questions — see the coach-inbox alert log.")
     _tickets_tab_label = coach_inbox.tickets_tab_label(
-        coach_inbox.waiting_count(load_member_questions())
+        coach_inbox.waiting_count(_member_questions_for_label)
     )
 except Exception as _member_questions_err:
     st.error(f"Could not load member questions: {_member_questions_err}")
@@ -1665,6 +1668,8 @@ with tab_main:
     # load_member_questions cannot catch and alert on its own).
     try:
         _member_questions = load_member_questions()
+        if coach_inbox.read_failed():
+            st.error("Could not load member questions — see the coach-inbox alert log.")
     except Exception as _member_questions_err:
         st.error(f"Could not load member questions: {_member_questions_err}")
         _member_questions = pd.DataFrame(columns=["messages"])
