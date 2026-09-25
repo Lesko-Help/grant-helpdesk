@@ -4,8 +4,10 @@ import sys
 import types
 import datetime
 import concurrent.futures
+import pandas as pd
 import streamlit as st
 import bq_client
+import coach_inbox
 import config
 from mn_format import mn_mention, build_mn_body, _linkify, space_label, MEMBER_BIO_LABEL  # noqa: F401
 
@@ -1370,39 +1372,62 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
         _shown += 1
         c0, c1, c3, c6 = st.columns([1.3, 5.6, 1.3, 0.6])
 
+        _is_question = row.get("source") == "member_question"
+
         mem_name = row["member_name"] or "Unknown"
-        _row_domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
-        _row_urg = (row.get("urgency") or "normal").lower()
-        _row_status = (row.get("ticket_status") or "open").lower()
-        _is_answered = _row_status == "answered"
-        _urg_labels = {"normal": "🟢", "urgent": "🟡", "critical": "🔴"}
-        _meta_parts = []
-        _row_space = space_label(row.get("space_id"), _space_names)
-        _meta_parts.append(("👤 " if _row_space == MEMBER_BIO_LABEL else "📍 ") + _row_space)
-        if _row_domain_icon:
-            _meta_parts.append(_row_domain_icon)
-        _fu = _followup_map.get(str(row["content_id"]))
-        if _fu:
-            if _fu.get("status") == "pending":
-                try:
-                    import pandas as _pd
-                    _fu_ts = _pd.Timestamp(_fu["send_after"])
-                    if _fu_ts.tzinfo is None:
-                        _fu_ts = _fu_ts.tz_localize("UTC")
-                    _days_left = max(0, (_fu_ts - _pd.Timestamp.now(tz="UTC")).days)
-                except Exception:
-                    _days_left = "?"
-                _meta_parts.append(f"⏳ follow-up in {_days_left}d")
-            elif _fu.get("status") == "sent":
-                _meta_parts.append("✅ follow-up sent")
-        if _is_answered:
-            _status_html = '<span class="answered-badge">✓ Answered</span>'
+
+        if _is_question:
+            # A member question row only ever comes from the hardcoded tracer
+            # (later load_member_questions) frame, which does not carry the
+            # ticket-only columns (urgency, ticket_status, domain, space_id).
+            # After merge_into_tickets concatenates it with real tickets, those
+            # missing columns read back as pandas NaN (not None) for this row —
+            # skip them entirely rather than risk a NaN reaching .lower().
+            _row_domain_icon = ""
+            _meta_parts = []
+            _is_answered = (row.get("status") == "answered")
+            _status_html = (
+                '<span class="answered-badge">✓ Answered</span>' if _is_answered
+                else "⏳ waiting"
+            )
         else:
-            _status_html = _urg_labels.get(_row_urg, "🟢") + " " + _row_urg
+            _row_domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
+            _row_urg = (row.get("urgency") or "normal").lower()
+            _row_status = (row.get("ticket_status") or "open").lower()
+            _is_answered = _row_status == "answered"
+            _urg_labels = {"normal": "🟢", "urgent": "🟡", "critical": "🔴"}
+            _meta_parts = []
+            _row_space = space_label(row.get("space_id"), _space_names)
+            _meta_parts.append(("👤 " if _row_space == MEMBER_BIO_LABEL else "📍 ") + _row_space)
+            if _row_domain_icon:
+                _meta_parts.append(_row_domain_icon)
+            _fu = _followup_map.get(str(row["content_id"]))
+            if _fu:
+                if _fu.get("status") == "pending":
+                    try:
+                        import pandas as _pd
+                        _fu_ts = _pd.Timestamp(_fu["send_after"])
+                        if _fu_ts.tzinfo is None:
+                            _fu_ts = _fu_ts.tz_localize("UTC")
+                        _days_left = max(0, (_fu_ts - _pd.Timestamp.now(tz="UTC")).days)
+                    except Exception:
+                        _days_left = "?"
+                    _meta_parts.append(f"⏳ follow-up in {_days_left}d")
+                elif _fu.get("status") == "sent":
+                    _meta_parts.append("✅ follow-up sent")
+            if _is_answered:
+                _status_html = '<span class="answered-badge">✓ Answered</span>'
+            else:
+                _status_html = _urg_labels.get(_row_urg, "🟢") + " " + _row_urg
         _marker = '<div class="answered-row-marker"></div>' if _is_answered else ""
+        _badge = (
+            '<span style="background:var(--color-primary,#4a52a3);color:#fff;'
+            'font-size:0.65rem;font-weight:600;padding:2px 6px;border-radius:4px;'
+            'margin-right:6px">Member question</span>'
+        ) if _is_question else ""
         c0.markdown(
             f'{_marker}'
-            f'<div class="member-name">{mem_name}</div>'
+            f'<div class="member-name">{_badge}{mem_name}</div>'
             f'<div style="font-size:0.7rem;color:var(--color-text-muted);margin-top:2px">'
             f'{"  ·  ".join(_meta_parts) + ("  ·  " if _meta_parts else "") + _status_html}'
             f'</div>',
@@ -1418,26 +1443,29 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             c1.markdown(f'<span class="{_body_class}" style="font-size:var(--font-base);color:var(--color-text)">{safe_text}</span>', unsafe_allow_html=True)
 
 
-            _act_key = f"act_{lane}_{row['content_id']}"
-            _cid     = row["content_id"]
-            _rdict   = row.to_dict()
+            # Member-question rows get no action dropdown until the workflow
+            # slice (coach-inbox-workflow) lands assign/lane/close.
+            if not _is_question:
+                _act_key = f"act_{lane}_{row['content_id']}"
+                _cid     = row["content_id"]
+                _rdict   = row.to_dict()
 
-            def _on_action_change(cid=_cid, rdict=_rdict, akey=_act_key, ln=lane):
-                action = st.session_state.get(akey)
-                if action and action != "— action —":
-                    st.session_state[f"_act_triggered_{ln}"] = {"action": action, "content_id": cid, "row_dict": rdict}
-                    # Reset here — the one place Streamlit lets you write a widget's own
-                    # key. Without it the value sticks and on_change re-fires every rerun.
-                    st.session_state[akey] = "— action —"
+                def _on_action_change(cid=_cid, rdict=_rdict, akey=_act_key, ln=lane):
+                    action = st.session_state.get(akey)
+                    if action and action != "— action —":
+                        st.session_state[f"_act_triggered_{ln}"] = {"action": action, "content_id": cid, "row_dict": rdict}
+                        # Reset here — the one place Streamlit lets you write a widget's own
+                        # key. Without it the value sticks and on_change re-fires every rerun.
+                        st.session_state[akey] = "— action —"
 
-            c3.selectbox(
-                "Action",
-                _opts,
-                index=0,
-                key=_act_key,
-                on_change=_on_action_change,
-                label_visibility="collapsed",
-            )
+                c3.selectbox(
+                    "Action",
+                    _opts,
+                    index=0,
+                    key=_act_key,
+                    on_change=_on_action_change,
+                    label_visibility="collapsed",
+                )
 
             _ca = row.get("assigned_to")
             _ca = _ca.strip() if isinstance(_ca, str) else ""  # NULL → NaN float in pandas
@@ -1607,6 +1635,23 @@ with tab_main:
                     load_daily_stats.clear()
                     st.success(f"Closed {_bc_closed} tickets.")
                     st.rerun()
+
+    # ── Member questions (coach_inbox, slice A1 tracer) ──────────────────────
+    # One hardcoded thread, standing in for the real BigQuery read
+    # (coach_inbox.load_member_questions, slice A2) so merge_into_tickets and
+    # its Tickets-tab rendering can be proven before that read exists.
+    _hardcoded_member_question = pd.DataFrame([{
+        "content_id": "pc:thread-hardcoded-1",
+        "source": "member_question",
+        "member_id": 999999,
+        "member_name": "Anna K.",
+        "thread_id": "thread-hardcoded-1",
+        "created_at": "2026-09-25T09:00:00Z",
+        "last_activity_at": "2026-09-25T09:00:00Z",
+        "status": "waiting",
+        "body_preview": "Can I get help with rent this month?",
+    }])
+    tickets = coach_inbox.merge_into_tickets(tickets, _hardcoded_member_question)
 
     # ── Ticket list ───────────────────────────────────────────────────────────
     # Count unique member+thread groups — this is what the user actually sees,
