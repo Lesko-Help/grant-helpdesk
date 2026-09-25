@@ -383,12 +383,34 @@ def test_service_threshold_policy_renotify_interval_is_shorter_than_alignment_pe
 
 
 def test_service_threshold_policy_subject_keeps_btb_alert_prefix():
-    # Overseer trap 5: the subject lives in documentation.subject and starts
-    # "BTB-ALERT bigtribebuilders".
-    policy = service_threshold_policy(
-        "BTB-ALERT bigtribebuilders — grant-helpdesk reported a BTB_ALERT (renotifies every 24h)",
-        SERVICE, "bigtribebuilders", CHANNEL, SERVICE_METRIC_NAME)
-    assert policy["documentation"]["subject"].startswith("BTB-ALERT bigtribebuilders")
+    # Overseer review fix 2: the old version of this test typed a title that
+    # already started with "BTB-ALERT bigtribebuilders", then checked that
+    # same input's prefix — it could never go red. This reads the titles
+    # jobs/deploy-alerts.sh actually builds (TITLE_SERVICE and
+    # TITLE_SERVICE_METRIC), the same way
+    # test_absence_policy_subject_keeps_btb_alert_prefix reads TITLE_SILENCE,
+    # and also checks PROJECT's own default.
+    script_path = os.path.join(REPO_ROOT, "jobs", "deploy-alerts.sh")
+    with open(script_path) as f:
+        source = f.read()
+    project = re.search(r'PROJECT="\$\{PROJECT:-([^}]+)\}"', source).group(1)
+    service = re.search(r'SERVICE="\$\{SERVICE:-([^}]+)\}"', source).group(1)
+    assert project == "bigtribebuilders"
+
+    template = re.search(r'TITLE_SERVICE="([^"]+)"', source).group(1)
+    real_title = template.replace("${PROJECT}", project).replace("${SERVICE}", service)
+    policy = service_log_match_policy(real_title, service, project, CHANNEL)
+    assert real_title.startswith("BTB-ALERT bigtribebuilders")
+    assert policy["documentation"]["subject"] == real_title
+    assert policy["displayName"] == real_title
+
+    metric_template = re.search(r'TITLE_SERVICE_METRIC="([^"]+)"', source).group(1)
+    real_metric_title = metric_template.replace("${PROJECT}", project).replace("${SERVICE}", service)
+    metric_policy = service_threshold_policy(
+        real_metric_title, service, project, CHANNEL, SERVICE_METRIC_NAME)
+    assert real_metric_title.startswith("BTB-ALERT bigtribebuilders")
+    assert metric_policy["documentation"]["subject"] == real_metric_title
+    assert metric_policy["displayName"] == real_metric_title
 
 
 def test_service_threshold_policy_is_valid_json():
@@ -452,4 +474,11 @@ def test_service_metric_name_matches_deploy_alerts_naming():
     # jobs/deploy-alerts.sh derives METRIC_NAME as "${SERVICE//-/_}_btb_alert_count"
     # for the job block — the service block must use the same substitution so
     # a coach reading one policy's metric name can guess the other's.
+    # Overseer review fix 1: the old version compared SERVICE_METRIC_NAME
+    # against a value derived from itself and could never go red. This reads
+    # the substitution line jobs/deploy-alerts.sh actually runs.
+    script_path = os.path.join(REPO_ROOT, "jobs", "deploy-alerts.sh")
+    with open(script_path) as f:
+        source = f.read()
+    assert 'SERVICE_METRIC_NAME="${SERVICE//-/_}_btb_alert_count"' in source
     assert SERVICE_METRIC_NAME == SERVICE.replace("-", "_") + "_btb_alert_count"
