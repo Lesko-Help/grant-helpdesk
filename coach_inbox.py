@@ -136,9 +136,11 @@ def report_source_failure(operation: str, err: Exception) -> None:
 def _member_names(client, member_ids: list) -> dict:
     """
     Input: a BigQuery client and the member ids seen in this batch of
-    threads. Output: {member_id: full name} for the ones core_members
-    knows, so load_member_questions can fall back to "Member <id>" for the
-    rest without a query per thread.
+    threads. Output: {member_id: full name} for the ones core_members knows
+    a real name for, so load_member_questions can fall back to
+    "Member <id>" for the rest — both the ones missing from core_members
+    entirely and the ones present with no first or last name on file —
+    without a query per thread.
     """
     if not member_ids:
         return {}
@@ -147,13 +149,14 @@ def _member_names(client, member_ids: list) -> dict:
             member_id,
             TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) AS full_name
         FROM `{config.PROJECT_ID}.dataform.core_members`
-        WHERE member_id IN UNNEST(@member_ids)
+        WHERE client_id = 'lesko_4022250'
+          AND member_id IN UNNEST(@member_ids)
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[bigquery.ArrayQueryParameter("member_ids", "INT64", member_ids)]
     )
     df = client.query(sql, job_config=job_config).to_dataframe()
-    return dict(zip(df["member_id"], df["full_name"]))
+    return {mid: name for mid, name in zip(df["member_id"], df["full_name"]) if name}
 
 
 def waiting_count(questions: pd.DataFrame) -> int:

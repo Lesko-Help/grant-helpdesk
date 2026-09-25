@@ -179,6 +179,39 @@ def test_ticket_group_key_still_groups_a_real_tickets_thread():
     assert t1_key == t3_key
 
 
+# ── _member_names (review finding 5) ────────────────────────────────────────
+
+def test_member_names_sql_filters_by_client_id():
+    # Every other core_members query in this repo filters by client_id —
+    # without it, a matching member_id from another client could supply a
+    # name that belongs to someone else entirely.
+    fake = _FakeBigQueryClient(pd.DataFrame(), pd.DataFrame(columns=["member_id", "full_name"]))
+    coach_inbox._member_names(fake, [111])
+    assert "client_id = 'lesko_4022250'" in fake.queries[-1]
+
+
+def test_member_names_drops_blank_names_so_the_id_fallback_applies():
+    # R2: a member with no first or last name must fall back to
+    # "Member <id>", not have an empty string silently take that place.
+    names_df = pd.DataFrame([{"member_id": 111, "full_name": ""}])
+    fake = _FakeBigQueryClient(pd.DataFrame(), names_df)
+    assert coach_inbox._member_names(fake, [111]) == {}
+
+
+def test_load_member_questions_blank_name_falls_back_to_member_id():
+    threads_df = pd.DataFrame([
+        {
+            "thread_id": "th3", "member_id": 333, "subject": "s", "topic": "t",
+            "thread_created_at": "2026-09-20T08:00:00Z",
+            "messages": [_msg("member", "hi", "2026-09-20T08:00:00Z")],
+        },
+    ])
+    names_df = pd.DataFrame([{"member_id": 333, "full_name": ""}])
+    fake = _FakeBigQueryClient(threads_df, names_df)
+    result = coach_inbox.load_member_questions(client=fake)
+    assert result.iloc[0]["member_name"] == "Member 333"
+
+
 # ── load_member_questions (A2) ──────────────────────────────────────────────
 
 def test_load_member_questions_builds_rows_from_threads_and_messages():
