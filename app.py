@@ -1475,10 +1475,14 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             # behaviour inside st.dialog differs between them.
             if _is_question:
                 _reply_thread_id = str(row["content_id"])[len("pc:"):]
-                with c1.form(key=f"reply_form_{row['content_id']}", clear_on_submit=True):
+                _reply_body_key = f"reply_body_{row['content_id']}"
+                # clear_on_submit=False: a failed send (unknown thread, write
+                # failure, blank body) must not also throw away what the coach
+                # typed. On success we clear the box ourselves, below.
+                with c1.form(key=f"reply_form_{row['content_id']}", clear_on_submit=False):
                     _reply_body = st.text_area(
                         "Reply",
-                        key=f"reply_body_{row['content_id']}",
+                        key=_reply_body_key,
                         label_visibility="collapsed",
                         placeholder="Type a reply to this member…",
                         max_chars=4000,
@@ -1497,6 +1501,9 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
                             if _result is coach_inbox.ReplyResult.OK:
                                 # Only this one cache, never st.cache_data.clear() — everything
                                 # else on the page (tickets, stats, MN keys) is still valid.
+                                # Writing a widget's own key is only allowed before it is
+                                # re-instantiated — safe here since st.rerun() starts a fresh run.
+                                st.session_state[_reply_body_key] = ""
                                 load_member_questions.clear()
                                 st.rerun()
                             elif _result is coach_inbox.ReplyResult.UNKNOWN_THREAD:
