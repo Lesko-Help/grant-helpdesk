@@ -1721,10 +1721,12 @@ with tab_main:
     # (spec's own column set); `body_preview` is view-layer only — the most
     # recent message's body — so render_ticket_table can show it like any
     # other row without load_member_questions needing to know about display.
-    # See the tab-label call above for why there is no try/except here.
+    # See the tab-label call above for why there is no try/except here. The
+    # read_failed() check and its st.error live only at that one call, above
+    # the tabs — checking it again here duplicated the banner on screen (the
+    # cached frame is the same one already checked; the underlying BigQuery
+    # read itself, and its BTB_ALERT, only ever runs once either way).
     _member_questions = load_member_questions()
-    if coach_inbox.read_failed(_member_questions):
-        st.error("Could not load member questions — see the coach-inbox alert log.")
     _member_questions = _member_questions.copy()
     _member_questions["body_preview"] = _member_questions["messages"].apply(
         lambda msgs: msgs[-1]["body"] if msgs else ""
