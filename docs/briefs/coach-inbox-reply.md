@@ -133,7 +133,14 @@ is green, red first against `origin/main`, proving `coach_inbox.add_coach_reply`
 Spec: docs/specs/modules/coach_inbox.md unchanged — `add_coach_reply`'s stub already carries the
 agreed rules this task implements; a worker never edits docs/specs/ (DECISION BY MARTIN 2026-09-24),
 so turning its R-lines from agreed-prose into the numbered `R1:` form the other functions use is
-left for the overseer and is not required for this task's done-when.
+left for the overseer and is not required for this task's done-when. Its return type did change
+in review, from `-> bool` to `-> coach_inbox.ReplyResult` (OK / REFUSED / UNKNOWN_THREAD /
+WRITE_FAILED) — the overseer fills the stub to match when it lands the spec change.
+
+Fire drill (overseer, after landing and `deploy.sh` — live proof only, no code needed here):
+set `PRIVATE_CHAT_DATASET=lesko-486515.no_such_dataset`, have a coach send a reply, and check that
+both the `BTB-ALERT` email and the on-screen `st.error` arrive — the same shape as the read-path
+drill already run for `coach-inbox-drill`, but for the write path this slice adds.
 
 ## May touch
 
