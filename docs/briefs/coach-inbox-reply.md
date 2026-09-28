@@ -120,11 +120,12 @@ is green, red first against `origin/main`, proving `coach_inbox.add_coach_reply`
 - writes `author_member_id` exactly as passed in (app.py resolves it from `grant_coaches` via the
   existing `bq_client.get_coach_by_login_email`; the admin has a row there too, so this needs no
   special case)
-- strips the body and refuses (returns False, no query sent) anything outside 1-4000 chars after
-  stripping; 1 char and 4000 chars both succeed
-- returns False, having still sent the query, when zero rows were written (unknown `thread_id`)
-- on a write exception: returns False, calls `report_source_failure("write", err)` (same runnable,
-  `SOURCE_FAILED`), and never puts the body in that line or in any other output
+- strips the body and refuses (`ReplyResult.REFUSED`, no query sent) anything outside 1-4000 chars
+  after stripping; 1 char and 4000 chars both succeed
+- returns `ReplyResult.UNKNOWN_THREAD`, having still sent the query, when zero rows were written
+  (unknown `thread_id`)
+- on a write exception: returns `ReplyResult.WRITE_FAILED`, calls `report_source_failure("write", err)`
+  (same runnable, `SOURCE_FAILED`), and never puts the body in that line or in any other output
 - does not check who a thread is assigned to — the same call succeeds for any `author_member_id`
 - full `pytest tests/` stays green afterwards, including the untouched
   `tests/test_private_chat_insert_only.py` guard (an INSERT is not a forbidden keyword, so this is
