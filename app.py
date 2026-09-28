@@ -10,6 +10,7 @@ import bq_client
 import coach_inbox
 import config
 import raillog
+import reply_form
 from mn_format import mn_mention, build_mn_body, _linkify, space_label, MEMBER_BIO_LABEL  # noqa: F401
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lesko-ui"))
@@ -1486,11 +1487,17 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             if _is_question:
                 _reply_thread_id = str(row["content_id"])[len("pc:"):]
                 _reply_body_key = f"reply_body_{row['content_id']}"
+                _reply_result_key = f"reply_result_{row['content_id']}"
                 # clear_on_submit=False: a failed send (unknown thread, write
                 # failure, blank body) must not also throw away what the coach
-                # typed. On success we clear the box ourselves, below.
+                # typed. On success reply_form.on_reply_submit clears the box
+                # itself, from inside the on_click callback — see that
+                # function's docstring for why it must happen there and not
+                # here (only this one cache is cleared, never
+                # st.cache_data.clear() — everything else on the page
+                # (tickets, stats, MN keys) is still valid).
                 with c1.form(key=f"reply_form_{row['content_id']}", clear_on_submit=False):
-                    _reply_body = st.text_area(
+                    st.text_area(
                         "Reply",
                         key=_reply_body_key,
                         label_visibility="collapsed",
@@ -1498,30 +1505,22 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
                         max_chars=4000,
                         height=80,
                     )
-                    _reply_sent = st.form_submit_button("Send reply")
-                if _reply_sent:
-                    if not _reply_body.strip():
-                        st.error("Please type a reply before sending.")
-                    else:
-                        _author_id = _lookup_coach_member_id(current_user) if current_user else None
-                        if _author_id is None:
-                            st.error("Could not identify your coach profile — ask an admin to link your login.")
-                        else:
-                            _result = coach_inbox.add_coach_reply(_reply_thread_id, _author_id, _reply_body)
-                            if _result is coach_inbox.ReplyResult.OK:
-                                # Only this one cache, never st.cache_data.clear() — everything
-                                # else on the page (tickets, stats, MN keys) is still valid.
-                                # Writing a widget's own key is only allowed before it is
-                                # re-instantiated — safe here since st.rerun() starts a fresh run.
-                                st.session_state[_reply_body_key] = ""
-                                load_member_questions.clear()
-                                st.rerun()
-                            elif _result is coach_inbox.ReplyResult.UNKNOWN_THREAD:
-                                # Distinct from a write failure: retrying the same send can
-                                # never work here, so the message doesn't invite a retry.
-                                st.error("This conversation could not be found — it may have been removed.")
-                            else:
-                                st.error("Could not send the reply. Please try again.")
+                    st.form_submit_button(
+                        "Send reply",
+                        on_click=reply_form.on_reply_submit,
+                        args=(
+                            _reply_thread_id,
+                            _reply_body_key,
+                            _reply_result_key,
+                            current_user,
+                            _lookup_coach_member_id,
+                            coach_inbox.add_coach_reply,
+                            load_member_questions.clear,
+                        ),
+                    )
+                _reply_message = st.session_state.pop(_reply_result_key, None)
+                if _reply_message:
+                    st.error(_reply_message)
 
             # Member-question rows get no action dropdown until the workflow
             # slice (coach-inbox-workflow) lands assign/lane/close.
