@@ -255,20 +255,42 @@ Done:
   findings, 2 blocker/6 minor) fixed in full, each its own commit,
   red-then-green (finding 3 excepted — app.py isn't importable, see below):
   `596dfbc` (#1 + #8), `5a70db0` (#2), `891475c` (#3), `cbf3e68` (#4),
-  `60471a9` (#5), `4403f5f` (#6), `925e2fc` (#7). Full text and per-finding
-  fix notes recorded in `## Agentic review` above, with its literal
-  `Verdict:` line for `wt-done.sh --check`.
-- #6's fix: `bq show` confirmed core_members's dataset and private_chat's
-  dataset are both EU (contradicting the brief's old "different region"
-  reasoning below), so `load_member_questions` now sends one cross-project
-  query (LEFT JOIN core_members, `ANY_VALUE` for the name) instead of two;
-  `_member_names` is gone. `ARRAY_AGG`'s `ORDER BY` gained `m.message_id` as
-  a tie-break for equal `created_at`.
-- Full suite green at 113/113 after all 8 fixes.
+  `60471a9` (#5), `4403f5f` (#6), `925e2fc` (#7). Full text recorded in
+  `## Agentic review` above (first `Verdict:` line, FAIL).
+- Full suite green at 114/114 after all 8 fixes; `wt-done.sh --check` clean;
+  reported range `1c9de94..f03903c` to `helpdesk-opzichter`.
+- Overseer re-reviewed, verdict PASS, 2 new minors, Martin said "fix 1+2,
+  then land":
+  1. The `read_failed()` module-level flag is wrong once app.py's
+     `@st.cache_data` wrapper is in the picture — a cache HIT never re-runs
+     `coach_inbox.load_member_questions`, so the flag can describe someone
+     else's call (concurrent session, stale cache, hot-reload). Fix in
+     flight: carry the signal on the returned frame itself
+     (`df.attrs["read_failed"]`, confirmed survives `.copy()`/deepcopy/
+     pickle by hand-test), drop the module flag, change `read_failed()` to
+     take the frame as its argument. coach_inbox.py's query/attrs side
+     edited; NOT yet done: the `except` block's `attrs["read_failed"]=True`
+     write, `read_failed(df)`'s new body, app.py's two call sites
+     (`coach_inbox.py:1246`, `:1666` — now to pass the frame), and every
+     test touching `read_failed`/`_last_read_failed`.
+  2. `LEFT JOIN core_members` happened before the messages `GROUP BY`, so a
+     future duplicate core_members row (same member_id+client_id) would
+     duplicate every message in that thread. Fixed: query now has a
+     `names` CTE that dedupes core_members to one row per member_id
+     (`GROUP BY member_id`) before joining it to the already-aggregated
+     `threads` CTE — done and in the file, not yet covered by a new test or
+     committed.
 
-Next: `wt-done.sh --check coach-inbox-list`, then report the full commit
-range (`1c9de94`..`925e2fc`) to `helpdesk-opzichter` and stop — landing and
-deploy are the overseer's.
+Next: finish finding-1's attrs plumbing (except block, `read_failed(df)`,
+app.py's two call sites), update/add tests for both re-review minors (red
+first — finding 1: an old-style test asserting a stale module flag would
+show wrong; finding 2: assert the `names` CTE / dedup-before-join shape is
+in the SQL text), run full suite, commit as two new commits (one per
+finding), then add the re-review's own `Verdict:` line (exact text from
+overseer: "Verdict: PASS, no blockers — 8 findings fixed (596dfbc..925e2fc);
+2 re-review minors fixed as new commits.") below the existing FAIL line in
+`## Agentic review`, run full suite + `wt-done.sh --check` once more, report
+the new commit range to `helpdesk-opzichter`, stop.
 
 Traps (with dates):
 - 2026-09-25 (from overseer memory): `bq_writes.trigger_assignment_refresh()`
