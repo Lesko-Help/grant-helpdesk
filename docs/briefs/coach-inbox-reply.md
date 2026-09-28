@@ -207,37 +207,28 @@ Done:
   on failure, 203bc1d contain+uncache the coach lookup, 723ad44 State refresh, 9506b36 fire-drill
   plan + type-change note). Reported at HEAD 9506b36; full `pytest tests/` 127 passed throughout.
 - Overseer pushed the `add_coach_reply` spec fill to `origin/main` (972fed0: R1-R6, the
-  `ReplyResult` signature, a Decisions line). Merged here with `git merge origin/main --no-edit`
-  (docs/specs/modules/coach_inbox.md only, clean merge). Checked every R-line against the code:
-  matches exactly, nothing to report back as a divergence.
-- Second review round found one new minor (live read-drill on revision 00065): the
-  "Could not load member questions" `st.error` banner renders TWICE on the Tickets tab. Root
-  cause found: two separate call sites both check `coach_inbox.read_failed(...)` and call
-  `st.error(...)` on the *same* cached `load_member_questions()` result — app.py:1263-1265
-  (module level, before `st.tabs()`, for the tab-label waiting-count) and app.py:1725-1727
-  (inside the Tickets tab body, for the actual row list). Since app.py's `load_member_questions()`
-  wrapper is `@st.cache_data(ttl=120)` (app.py:363-367), the underlying
-  `coach_inbox.load_member_questions()` — and its one `report_source_failure`/BTB_ALERT call —
-  already only runs once per cache window; only the *banner* duplicates, not the alert. Not yet
-  fixed in code.
+  `ReplyResult` signature, a Decisions line). Merged (b00e3b0, docs/specs/modules/coach_inbox.md
+  only). Checked every R-line against the code: matches exactly, nothing to report as a
+  divergence.
+- Second review round's one new minor fixed (2bab4bc): the "Could not load member questions"
+  banner rendered twice (two call sites both checked `coach_inbox.read_failed(...)` on the same
+  cached `load_member_questions()` result — app.py:1264-1265, module level above `st.tabs()`, and
+  app.py:1726-1727 inside the tab body). Removed the second check+banner; the first is now the
+  only render. The BTB_ALERT line was never doubled by this bug — app.py's
+  `load_member_questions()` wrapper is `@st.cache_data`, so the second call site was always a
+  cache hit; `tests/test_coach_inbox.py::test_load_member_questions_read_failure_returns_empty_frame_and_alerts`
+  already asserts `len(out) == 1` and stayed green throughout. No new test added: app.py runs
+  Streamlit calls at import time and nothing imports it for testing (same convention as the
+  prior three app.py-only commits) — no clean seam to assert what `st.error` rendered.
+- Full `pytest tests/ -q -p no:cacheprovider`: 127 passed after every commit above.
 
-In flight: about to remove the duplicate check+`st.error` at app.py:1726-1727 (keep the
-`_member_questions = load_member_questions()` line, drop the now-unused
-`read_failed`/`st.error` pair right after it), keeping the one at app.py:1264-1265 as the single
-render (it already runs unconditionally, above the tabs, every rerun). Need a fake-client test if
-one fits cleanly, red first, then confirm the alert-line count too (already believed single, per
-caching, but the overseer asked to check it explicitly).
+In flight: none — tree clean, all fixes above committed.
 
 Next:
-1. Remove the duplicate `st.error` (app.py:1726-1727); keep the data line above it.
-2. Look for a clean place to add a test proving the banner (or at least `read_failed`'s call
-   count / the alert line count) is single — app.py has no unit tests today (Streamlit UI loop);
-   if nothing fits cleanly without inventing new app.py test infrastructure, say so in the report
-   rather than force one, same as prior UI-only commits in this brief.
-3. `/opt/anaconda3/bin/python -m pytest tests/ -q -p no:cacheprovider`, one idea per commit.
-4. Update this State section again, then `git add -N .` / clean-tree check / `wt-done.sh --check`.
-5. Report to helpdesk-opzichter: HEAD, commit range since 9506b36, test count, how red-then-green
-   was shown (or why not applicable) — then stop per groot mode, wait for the re-review.
+1. `git add -N .`, `git status` clean check, `wt-done.sh --check coach-inbox-reply`.
+2. Report to helpdesk-opzichter: HEAD, commit range since 9506b36 (b00e3b0, 2bab4bc), test count,
+   how red-then-green was shown for the alert-count half (pre-existing test, reconfirmed) and why
+   no new test for the banner half. Then stop per groot mode, wait for the re-review.
 
 Traps (with dates):
 - 2026-09-28 (overseer): parameterised queries only (bigquery.ScalarQueryParameter); copy
