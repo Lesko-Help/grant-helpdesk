@@ -93,6 +93,37 @@ blockers, 6 minor). All 8 fixed below, each its own commit, each proven red
 before green (finding 3 excepted — see its own line, app.py cannot be
 imported for a pytest red/green cycle).
 
+Verdict: PASS, no blockers — 8 findings fixed (596dfbc..925e2fc); 2 re-review minors fixed as new commits.
+
+Re-review of `1c9de94..f03903c` from `helpdesk-opzichter`: all 8 original
+findings confirmed fixed (point 8 "mostly fixed" — `render_ticket_table`
+itself still not exercised, left as is). 2 new minors surfaced by the
+re-review itself, both fixed as their own commits below, each proven red
+before green.
+
+### Re-review findings
+9. [minor] `_last_read_failed` (finding 2's fix) is a module-level flag —
+   correct only because its one caller is a no-argument global cache. Wrong
+   once a session reads it while another re-runs the loader after
+   `st.cache_data.clear()`, or a dev hot-reload resets the module while the
+   cached failed frame stays, or any future caller bypasses the cache.
+10. [minor] The LEFT JOIN to `core_members` (finding 6's fix) happened
+    before the GROUP BY that aggregates messages per thread. If
+    `core_members` ever carried more than one row for the same
+    (member_id, client_id), every message would be duplicated once per
+    matching row, corrupting the waiting count and body preview with it.
+
+### Fixed in (re-review)
+9. `ce5ce48` — dropped the module flag; the read-failed signal now rides on
+   the returned frame itself (`.attrs["read_failed"]`), and `read_failed()`
+   takes that frame as its argument.
+10. `4c0963e` — `core_members` collapsed to at most one row per member_id in
+    its own CTE (`names`, GROUP BY member_id), joined into the
+    already-aggregated `threads` CTE after the fact, not before.
+
+Not in scope, left as is (Martin's call): questions ignoring the member,
+assignee, status and date filters.
+
 ### Findings
 1. [blocker] `_gk`/`_unique_groups` in app.py collapsed two private-chat
    threads from one member into one bogus render group (NaN-truthiness on
@@ -259,38 +290,34 @@ Done:
   `## Agentic review` above (first `Verdict:` line, FAIL).
 - Full suite green at 114/114 after all 8 fixes; `wt-done.sh --check` clean;
   reported range `1c9de94..f03903c` to `helpdesk-opzichter`.
-- Overseer re-reviewed, verdict PASS, 2 new minors, Martin said "fix 1+2,
-  then land":
-  1. The `read_failed()` module-level flag is wrong once app.py's
-     `@st.cache_data` wrapper is in the picture — a cache HIT never re-runs
-     `coach_inbox.load_member_questions`, so the flag can describe someone
-     else's call (concurrent session, stale cache, hot-reload). Fix in
-     flight: carry the signal on the returned frame itself
-     (`df.attrs["read_failed"]`, confirmed survives `.copy()`/deepcopy/
-     pickle by hand-test), drop the module flag, change `read_failed()` to
-     take the frame as its argument. coach_inbox.py's query/attrs side
-     edited; NOT yet done: the `except` block's `attrs["read_failed"]=True`
-     write, `read_failed(df)`'s new body, app.py's two call sites
-     (`coach_inbox.py:1246`, `:1666` — now to pass the frame), and every
-     test touching `read_failed`/`_last_read_failed`.
-  2. `LEFT JOIN core_members` happened before the messages `GROUP BY`, so a
-     future duplicate core_members row (same member_id+client_id) would
-     duplicate every message in that thread. Fixed: query now has a
-     `names` CTE that dedupes core_members to one row per member_id
-     (`GROUP BY member_id`) before joining it to the already-aggregated
-     `threads` CTE — done and in the file, not yet covered by a new test or
-     committed.
+- Overseer re-reviewed range `1c9de94..f03903c`, verdict PASS (no blockers,
+  all 8 confirmed fixed), 2 new minors surfaced. Martin: "fix 1+2, then
+  land". Both fixed, each its own commit, each proven red first:
+  - `ce5ce48` (re-review #1): the `read_failed()` module flag was wrong once
+    a cache HIT never re-runs `load_member_questions` (concurrent session,
+    `st.cache_data.clear()`, hot-reload could all leave it describing the
+    wrong call). Now the signal rides on the returned frame itself
+    (`df.attrs["read_failed"]`, confirmed survives `.copy()`/deepcopy/pickle
+    by hand-test); `read_failed(df)` takes the frame as its argument. Red
+    proof: a new test asserting a failed call's own frame still reports
+    failed after a later, separate, successful call raised `TypeError`
+    against the old no-arg signature.
+  - `4c0963e` (re-review #2): `LEFT JOIN core_members` happened before the
+    messages `GROUP BY`, so a future duplicate core_members row (same
+    member_id+client_id) would duplicate every message in that thread. Query
+    now has a `names` CTE that dedupes core_members to one row per
+    member_id (`GROUP BY member_id`) before joining it into the
+    already-aggregated `threads` CTE. Red proof: a new test asserting
+    `"GROUP BY member_id"` appears in the SQL before the `LEFT JOIN` failed
+    against the prior single flat query.
+  - Re-review's own `Verdict: PASS...` line and findings #9/#10 recorded in
+    `## Agentic review` above, below the original FAIL line.
+- Full suite green at 116/116 after both re-review fixes.
 
-Next: finish finding-1's attrs plumbing (except block, `read_failed(df)`,
-app.py's two call sites), update/add tests for both re-review minors (red
-first — finding 1: an old-style test asserting a stale module flag would
-show wrong; finding 2: assert the `names` CTE / dedup-before-join shape is
-in the SQL text), run full suite, commit as two new commits (one per
-finding), then add the re-review's own `Verdict:` line (exact text from
-overseer: "Verdict: PASS, no blockers — 8 findings fixed (596dfbc..925e2fc);
-2 re-review minors fixed as new commits.") below the existing FAIL line in
-`## Agentic review`, run full suite + `wt-done.sh --check` once more, report
-the new commit range to `helpdesk-opzichter`, stop.
+Next: run `wt-done.sh --check coach-inbox-list` to confirm a clean, landable
+state, then report the new commit range (`ce5ce48..4c0963e`) to
+`helpdesk-opzichter` and stop — review and landing are the overseer's job,
+not this worktree's.
 
 Traps (with dates):
 - 2026-09-25 (from overseer memory): `bq_writes.trigger_assignment_refresh()`
