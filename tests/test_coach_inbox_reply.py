@@ -60,12 +60,12 @@ def _params(job_config):
 
 # ── success path: exact SQL shape and parameters ────────────────────────────
 
-def test_add_coach_reply_success_writes_expected_params_and_returns_true():
+def test_add_coach_reply_success_writes_expected_params_and_returns_ok():
     fake = _FakeInsertClient(affected_rows=1)
 
     result = coach_inbox.add_coach_reply("th1", 42, "  Thanks for reaching out!  ", client=fake)
 
-    assert result is True
+    assert result is coach_inbox.ReplyResult.OK
     assert len(fake.queries) == 1
     sql = fake.queries[0]
     assert "INSERT INTO" in sql
@@ -97,8 +97,8 @@ def test_add_coach_reply_does_not_restrict_who_may_reply():
     # author_member_id it is given and never checks it against an assignee.
     fake = _FakeInsertClient(affected_rows=1)
 
-    assert coach_inbox.add_coach_reply("th1", 7, "from coach 7", client=fake) is True
-    assert coach_inbox.add_coach_reply("th1", 99, "from coach 99", client=fake) is True
+    assert coach_inbox.add_coach_reply("th1", 7, "from coach 7", client=fake) is coach_inbox.ReplyResult.OK
+    assert coach_inbox.add_coach_reply("th1", 99, "from coach 99", client=fake) is coach_inbox.ReplyResult.OK
 
     author_ids = [_params(jc)["author_member_id"] for jc in fake.job_configs]
     assert author_ids == [7, 99]
@@ -106,11 +106,22 @@ def test_add_coach_reply_does_not_restrict_who_may_reply():
 
 # ── body validation: refused before any query ───────────────────────────────
 
+def test_add_coach_reply_refuses_a_none_author_without_sending_a_query():
+    # A None author_member_id would otherwise reach BigQuery as an INT64 NULL
+    # — a real message with no owner. app.py already guards this before the
+    # call, but the function must not trust that: it is the one place that
+    # actually writes the row.
+    fake = _FakeInsertClient(affected_rows=1)
+
+    assert coach_inbox.add_coach_reply("th1", None, "hello", client=fake) is coach_inbox.ReplyResult.REFUSED
+    assert fake.queries == []
+
+
 def test_add_coach_reply_refuses_a_blank_body_without_sending_a_query():
     fake = _FakeInsertClient(affected_rows=1)
 
-    assert coach_inbox.add_coach_reply("th1", 1, "   ", client=fake) is False
-    assert coach_inbox.add_coach_reply("th1", 1, "", client=fake) is False
+    assert coach_inbox.add_coach_reply("th1", 1, "   ", client=fake) is coach_inbox.ReplyResult.REFUSED
+    assert coach_inbox.add_coach_reply("th1", 1, "", client=fake) is coach_inbox.ReplyResult.REFUSED
     assert fake.queries == []
 
 
@@ -118,37 +129,37 @@ def test_add_coach_reply_refuses_a_body_over_4000_chars_after_stripping():
     fake = _FakeInsertClient(affected_rows=1)
 
     too_long = "  " + ("x" * 4001) + "  "
-    assert coach_inbox.add_coach_reply("th1", 1, too_long, client=fake) is False
+    assert coach_inbox.add_coach_reply("th1", 1, too_long, client=fake) is coach_inbox.ReplyResult.REFUSED
     assert fake.queries == []
 
 
 def test_add_coach_reply_accepts_the_1_and_4000_char_boundaries():
     fake = _FakeInsertClient(affected_rows=1)
 
-    assert coach_inbox.add_coach_reply("th1", 1, "a", client=fake) is True
-    assert coach_inbox.add_coach_reply("th1", 1, "x" * 4000, client=fake) is True
+    assert coach_inbox.add_coach_reply("th1", 1, "a", client=fake) is coach_inbox.ReplyResult.OK
+    assert coach_inbox.add_coach_reply("th1", 1, "x" * 4000, client=fake) is coach_inbox.ReplyResult.OK
 
     bodies = [_params(jc)["body"] for jc in fake.job_configs]
     assert bodies == ["a", "x" * 4000]
 
 
-# ── unknown thread: query runs, zero rows, False ────────────────────────────
+# ── unknown thread: query runs, zero rows, a distinct result from a write failure ──
 
-def test_add_coach_reply_unknown_thread_sends_the_query_but_returns_false():
+def test_add_coach_reply_unknown_thread_sends_the_query_but_returns_unknown_thread():
     fake = _FakeInsertClient(affected_rows=0)
 
     result = coach_inbox.add_coach_reply("no-such-thread", 1, "hello?", client=fake)
 
-    assert result is False
+    assert result is coach_inbox.ReplyResult.UNKNOWN_THREAD
     assert len(fake.queries) == 1  # the query WAS attempted — this is not the refusal path
 
 
 # ── write failure: reported the same way a read failure is, body never logged ──
 
-def test_add_coach_reply_write_failure_reports_source_failure_and_returns_false(capsys):
+def test_add_coach_reply_write_failure_reports_source_failure_and_returns_write_failed(capsys):
     result = coach_inbox.add_coach_reply("th1", 1, "hello there", client=_RaisingInsertClient())
 
-    assert result is False
+    assert result is coach_inbox.ReplyResult.WRITE_FAILED
     out = capsys.readouterr().out.strip()
     assert out == (
         '{"severity": "ERROR", "message": '

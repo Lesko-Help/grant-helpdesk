@@ -8,6 +8,7 @@ workflow). Only the pieces named in the current slice exist below; a
 function this module will need later is not stubbed in ahead of time.
 """
 
+import enum
 import uuid
 
 import pandas as pd
@@ -168,27 +169,43 @@ def report_source_failure(operation: str, err: Exception) -> None:
     )
 
 
+class ReplyResult(enum.Enum):
+    """
+    What one add_coach_reply call actually did. A bare bool cannot tell a
+    coach's mistake (blank body), a stale page (thread gone), and a real
+    outage apart — and only the last of those is worth telling a coach to
+    retry unchanged, so app.py needs the other two named separately.
+    """
+    OK = "ok"                        # one row landed in private_messages
+    REFUSED = "refused"              # no query sent: bad body or no author
+    UNKNOWN_THREAD = "unknown_thread"  # query ran, zero rows: thread_id unknown
+    WRITE_FAILED = "write_failed"    # query raised; reported via report_source_failure
+
+
 def add_coach_reply(
     thread_id: str,
-    author_member_id: int,
+    author_member_id: "int | None",
     body: str,
     client: "bigquery.Client | None" = None,
-) -> bool:
+) -> ReplyResult:
     """
     Writes one coach reply into a member's private-question thread.
 
     Input: thread_id (which thread to reply into), author_member_id (the
     replying coach's own row in grant_coaches — the admin has one too, so
-    app.py resolves this the same way for both), body (the reply text), and
-    an optional BigQuery client (tests always pass a fake, same as
-    load_member_questions — the real app calls it with no argument).
+    app.py resolves this the same way for both; None is refused rather than
+    written as a NULL author), body (the reply text), and an optional
+    BigQuery client (tests always pass a fake, same as load_member_questions
+    — the real app calls it with no argument).
 
-    Output: True once one row landed in private_messages. False in three
-    cases: the body failed its own check (stripped to 1-4000 chars) and was
-    refused before any query ran; the query ran but touched zero rows,
-    which only happens when thread_id names no row in private_threads (an
-    unknown thread); or the query raised, in which case the failure is
-    reported the same way a read failure is.
+    Output: a ReplyResult — OK once one row landed in private_messages;
+    REFUSED when author_member_id is None or the body failed its own check
+    (stripped to 1-4000 chars), in which case no query ever ran;
+    UNKNOWN_THREAD when the query ran but touched zero rows, which only
+    happens when thread_id names no row in private_threads; WRITE_FAILED
+    when the query raised, in which case the failure is reported the same
+    way a read failure is. app.py shows a different message for each,
+    since only WRITE_FAILED is worth telling the coach to retry unchanged.
 
     Why INSERT...SELECT rather than a plain INSERT: the SELECT's own
     "FROM private_threads WHERE thread_id = @thread_id" is what makes an
@@ -202,9 +219,12 @@ def add_coach_reply(
     assigned to, only that it exists. A write failure never puts the body
     into the BTB_ALERT line, or anywhere else — same rule as a read failure.
     """
+    if author_member_id is None:
+        return ReplyResult.REFUSED
+
     stripped = (body or "").strip()
     if not (1 <= len(stripped) <= 4000):
-        return False
+        return ReplyResult.REFUSED
 
     if client is None:
         from bq_base import client as _default_client
@@ -229,8 +249,8 @@ def add_coach_reply(
         job.result()
     except Exception as err:
         report_source_failure("write", err)
-        return False
-    return bool(job.num_dml_affected_rows)
+        return ReplyResult.WRITE_FAILED
+    return ReplyResult.OK if job.num_dml_affected_rows else ReplyResult.UNKNOWN_THREAD
 
 
 def waiting_count(questions: pd.DataFrame) -> int:
