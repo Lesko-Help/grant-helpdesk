@@ -19,11 +19,6 @@ _QUESTION_COLUMNS = [
     "created_at", "last_activity_at", "messages", "status",
 ]
 
-# Set by load_member_questions on every call, read by read_failed(): a failed
-# read and a genuinely-empty result both come back as the same empty frame,
-# so this is the only way app.py can tell them apart and show its own st.error.
-_last_read_failed = False
-
 
 def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFrame:
     """
@@ -49,10 +44,16 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
     BigQuery outage), it reports the failure via report_source_failure and
     returns an empty frame with the usual columns rather than raising, so
     the rest of the Tickets tab still renders the MN tickets it does have.
-    """
-    global _last_read_failed
-    _last_read_failed = False
 
+    The returned frame's `.attrs["read_failed"]` carries whether this call's
+    own read failed (read_failed() reads it back) — a module-level flag was
+    tried first and dropped (re-review minor 1): app.py's cached wrapper
+    means a cache HIT never re-runs this function, so a flag set by someone
+    else's cache-missed call, or a dev hot-reload resetting the module,
+    could describe the wrong call by the time a caller checks it. Carrying
+    the signal on the object itself keeps it correct no matter which call
+    produced the cached frame a caller is holding.
+    """
     if client is None:
         from bq_base import client as _default_client
         client = _default_client
@@ -89,7 +90,9 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
         """
         threads = client.query(threads_sql).to_dataframe()
         if threads.empty:
-            return pd.DataFrame(columns=_QUESTION_COLUMNS)
+            empty = pd.DataFrame(columns=_QUESTION_COLUMNS)
+            empty.attrs["read_failed"] = False
+            return empty
 
         records = []
         for row in threads.itertuples():
@@ -108,22 +111,26 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
                 "messages": messages,
                 "status": "waiting" if last_message["author_role"] == "member" else "answered",
             })
-        return pd.DataFrame.from_records(records, columns=_QUESTION_COLUMNS)
+        result = pd.DataFrame.from_records(records, columns=_QUESTION_COLUMNS)
+        result.attrs["read_failed"] = False
+        return result
     except Exception as err:
-        _last_read_failed = True
         report_source_failure("read", err)
-        return pd.DataFrame(columns=_QUESTION_COLUMNS)
+        failed = pd.DataFrame(columns=_QUESTION_COLUMNS)
+        failed.attrs["read_failed"] = True
+        return failed
 
 
-def read_failed() -> bool:
+def read_failed(questions: pd.DataFrame) -> bool:
     """
-    Input: none. Output: whether the most recent load_member_questions call
-    hit a read failure (already reported via report_source_failure) rather
-    than genuinely finding zero questions — both return an identical empty
-    frame, so this is the only way a caller can tell the two apart and
-    decide whether to show its own st.error.
+    Input: the frame a load_member_questions call returned. Output: whether
+    that call's own read failed (already reported via report_source_failure)
+    rather than genuinely finding zero questions — both come back as an
+    identical-looking empty frame, so `.attrs["read_failed"]`, set on the
+    frame itself by load_member_questions, is the only way a caller can tell
+    the two apart and decide whether to show its own st.error.
     """
-    return _last_read_failed
+    return bool(questions.attrs.get("read_failed", False))
 
 
 def report_source_failure(operation: str, err: Exception) -> None:

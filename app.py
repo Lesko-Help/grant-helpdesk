@@ -1236,14 +1236,15 @@ if not st.session_state.show_filters:
 # not inside tab_main where the rest of that data loads.
 #
 # load_member_questions() itself catches a failed BigQuery read, alerts, and
-# reports it via coach_inbox.read_failed() (checked below) — no try/except
-# needed here. A wrapping try/except was tried and dropped: bq_base's own
-# client construction can raise SystemExit, which `except Exception` does
-# not catch, and bq_client already imports bq_base at app.py's own top-level
-# import — so a client-construction failure crashes the app before this line
-# ever runs, and a try/except here could never have caught it anyway.
+# marks the returned frame via coach_inbox.read_failed() (checked below) —
+# no try/except needed here. A wrapping try/except was tried and dropped:
+# bq_base's own client construction can raise SystemExit, which
+# `except Exception` does not catch, and bq_client already imports bq_base
+# at app.py's own top-level import — so a client-construction failure
+# crashes the app before this line ever runs, and a try/except here could
+# never have caught it anyway.
 _member_questions_for_label = load_member_questions()
-if coach_inbox.read_failed():
+if coach_inbox.read_failed(_member_questions_for_label):
     st.error("Could not load member questions — see the coach-inbox alert log.")
 _tickets_tab_label = coach_inbox.tickets_tab_label(
     coach_inbox.waiting_count(_member_questions_for_label)
@@ -1663,7 +1664,7 @@ with tab_main:
     # other row without load_member_questions needing to know about display.
     # See the tab-label call above for why there is no try/except here.
     _member_questions = load_member_questions()
-    if coach_inbox.read_failed():
+    if coach_inbox.read_failed(_member_questions):
         st.error("Could not load member questions — see the coach-inbox alert log.")
     _member_questions = _member_questions.copy()
     _member_questions["body_preview"] = _member_questions["messages"].apply(

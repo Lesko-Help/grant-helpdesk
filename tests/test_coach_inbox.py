@@ -379,14 +379,34 @@ def test_read_failed_true_after_a_failure_and_false_after_a_success(capsys):
     # Finding 2: an empty frame from a failed read looks identical to an
     # empty frame from a genuinely-empty result, so app.py cannot show its
     # own st.error from the returned frame alone — it needs to ask
-    # read_failed() too.
-    coach_inbox.load_member_questions(client=_RaisingBigQueryClient())
+    # read_failed(frame) too.
+    failed = coach_inbox.load_member_questions(client=_RaisingBigQueryClient())
     capsys.readouterr()  # drop the alert line, not this test's concern
-    assert coach_inbox.read_failed() is True
+    assert coach_inbox.read_failed(failed) is True
+
+    empty_threads = pd.DataFrame(
+        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at",
+                 "messages", "full_name"]
+    )
+    ok = coach_inbox.load_member_questions(client=_FakeBigQueryClient(empty_threads))
+    assert coach_inbox.read_failed(ok) is False
+
+
+def test_read_failed_is_carried_by_the_frame_not_a_shared_flag(capsys):
+    # Re-review minor 1: a module-level flag, reset at the top of every
+    # load_member_questions call, is wrong once app.py's @st.cache_data
+    # wrapper means a cache HIT never re-runs this function — a later call's
+    # outcome (by another session, or after cache.clear()) would silently
+    # overwrite what an earlier call's own frame is still reporting. Proof:
+    # a failed call's frame must still say so, even after a later, separate,
+    # successful call has happened.
+    failed_frame = coach_inbox.load_member_questions(client=_RaisingBigQueryClient())
+    capsys.readouterr()
 
     empty_threads = pd.DataFrame(
         columns=["thread_id", "member_id", "subject", "topic", "thread_created_at",
                  "messages", "full_name"]
     )
     coach_inbox.load_member_questions(client=_FakeBigQueryClient(empty_threads))
-    assert coach_inbox.read_failed() is False
+
+    assert coach_inbox.read_failed(failed_frame) is True
