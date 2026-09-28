@@ -202,34 +202,42 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-- Brief filled in (f6d005a), `add_coach_reply` implemented and app.py wired (717e3b9, 5520fc0,
-  3861923), first report sent, review came back FAIL: 1 blocker, 4 minors, 2 process points.
-- Blocker fixed: `add_coach_reply` now returns `coach_inbox.ReplyResult` (OK / REFUSED /
-  UNKNOWN_THREAD / WRITE_FAILED), not a bare bool — a None `author_member_id` is refused inside
-  the function too, not just in app.py (aad02d9). app.py branches on the result so a blank body,
-  an unknown thread and a write failure each get their own message; only the last invites a retry
-  (100a3f1).
-- Minor fixes: the reply form keeps `clear_on_submit=False` and only clears the text box itself
-  on the OK path, so a failed send no longer loses what the coach typed (ffe0ea2). The
-  `author_member_id` lookup (`_lookup_coach_member_id` in app.py, replacing the cached
-  `_cached_coach_member_id`) now catches a raised exception or a bad `member_id` (e.g. NaN) and
-  reports `SOURCE_FAILED` instead of failing the whole tab, and is no longer cached — it ran once
-  per reply send already, and caching None made a newly linked coach wait out the cache (203bc1d).
-- Full `pytest tests/ -q -p no:cacheprovider`: 127 passed after every commit above.
-- Remaining from review: refresh this State section (this edit) and add the fire-drill plan to
-  `## Done when` (next commit) — both brief-only, no code.
+- First review (FAIL: 1 blocker, 4 minors, 2 process) fixed in 6 commits (aad02d9 ReplyResult
+  enum + None-author guard, 100a3f1 distinct app.py messages per outcome, ffe0ea2 keep typed text
+  on failure, 203bc1d contain+uncache the coach lookup, 723ad44 State refresh, 9506b36 fire-drill
+  plan + type-change note). Reported at HEAD 9506b36; full `pytest tests/` 127 passed throughout.
+- Overseer pushed the `add_coach_reply` spec fill to `origin/main` (972fed0: R1-R6, the
+  `ReplyResult` signature, a Decisions line). Merged here with `git merge origin/main --no-edit`
+  (docs/specs/modules/coach_inbox.md only, clean merge). Checked every R-line against the code:
+  matches exactly, nothing to report back as a divergence.
+- Second review round found one new minor (live read-drill on revision 00065): the
+  "Could not load member questions" `st.error` banner renders TWICE on the Tickets tab. Root
+  cause found: two separate call sites both check `coach_inbox.read_failed(...)` and call
+  `st.error(...)` on the *same* cached `load_member_questions()` result — app.py:1263-1265
+  (module level, before `st.tabs()`, for the tab-label waiting-count) and app.py:1725-1727
+  (inside the Tickets tab body, for the actual row list). Since app.py's `load_member_questions()`
+  wrapper is `@st.cache_data(ttl=120)` (app.py:363-367), the underlying
+  `coach_inbox.load_member_questions()` — and its one `report_source_failure`/BTB_ALERT call —
+  already only runs once per cache window; only the *banner* duplicates, not the alert. Not yet
+  fixed in code.
 
-In flight: none — tree clean, all fixes above committed.
+In flight: about to remove the duplicate check+`st.error` at app.py:1726-1727 (keep the
+`_member_questions = load_member_questions()` line, drop the now-unused
+`read_failed`/`st.error` pair right after it), keeping the one at app.py:1264-1265 as the single
+render (it already runs unconditionally, above the tabs, every rerun). Need a fake-client test if
+one fits cleanly, red first, then confirm the alert-line count too (already believed single, per
+caching, but the overseer asked to check it explicitly).
 
 Next:
-1. Add the write-path fire drill to `## Done when` (brief-only commit).
-2. `git add -N .`, `git status` clean check, `wt-done.sh --check coach-inbox-reply`.
-3. Report to helpdesk-opzichter: branch, commit range since the first report, HEAD sha, which
-   finding each commit fixed, red-then-green proof, deploy implication (still overseer-only).
-   Per the overseer's message: from now on every step ends with a message to it, then stop —
-   do not continue past this report without a reply.
-4. Watch for the overseer pushing the `add_coach_reply` spec-stub fill to `origin/main` (it said
-   it would, after this review) and `git merge origin/main` once that lands, before the next report.
+1. Remove the duplicate `st.error` (app.py:1726-1727); keep the data line above it.
+2. Look for a clean place to add a test proving the banner (or at least `read_failed`'s call
+   count / the alert line count) is single — app.py has no unit tests today (Streamlit UI loop);
+   if nothing fits cleanly without inventing new app.py test infrastructure, say so in the report
+   rather than force one, same as prior UI-only commits in this brief.
+3. `/opt/anaconda3/bin/python -m pytest tests/ -q -p no:cacheprovider`, one idea per commit.
+4. Update this State section again, then `git add -N .` / clean-tree check / `wt-done.sh --check`.
+5. Report to helpdesk-opzichter: HEAD, commit range since 9506b36, test count, how red-then-green
+   was shown (or why not applicable) — then stop per groot mode, wait for the re-review.
 
 Traps (with dates):
 - 2026-09-28 (overseer): parameterised queries only (bigquery.ScalarQueryParameter); copy
