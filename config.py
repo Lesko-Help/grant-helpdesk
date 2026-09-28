@@ -77,7 +77,10 @@ MN_API_BASE    = "https://api.mn.co/admin/v1"
 # app's DATASET above). coach_inbox.load_member_questions reads private_threads
 # and private_messages from here; nothing in this app ever writes here except
 # an INSERT into private_messages (the later reply slice).
-PRIVATE_CHAT_DATASET = "lesko-486515.private_chat"
+# Overridable via PRIVATE_CHAT_DATASET so the live service can be pointed at a
+# non-existent dataset on purpose, to fire-drill the coach-inbox BTB_ALERT
+# SOURCE_FAILED path without touching any code.
+PRIVATE_CHAT_DATASET = os.getenv("PRIVATE_CHAT_DATASET", "lesko-486515.private_chat")
 
 # Colleagues a coach can @mention from the answer pop-up. The display name is
 # what MN renders in the mention (MN does not look it up by id), so keep it the
