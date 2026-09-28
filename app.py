@@ -505,6 +505,13 @@ def _cached_thread(thread_id: str):
 def _cached_mn_api_key(email: str):
     return bq_client.get_mn_api_key(email)
 
+# The logged-in coach's own grant_coaches member_id, for coach_inbox.add_coach_reply's
+# author_member_id — the admin has a row there too, so this needs no separate case.
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_coach_member_id(email: str):
+    row = bq_client.get_coach_by_login_email(email)
+    return int(row["member_id"]) if row else None
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_upcoming_events():
     return bq_client.get_upcoming_events()
@@ -1463,6 +1470,32 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             _body_class  = "answered-body" if _is_answered else ""
             c1.markdown(f'<span class="{_body_class}" style="font-size:var(--font-base);color:var(--color-text)">{safe_text}</span>', unsafe_allow_html=True)
 
+            # coach-inbox-reply: a plain st.form, not st.dialog — production runs
+            # Streamlit 1.58 (unpinned), local runs 1.45.1, and a checkbox's rerun
+            # behaviour inside st.dialog differs between them.
+            if _is_question:
+                _reply_thread_id = str(row["content_id"])[len("pc:"):]
+                with c1.form(key=f"reply_form_{row['content_id']}", clear_on_submit=True):
+                    _reply_body = st.text_area(
+                        "Reply",
+                        key=f"reply_body_{row['content_id']}",
+                        label_visibility="collapsed",
+                        placeholder="Type a reply to this member…",
+                        max_chars=4000,
+                        height=80,
+                    )
+                    _reply_sent = st.form_submit_button("Send reply")
+                if _reply_sent and _reply_body.strip():
+                    _author_id = _cached_coach_member_id(current_user) if current_user else None
+                    if _author_id is None:
+                        st.error("Could not identify your coach profile — ask an admin to link your login.")
+                    elif coach_inbox.add_coach_reply(_reply_thread_id, _author_id, _reply_body):
+                        # Only this one cache, never st.cache_data.clear() — everything
+                        # else on the page (tickets, stats, MN keys) is still valid.
+                        load_member_questions.clear()
+                        st.rerun()
+                    else:
+                        st.error("Could not send the reply. Please try again.")
 
             # Member-question rows get no action dropdown until the workflow
             # slice (coach-inbox-workflow) lands assign/lane/close.
