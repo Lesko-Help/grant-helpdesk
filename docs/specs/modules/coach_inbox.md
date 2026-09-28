@@ -9,7 +9,7 @@ Part of: `docs/specs/INDEX.md` · Deploy: `deploy.sh` (app), `jobs/deploy-alerts
 Coaches see members' private questions (from the questions zone) inside the Tickets tab, and later answer them.
 Owns: `coach_inbox.py`, the root `raillog.py` copy, the Cloud Run service's BTB_ALERT policies, and (later) `grant_helpdesk.private_thread_workflow`.
 Reads `lesko-486515.private_chat.private_threads` / `private_messages` (EU, owned by the zone) and `bigtribebuilders.dataform.core_members` for names.
-Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `report_source_failure`, `raillog.alert`; later `add_coach_reply`, `set_thread_workflow`.
+Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `report_source_failure`, `raillog.alert`, `add_coach_reply`; later `set_thread_workflow`.
 *Not in scope:* telling members of a reply (the zone shows it on next load), emailing coaches, any change to `private_chat`'s schema or grants, a heartbeat (the app is not scheduled).
 
 ## Functions
@@ -117,13 +117,29 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 
 *Test:* `tests/test_deploy_alerts_payloads.py`, offline payload shapes (R1, R2); `bash -n jobs/deploy-alerts.sh`; red first. Live proof: a second run shows "exists and matches", then the fire drill.
 
-### add_coach_reply(thread_id, author_member_id, body)
+### add_coach_reply(thread_id, author_member_id, body, client=None)
 
-`def add_coach_reply(thread_id: str, author_member_id: int, body: str) -> bool`
+`def add_coach_reply(thread_id: str, author_member_id: int | None, body: str, client: bigquery.Client | None = None) -> ReplyResult`
 
-<!-- spec:stub -->
+`ReplyResult` is an enum: `OK`, `REFUSED`, `UNKNOWN_THREAD`, `WRITE_FAILED`. It replaces the bool agreed at the gate (changed 2026-09-28 after review: a bool could not tell a stale page from an outage).
 
-Agreed rules, to be filled into R-lines by the reply slice: INSERT only, as `INSERT private_messages (...) SELECT @message_id, thread_id, 'coach', @author_member_id, @body, CURRENT_TIMESTAMP() FROM private_threads WHERE thread_id = @thread_id`; `message_id` is a new uuid4; body stripped, 1-4000 chars, else refused before any query; returns False when zero rows were written (unknown thread); `author_member_id` always from `grant_coaches` (the admin has a row there too); any coach may reply in any thread; never logs the body.
+*What it does:*
+- R1: when given a thread id, the replying coach's MN member id and a body, it writes one row with a single parameterised `INSERT private_messages (...) SELECT @message_id, thread_id, 'coach', @author_member_id, @body, CURRENT_TIMESTAMP() FROM private_threads WHERE thread_id = @thread_id` (tables named from `config.PRIVATE_CHAT_DATASET`). `message_id` is a new uuid4 per call; `author_role` is the literal `'coach'`.
+- R2: the body is stripped and must be 1-4000 chars, and `author_member_id` must not be None; otherwise it returns `REFUSED` before any query is sent.
+- R3: when the query runs but writes zero rows (the thread does not exist), it returns `UNKNOWN_THREAD` and raises no alert.
+- R4: when the query raises, it calls `report_source_failure("write", err)` and returns `WRITE_FAILED`.
+- R5: `author_member_id` always comes from `grant_coaches` via the logged-in email (the admin has a row there too). Any coach may reply in any thread. The body never appears in any log line.
+- R6: the Tickets tab shows a reply form under each member-question row. It shows a distinct message for each result, keeps the typed text unless the result is `OK`, and on `OK` clears only the `load_member_questions` cache. A failed coach lookup shows `st.error`, alerts `SOURCE_FAILED`, and is not cached.
+
+*Examples:* existing thread, body "Thanks, see the link" -> `OK`, one coach row. Body of spaces -> `REFUSED`, no query. Thread id not in `private_threads` -> `UNKNOWN_THREAD`, no alert. BigQuery raises `Forbidden` -> `WRITE_FAILED` plus stdout `{"severity": "ERROR", "message": "BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat write failed: Forbidden"}`.
+
+*Inputs:* thread id, coach member id, body text, and an optional BigQuery client (tests pass a fake).
+
+*Outputs:* a `ReplyResult`; on `OK`, one new row in `private_messages`.
+
+*Errors:* BigQuery error or denied access -> `WRITE_FAILED`, UI `st.error` -> `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED`.
+
+*Test:* `/opt/anaconda3/bin/python -m pytest tests/test_coach_inbox_reply.py` with a fake client: SQL shape and parameters (R1), 0/4001-char and None-author refusals send no query (R2), zero affected rows (R3), raising client -> exact alert line with the body absent (R4, R5), two calls -> two different message ids (R1); red first. Live proof: after deploy, the write fire drill (`PRIVATE_CHAT_DATASET=lesko-486515.no_such_dataset`, send one reply, BTB-ALERT email arrives, restore).
 
 ### set_thread_workflow(thread_id, status, assignee, lane)
 
@@ -151,3 +167,5 @@ No source file in the repo may contain SQL that runs UPDATE, DELETE, MERGE, TRUN
 - 2026-09-25: the unread badge counts waiting threads (the member wrote last), the same for all coaches, with nothing stored.
 - 2026-09-25: every `private_chat` failure logs `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED`; no landing of list or reply box without the alert and a fire drill.
 - 2026-09-25: re-notify needs a metric + threshold policy; a log-match policy rejects `notificationChannelStrategy` (found live 2026-09-24).
+- 2026-09-28: `add_coach_reply` returns a `ReplyResult` enum instead of a bool, so the coach sees a different message for a refused body, a thread that no longer exists, and a real outage (review finding; Martin chose fix-and-re-review).
+- 2026-09-28: read fire drill passed: a missing dataset gave `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat read failed: Forbidden` (13:25:21Z, revision 00065) and the email arrived. A missing dataset surfaces as `Forbidden`, not `NotFound`.
