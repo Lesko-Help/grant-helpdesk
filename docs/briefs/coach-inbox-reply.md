@@ -203,33 +203,40 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-- First review (FAIL: 1 blocker, 4 minors, 2 process) fixed in 6 commits (aad02d9 ReplyResult
-  enum + None-author guard, 100a3f1 distinct app.py messages per outcome, ffe0ea2 keep typed text
-  on failure, 203bc1d contain+uncache the coach lookup, 723ad44 State refresh, 9506b36 fire-drill
-  plan + type-change note). Reported at HEAD 9506b36; full `pytest tests/` 127 passed throughout.
-- Overseer pushed the `add_coach_reply` spec fill to `origin/main` (972fed0: R1-R6, the
-  `ReplyResult` signature, a Decisions line). Merged (b00e3b0, docs/specs/modules/coach_inbox.md
-  only). Checked every R-line against the code: matches exactly, nothing to report as a
-  divergence.
-- Second review round's one new minor fixed (2bab4bc): the "Could not load member questions"
-  banner rendered twice (two call sites both checked `coach_inbox.read_failed(...)` on the same
-  cached `load_member_questions()` result — app.py:1264-1265, module level above `st.tabs()`, and
-  app.py:1726-1727 inside the tab body). Removed the second check+banner; the first is now the
-  only render. The BTB_ALERT line was never doubled by this bug — app.py's
-  `load_member_questions()` wrapper is `@st.cache_data`, so the second call site was always a
-  cache hit; `tests/test_coach_inbox.py::test_load_member_questions_read_failure_returns_empty_frame_and_alerts`
-  already asserts `len(out) == 1` and stayed green throughout. No new test added: app.py runs
-  Streamlit calls at import time and nothing imports it for testing (same convention as the
-  prior three app.py-only commits) — no clean seam to assert what `st.error` rendered.
-- Full `pytest tests/ -q -p no:cacheprovider`: 127 passed after every commit above.
+- First review (FAIL: 1 blocker, 4 minors, 2 process) fixed in 6 commits, reported at 9506b36;
+  second round (merge + double-banner minor) fixed in 3 commits, reported at 745ea00 — both
+  rounds' detail is in git log, not repeated here.
+- Third review round (re-review of 745ea00): FAIL, 1 blocker + 3 minors. All four fixed, 134
+  passed throughout:
+  - BLOCKER (9397cc7): `st.session_state[_reply_body_key] = ""` ran in the script body, after
+    the form_submit_button check — the text_area with that key was already instantiated earlier
+    in the same run, so Streamlit raised StreamlitAPIException on every successful send (row
+    written, coach saw a traceback, cache never cleared, a retry would duplicate the reply).
+    Extracted the whole submit sequence into a new `reply_form.py` module's `on_reply_submit`,
+    wired as the form_submit_button's `on_click` — callbacks run before the script body on the
+    rerun a click triggers, so resetting the widget's own key there is legal. New
+    `tests/test_reply_form.py` proves this with real widgets via
+    `streamlit.testing.v1.AppTest` (fake add_reply, no BigQuery): one test reproduces the old
+    inline-reset shape and asserts it still raises the exception (kept as a permanent red proof),
+    the rest exercise the callback and assert no exception + correct clearing/session/cache
+    behaviour. app.py itself can't run under AppTest (login gate, live BigQuery loaders) — that's
+    why the callback lives in its own module now.
+  - MINOR e (56f73a0): REFUSED now gets its own message ("Your reply could not be sent — check
+    the text and try again.") instead of falling into WRITE_FAILED's generic one.
+  - MINOR 4 (dec5742): `_lookup_coach_member_id` got a real docstring (input/output/why),
+    replacing the comment above it.
+  - MINOR g (9abfa5e): brief's Done when bullets now say `ReplyResult.REFUSED` /
+    `UNKNOWN_THREAD` / `WRITE_FAILED` instead of the pre-review `-> bool` wording.
+- Full `pytest tests/ -q -p no:cacheprovider`: 134 passed after every commit above (127 + 7 new
+  in test_reply_form.py).
 
 In flight: none — tree clean, all fixes above committed.
 
 Next:
 1. `git add -N .`, `git status` clean check, `wt-done.sh --check coach-inbox-reply`.
-2. Report to helpdesk-opzichter: HEAD, commit range since 9506b36 (b00e3b0, 2bab4bc), test count,
-   how red-then-green was shown for the alert-count half (pre-existing test, reconfirmed) and why
-   no new test for the banner half. Then stop per groot mode, wait for the re-review.
+2. Report to helpdesk-opzichter: HEAD, commit range since 745ea00, test count, the red-then-green
+   proof (the permanent regression test in test_reply_form.py, plus how it was shown red against
+   745ea00's actual code before the fix). Then stop per groot mode, wait for the re-review.
 
 Traps (with dates):
 - 2026-09-28 (overseer): parameterised queries only (bigquery.ScalarQueryParameter); copy
@@ -249,3 +256,9 @@ Traps (with dates):
 - 2026-09-28 (overseer, review): groot mode means a message after every step, not just every
   slice — this whole task went start-to-done without a checkpoint; from the next report onward,
   stop after each one and wait.
+- 2026-09-28 (overseer, review): a widget's own session_state key can only be written before that
+  widget is instantiated in the current run — writing it after a button check in the script body
+  raises StreamlitAPIException if the widget already ran this rerun. Reset it from an on_click
+  callback instead (callbacks run before the script body). app.py can't run under
+  streamlit.testing.v1.AppTest (login gate, live BigQuery loaders) — extract the callback into its
+  own plain module to get a real-widget test without touching app.py or BigQuery.
