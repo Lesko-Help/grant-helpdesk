@@ -86,11 +86,14 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done: brief filled and committed as first commit.
-In flight (file:line): about to write tests/test_config.py (red first), then
-the one-line env-override change in config.py.
-Next: write the failing test, confirm red, make config.py change, confirm
-green, run full suite, merge origin/main, wt-done.sh --check, report.
+Done: brief filled (8745f37); tests/test_config.py written and proven red
+against unmodified config.py; config.py:80 now
+`os.getenv("PRIVATE_CHAT_DATASET", "lesko-486515.private_chat")` with a
+plain-language comment; test green (a4394cd); full suite 117/117 passed;
+origin/main already up to date, no merge needed.
+In flight (file:line): none — reporting to overseer next.
+Next: wait for overseer's review reply; if changes requested, make them and
+re-report; if "land it", stop.
 Traps (with dates):
 - 2026-09-28: config is read at import time — any test touching
   PRIVATE_CHAT_DATASET must importlib.reload(config) after setting/clearing
