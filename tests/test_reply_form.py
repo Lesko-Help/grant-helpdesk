@@ -111,6 +111,19 @@ def test_on_reply_submit_unknown_thread_keeps_the_typed_text_and_shows_its_own_m
     ]
 
 
+def test_on_reply_submit_refused_shows_its_own_message_not_the_generic_one():
+    # Minor e from the re-review: REFUSED used to fall into the same
+    # "Please try again" message as WRITE_FAILED.
+    at = AppTest.from_function(_fixed_script, args=(coach_inbox.ReplyResult.REFUSED, 42))
+    at.run()
+    at.text_area[0].set_value("x").run()
+    at.button[0].click().run()
+
+    assert [e.value for e in at.error] == [
+        "Your reply could not be sent — check the text and try again."
+    ]
+
+
 def test_on_reply_submit_write_failed_shows_the_generic_retry_message():
     at = AppTest.from_function(_fixed_script, args=(coach_inbox.ReplyResult.WRITE_FAILED, 42))
     at.run()

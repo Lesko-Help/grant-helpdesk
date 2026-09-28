@@ -19,13 +19,16 @@ def reply_result_message(result):
     Input: a coach_inbox.ReplyResult.
     Output: the st.error() text to show for it, or None for OK (nothing to
     show — the box already cleared and the row refreshes on its own).
-    Why: a dead thread means something different to the coach than a real
-    outage, so it gets its own words instead of a generic "try again".
+    Why: a dead thread, a refused send and a real outage each mean
+    something different to the coach, so each gets its own words instead
+    of one generic "try again" for everything.
     """
     if result is coach_inbox.ReplyResult.OK:
         return None
     if result is coach_inbox.ReplyResult.UNKNOWN_THREAD:
         return "This conversation could not be found — it may have been removed."
+    if result is coach_inbox.ReplyResult.REFUSED:
+        return "Your reply could not be sent — check the text and try again."
     return "Could not send the reply. Please try again."
 
 
