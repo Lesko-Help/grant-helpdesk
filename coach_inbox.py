@@ -8,6 +8,8 @@ workflow). Only the pieces named in the current slice exist below; a
 function this module will need later is not stubbed in ahead of time.
 """
 
+import uuid
+
 import pandas as pd
 from google.cloud import bigquery
 
@@ -164,6 +166,71 @@ def report_source_failure(operation: str, err: Exception) -> None:
         "coach-inbox", "SOURCE_FAILED",
         f"private_chat {operation} failed: {type(err).__name__}",
     )
+
+
+def add_coach_reply(
+    thread_id: str,
+    author_member_id: int,
+    body: str,
+    client: "bigquery.Client | None" = None,
+) -> bool:
+    """
+    Writes one coach reply into a member's private-question thread.
+
+    Input: thread_id (which thread to reply into), author_member_id (the
+    replying coach's own row in grant_coaches — the admin has one too, so
+    app.py resolves this the same way for both), body (the reply text), and
+    an optional BigQuery client (tests always pass a fake, same as
+    load_member_questions — the real app calls it with no argument).
+
+    Output: True once one row landed in private_messages. False in three
+    cases: the body failed its own check (stripped to 1-4000 chars) and was
+    refused before any query ran; the query ran but touched zero rows,
+    which only happens when thread_id names no row in private_threads (an
+    unknown thread); or the query raised, in which case the failure is
+    reported the same way a read failure is.
+
+    Why INSERT...SELECT rather than a plain INSERT: the SELECT's own
+    "FROM private_threads WHERE thread_id = @thread_id" is what makes an
+    unknown thread fail closed (zero rows written) instead of inserting an
+    orphan message row — this repo has no foreign key to lean on instead.
+    author_role is written as the literal 'coach', never a parameter — a
+    member's own first message is the only 'member' row, written by the
+    zone, never by this function.
+
+    Any coach may reply in any thread: this never checks who thread_id is
+    assigned to, only that it exists. A write failure never puts the body
+    into the BTB_ALERT line, or anywhere else — same rule as a read failure.
+    """
+    stripped = (body or "").strip()
+    if not (1 <= len(stripped) <= 4000):
+        return False
+
+    if client is None:
+        from bq_base import client as _default_client
+        client = _default_client
+
+    dataset = config.PRIVATE_CHAT_DATASET
+    sql = f"""
+        INSERT INTO `{dataset}.private_messages`
+            (message_id, thread_id, author_role, author_member_id, body, created_at)
+        SELECT @message_id, thread_id, 'coach', @author_member_id, @body, CURRENT_TIMESTAMP()
+        FROM `{dataset}.private_threads`
+        WHERE thread_id = @thread_id
+    """
+    job_config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("message_id", "STRING", str(uuid.uuid4())),
+        bigquery.ScalarQueryParameter("author_member_id", "INT64", author_member_id),
+        bigquery.ScalarQueryParameter("body", "STRING", stripped),
+        bigquery.ScalarQueryParameter("thread_id", "STRING", thread_id),
+    ])
+    try:
+        job = client.query(sql, job_config=job_config)
+        job.result()
+    except Exception as err:
+        report_source_failure("write", err)
+        return False
+    return bool(job.num_dml_affected_rows)
 
 
 def waiting_count(questions: pd.DataFrame) -> int:
