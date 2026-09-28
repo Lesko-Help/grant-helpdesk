@@ -215,6 +215,28 @@ def test_load_member_questions_array_agg_has_a_message_id_tie_break():
     assert "ORDER BY m.created_at, m.message_id" in fake.queries[0]
 
 
+def test_load_member_questions_dedupes_core_members_before_the_join():
+    # Re-review minor 2: core_members joined into the messages GROUP BY
+    # while still ungrouped itself would duplicate every message in a
+    # thread once per matching core_members row, if that table ever carried
+    # more than one row for the same (member_id, client_id) — corrupting
+    # last_activity_at/status along with it. core_members must be collapsed
+    # to at most one row per member_id, in its own GROUP BY, before it is
+    # joined to the already-aggregated threads.
+    empty_threads = pd.DataFrame(
+        columns=["thread_id", "member_id", "subject", "topic", "thread_created_at",
+                 "messages", "full_name"]
+    )
+    fake = _FakeBigQueryClient(empty_threads)
+    coach_inbox.load_member_questions(client=fake)
+    sql = fake.queries[0]
+    assert "GROUP BY member_id" in sql
+    core_members_pos = sql.index("core_members")
+    group_by_member_pos = sql.index("GROUP BY member_id")
+    join_pos = sql.index("LEFT JOIN")
+    assert core_members_pos < group_by_member_pos < join_pos
+
+
 def test_load_member_questions_blank_name_falls_back_to_member_id():
     # R2: a member with no first or last name on file (or no core_members
     # row at all) falls back to "Member <id>", not an empty string.

@@ -65,28 +65,43 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
         # region (both confirmed EU via `bq show` — see brief, review finding
         # 6), so a cross-project JOIN reaches both in one round trip; the
         # `client_id` filter on core_members keeps a same-numbered member from
-        # another client out (review finding 5). ANY_VALUE is safe here since
-        # every message in a thread's group shares one member_id, so every
-        # candidate full_name in that group is identical.
+        # another client out (review finding 5). `names` collapses
+        # core_members to at most one row per member_id BEFORE the join to
+        # `threads` (re-review minor 2): joining the raw, ungrouped
+        # core_members table straight into the messages GROUP BY would
+        # duplicate every message in a thread once per matching core_members
+        # row if that table ever carried more than one row for the same
+        # (member_id, client_id), corrupting `last_activity_at`/`status`
+        # along with it.
         threads_sql = f"""
-            SELECT
-                t.thread_id,
-                t.member_id,
-                t.subject,
-                t.topic,
-                t.created_at AS thread_created_at,
-                ARRAY_AGG(
-                    STRUCT(m.author_role AS author_role, m.body AS body, m.created_at AS created_at)
-                    ORDER BY m.created_at, m.message_id
-                ) AS messages,
-                ANY_VALUE(
-                    TRIM(CONCAT(COALESCE(cm.first_name, ''), ' ', COALESCE(cm.last_name, '')))
-                ) AS full_name
-            FROM `{dataset}.private_threads` t
-            JOIN `{dataset}.private_messages` m ON m.thread_id = t.thread_id
-            LEFT JOIN `{config.PROJECT_ID}.dataform.core_members` cm
-                ON cm.member_id = t.member_id AND cm.client_id = 'lesko_4022250'
-            GROUP BY t.thread_id, t.member_id, t.subject, t.topic, t.created_at
+            WITH threads AS (
+                SELECT
+                    t.thread_id,
+                    t.member_id,
+                    t.subject,
+                    t.topic,
+                    t.created_at AS thread_created_at,
+                    ARRAY_AGG(
+                        STRUCT(m.author_role AS author_role, m.body AS body, m.created_at AS created_at)
+                        ORDER BY m.created_at, m.message_id
+                    ) AS messages
+                FROM `{dataset}.private_threads` t
+                JOIN `{dataset}.private_messages` m ON m.thread_id = t.thread_id
+                GROUP BY t.thread_id, t.member_id, t.subject, t.topic, t.created_at
+            ),
+            names AS (
+                SELECT
+                    member_id,
+                    ANY_VALUE(
+                        TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, '')))
+                    ) AS full_name
+                FROM `{config.PROJECT_ID}.dataform.core_members`
+                WHERE client_id = 'lesko_4022250'
+                GROUP BY member_id
+            )
+            SELECT threads.*, names.full_name
+            FROM threads
+            LEFT JOIN names ON names.member_id = threads.member_id
         """
         threads = client.query(threads_sql).to_dataframe()
         if threads.empty:
