@@ -9,6 +9,7 @@ import streamlit as st
 import bq_client
 import coach_inbox
 import config
+import raillog
 from mn_format import mn_mention, build_mn_body, _linkify, space_label, MEMBER_BIO_LABEL  # noqa: F401
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lesko-ui"))
@@ -507,10 +508,19 @@ def _cached_mn_api_key(email: str):
 
 # The logged-in coach's own grant_coaches member_id, for coach_inbox.add_coach_reply's
 # author_member_id — the admin has a row there too, so this needs no separate case.
-@st.cache_data(ttl=300, show_spinner=False)
-def _cached_coach_member_id(email: str):
-    row = bq_client.get_coach_by_login_email(email)
-    return int(row["member_id"]) if row else None
+# Uncached, unlike the three lookups above: it only runs once per reply send
+# (not on every dialog rerun), and caching a None here would make a coach who
+# was just linked in grant_coaches wait out the cache before they could reply.
+def _lookup_coach_member_id(email: str):
+    try:
+        row = bq_client.get_coach_by_login_email(email)
+        return int(row["member_id"]) if row else None
+    except Exception as err:
+        # A bad member_id (e.g. NaN -> int() raises ValueError) is reported
+        # the same way as a lookup that fails outright — both mean app.py
+        # cannot identify this coach right now.
+        raillog.alert("coach-inbox", "SOURCE_FAILED", f"coach lookup failed: {type(err).__name__}")
+        return None
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_upcoming_events():
@@ -1493,7 +1503,7 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
                     if not _reply_body.strip():
                         st.error("Please type a reply before sending.")
                     else:
-                        _author_id = _cached_coach_member_id(current_user) if current_user else None
+                        _author_id = _lookup_coach_member_id(current_user) if current_user else None
                         if _author_id is None:
                             st.error("Could not identify your coach profile — ask an admin to link your login.")
                         else:
