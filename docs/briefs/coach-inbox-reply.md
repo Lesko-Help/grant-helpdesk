@@ -195,43 +195,34 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-- Brief filled in and committed (f6d005a).
-- `coach_inbox.add_coach_reply(thread_id, author_member_id, body, client=None) -> bool`
-  written in `coach_inbox.py`, right before `waiting_count`. Matches the spec stub exactly:
-  INSERT...SELECT, uuid4 message_id, author_role 'coach' as a SQL literal, body stripped
-  1-4000 chars else refused before any query, False on zero rows (unknown thread), write
-  exception -> report_source_failure("write", err) -> False, body never logged.
-- `tests/test_coach_inbox_reply.py` written (9 tests), proven red first (AttributeError:
-  no add_coach_reply), then green after the implementation.
-- Full `pytest tests/ -q -p no:cacheprovider`: 126 passed, including the untouched
-  `tests/test_private_chat_insert_only.py` guard (INSERT is not a forbidden keyword, so it
-  needed no change — this run is the proof it still holds).
-- Not yet committed: coach_inbox.py + tests/test_coach_inbox_reply.py (red-then-green proven
-  in the working tree, commit is next).
+- Brief filled in (f6d005a), `add_coach_reply` implemented and app.py wired (717e3b9, 5520fc0,
+  3861923), first report sent, review came back FAIL: 1 blocker, 4 minors, 2 process points.
+- Blocker fixed: `add_coach_reply` now returns `coach_inbox.ReplyResult` (OK / REFUSED /
+  UNKNOWN_THREAD / WRITE_FAILED), not a bare bool — a None `author_member_id` is refused inside
+  the function too, not just in app.py (aad02d9). app.py branches on the result so a blank body,
+  an unknown thread and a write failure each get their own message; only the last invites a retry
+  (100a3f1).
+- Minor fixes: the reply form keeps `clear_on_submit=False` and only clears the text box itself
+  on the OK path, so a failed send no longer loses what the coach typed (ffe0ea2). The
+  `author_member_id` lookup (`_lookup_coach_member_id` in app.py, replacing the cached
+  `_cached_coach_member_id`) now catches a raised exception or a bad `member_id` (e.g. NaN) and
+  reports `SOURCE_FAILED` instead of failing the whole tab, and is no longer cached — it ran once
+  per reply send already, and caching None made a newly linked coach wait out the cache (203bc1d).
+- Full `pytest tests/ -q -p no:cacheprovider`: 127 passed after every commit above.
+- Remaining from review: refresh this State section (this edit) and add the fire-drill plan to
+  `## Done when` (next commit) — both brief-only, no code.
 
-In flight (file:line): none — about to commit coach_inbox.py:1 (import uuid) and
-coach_inbox.py add_coach_reply (~line 169), plus the new test file, as one commit.
+In flight: none — tree clean, all fixes above committed.
 
 Next:
-1. Commit coach_inbox.py + tests/test_coach_inbox_reply.py.
-2. Add the reply box to app.py: a plain st.form (not st.dialog — see trap 4) inside a
-   member-question row (render_ticket_table, the `if _is_question:` branch around
-   app.py:1400-1413, rendered inside c1 near the body_preview markdown at app.py:1464).
-   Resolve author_member_id via a new small `@st.cache_data(ttl=300, show_spinner=False)`
-   wrapper around `bq_client.get_coach_by_login_email(current_user)` (pattern: `_cached_mn_api_key`
-   at app.py:505) — no bq_reads.py change needed, that function already exists. thread_id for
-   the reply = `row["content_id"].removeprefix("pc:")` (load_member_questions guarantees
-   content_id = "pc:" + thread_id; no thread_id column exists on the questions frame and
-   May-touch does not include changing load_member_questions to add one). On success:
-   `load_member_questions.clear()` (never `st.cache_data.clear()`) + `st.rerun()`. On False:
-   one `st.error(...)`.
-3. app.py has no unit tests for render_ticket_table today (Streamlit UI, not decomposed) —
-   this task's May-touch list matches that: only one new test file, coach_inbox-level. No new
-   app.py test is planned; manual/visual check only if the overseer wants one before landing.
-4. `git add -N .`, `git status` clean check, `wt-done.sh --check coach-inbox-reply`, then
-   report to helpdesk-opzichter (SendMessage) per the brief's Context note on "groot mode":
-   branch, commit range, HEAD sha, 5-line summary, red-then-green proof, deploy implication
-   (deploy.sh, overseer-run only). Then wait — do not start further work until it replies.
+1. Add the write-path fire drill to `## Done when` (brief-only commit).
+2. `git add -N .`, `git status` clean check, `wt-done.sh --check coach-inbox-reply`.
+3. Report to helpdesk-opzichter: branch, commit range since the first report, HEAD sha, which
+   finding each commit fixed, red-then-green proof, deploy implication (still overseer-only).
+   Per the overseer's message: from now on every step ends with a message to it, then stop —
+   do not continue past this report without a reply.
+4. Watch for the overseer pushing the `add_coach_reply` spec-stub fill to `origin/main` (it said
+   it would, after this review) and `git merge origin/main` once that lands, before the next report.
 
 Traps (with dates):
 - 2026-09-28 (overseer): parameterised queries only (bigquery.ScalarQueryParameter); copy
@@ -248,3 +239,6 @@ Traps (with dates):
   /opt/anaconda3/bin/python -m pytest tests/ -q -p no:cacheprovider.
 - 2026-09-28: this worktree has no run-suite.sh (unlike the generic worker instructions'
   example) — run pytest directly with the command above.
+- 2026-09-28 (overseer, review): groot mode means a message after every step, not just every
+  slice — this whole task went start-to-done without a checkpoint; from the next report onward,
+  stop after each one and wait.
