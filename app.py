@@ -1485,17 +1485,26 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
                         height=80,
                     )
                     _reply_sent = st.form_submit_button("Send reply")
-                if _reply_sent and _reply_body.strip():
-                    _author_id = _cached_coach_member_id(current_user) if current_user else None
-                    if _author_id is None:
-                        st.error("Could not identify your coach profile — ask an admin to link your login.")
-                    elif coach_inbox.add_coach_reply(_reply_thread_id, _author_id, _reply_body):
-                        # Only this one cache, never st.cache_data.clear() — everything
-                        # else on the page (tickets, stats, MN keys) is still valid.
-                        load_member_questions.clear()
-                        st.rerun()
+                if _reply_sent:
+                    if not _reply_body.strip():
+                        st.error("Please type a reply before sending.")
                     else:
-                        st.error("Could not send the reply. Please try again.")
+                        _author_id = _cached_coach_member_id(current_user) if current_user else None
+                        if _author_id is None:
+                            st.error("Could not identify your coach profile — ask an admin to link your login.")
+                        else:
+                            _result = coach_inbox.add_coach_reply(_reply_thread_id, _author_id, _reply_body)
+                            if _result is coach_inbox.ReplyResult.OK:
+                                # Only this one cache, never st.cache_data.clear() — everything
+                                # else on the page (tickets, stats, MN keys) is still valid.
+                                load_member_questions.clear()
+                                st.rerun()
+                            elif _result is coach_inbox.ReplyResult.UNKNOWN_THREAD:
+                                # Distinct from a write failure: retrying the same send can
+                                # never work here, so the message doesn't invite a retry.
+                                st.error("This conversation could not be found — it may have been removed.")
+                            else:
+                                st.error("Could not send the reply. Please try again.")
 
             # Member-question rows get no action dropdown until the workflow
             # slice (coach-inbox-workflow) lands assign/lane/close.
