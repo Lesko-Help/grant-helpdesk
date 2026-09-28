@@ -507,12 +507,20 @@ def _cached_thread(thread_id: str):
 def _cached_mn_api_key(email: str):
     return bq_client.get_mn_api_key(email)
 
-# The logged-in coach's own grant_coaches member_id, for coach_inbox.add_coach_reply's
-# author_member_id — the admin has a row there too, so this needs no separate case.
-# Uncached, unlike the three lookups above: it only runs once per reply send
-# (not on every dialog rerun), and caching a None here would make a coach who
-# was just linked in grant_coaches wait out the cache before they could reply.
 def _lookup_coach_member_id(email: str):
+    """
+    Input: the logged-in user's email (coach or admin).
+    Output: their grant_coaches member_id as an int, for
+    coach_inbox.add_coach_reply's author_member_id — or None if there is no
+    row for this email, or the lookup itself failed, so the caller can
+    refuse the send instead of writing a reply with no real owner. The
+    admin has a row in grant_coaches too, so this needs no separate case
+    for them.
+    Why uncached, unlike the three lookups above: it only runs once per
+    reply send (not on every dialog rerun), and caching a None here would
+    make a coach who was just linked in grant_coaches wait out the cache
+    before they could reply.
+    """
     try:
         row = bq_client.get_coach_by_login_email(email)
         return int(row["member_id"]) if row else None
