@@ -73,6 +73,17 @@ From the overseer's message (2026-09-28, plan + traps for this task):
 Baseline: `/opt/anaconda3/bin/python -m pytest tests/ -q -p no:cacheprovider`
 passed 116/116 before this change (run 2026-09-28, no test_config.py yet).
 
+## Agentic review
+
+Verdict: PASS
+
+Findings:
+- Default byte-identical (config.py:83).
+- The only consumer reads the value at call time (coach_inbox.py:61), and nothing does "from config import".
+- The test restores the env var and reloads config (tests/test_config.py:33-37). It can go red: without os.getenv, the assert at :31 fails.
+- Minor, accepted as-is: an empty PRIVATE_CHAT_DATASET="" yields "" rather than the default. The query then fails loudly through SOURCE_FAILED, which is fine for a drill-only knob.
+- 117 passed.
+
 ## Spec proposals
 
 Specs belong to the overseer (DECISION BY MARTIN 2026-09-24) — this worktree
