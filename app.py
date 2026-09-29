@@ -1235,6 +1235,28 @@ def show_assign_dialog(content_id: str, row_dict: dict):
         st.rerun()
 
 
+@st.dialog("Member Question", width="large")
+def show_member_question_dialog(content_id: str, row_dict: dict):
+    """Answer for a member-question row: shows the private thread (the
+    question, then any earlier coach replies) and the reply box.
+    row_dict["messages"] is already on the row from load_member_questions —
+    no extra BigQuery read needed to open this. thread_id is content_id
+    with the "pc:" prefix load_member_questions adds stripped back off."""
+    mem = row_dict.get("member_name") or "Unknown"
+    st.markdown(f"Question from **{mem}**")
+    thread_id = str(content_id)[len("pc:"):]
+    reply_form.render_thread_and_reply(
+        thread_id,
+        row_dict.get("messages") or [],
+        f"reply_body_{content_id}",
+        f"reply_result_{content_id}",
+        current_user,
+        _lookup_coach_member_id,
+        coach_inbox.add_coach_reply,
+        load_member_questions.clear,
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE HEADER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1287,6 +1309,8 @@ _ACTION_OPTS = {
     config.LANE_QUESTION: ["— action —", "Answer", "Close", "Flag", "Not a question", "Assign", "Delete"],
     config.LANE_GENERAL:  ["— action —", "Answer", "Close", "Flag", "This is a question", "Assign", "Delete"],
 }
+# Member-question rows: only Answer, until the workflow slice adds the rest.
+_MEMBER_QUESTION_OPTS = ["— action —", "Answer"]
 # action label → lane it moves the row to
 _LANE_MOVES = {
     "Not a question":     config.LANE_GENERAL,
@@ -1489,70 +1513,32 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             _body_class  = "answered-body" if _is_answered else ""
             c1.markdown(f'<span class="{_body_class}" style="font-size:var(--font-base);color:var(--color-text)">{safe_text}</span>', unsafe_allow_html=True)
 
-            # coach-inbox-reply: a plain st.form, not st.dialog — production runs
-            # Streamlit 1.58 (unpinned), local runs 1.45.1, and a checkbox's rerun
-            # behaviour inside st.dialog differs between them.
-            if _is_question:
-                _reply_thread_id = str(row["content_id"])[len("pc:"):]
-                _reply_body_key = f"reply_body_{row['content_id']}"
-                _reply_result_key = f"reply_result_{row['content_id']}"
-                # clear_on_submit=False: a failed send (unknown thread, write
-                # failure, blank body) must not also throw away what the coach
-                # typed. On success reply_form.on_reply_submit clears the box
-                # itself, from inside the on_click callback — see that
-                # function's docstring for why it must happen there and not
-                # here (only this one cache is cleared, never
-                # st.cache_data.clear() — everything else on the page
-                # (tickets, stats, MN keys) is still valid).
-                with c1.form(key=f"reply_form_{row['content_id']}", clear_on_submit=False):
-                    st.text_area(
-                        "Reply",
-                        key=_reply_body_key,
-                        label_visibility="collapsed",
-                        placeholder="Type a reply to this member…",
-                        max_chars=4000,
-                        height=80,
-                    )
-                    st.form_submit_button(
-                        "Send reply",
-                        on_click=reply_form.on_reply_submit,
-                        args=(
-                            _reply_thread_id,
-                            _reply_body_key,
-                            _reply_result_key,
-                            current_user,
-                            _lookup_coach_member_id,
-                            coach_inbox.add_coach_reply,
-                            load_member_questions.clear,
-                        ),
-                    )
-                _reply_message = st.session_state.pop(_reply_result_key, None)
-                if _reply_message:
-                    st.error(_reply_message)
+            # Member-question rows get the same dropdown as ticket rows, but
+            # only "Answer" — Close/Flag/Assign/Delete/lane-move stay hidden
+            # until the workflow slice (coach-inbox-workflow) lands them.
+            # "Answer" opens show_member_question_dialog (the reply box moved
+            # there — see coach-inbox-answer-dialog) through the same
+            # _act_triggered_*/_pending_action dispatch every other action uses.
+            _act_key = f"act_{lane}_{row['content_id']}"
+            _cid     = row["content_id"]
+            _rdict   = row.to_dict()
 
-            # Member-question rows get no action dropdown until the workflow
-            # slice (coach-inbox-workflow) lands assign/lane/close.
-            if not _is_question:
-                _act_key = f"act_{lane}_{row['content_id']}"
-                _cid     = row["content_id"]
-                _rdict   = row.to_dict()
+            def _on_action_change(cid=_cid, rdict=_rdict, akey=_act_key, ln=lane):
+                action = st.session_state.get(akey)
+                if action and action != "— action —":
+                    st.session_state[f"_act_triggered_{ln}"] = {"action": action, "content_id": cid, "row_dict": rdict}
+                    # Reset here — the one place Streamlit lets you write a widget's own
+                    # key. Without it the value sticks and on_change re-fires every rerun.
+                    st.session_state[akey] = "— action —"
 
-                def _on_action_change(cid=_cid, rdict=_rdict, akey=_act_key, ln=lane):
-                    action = st.session_state.get(akey)
-                    if action and action != "— action —":
-                        st.session_state[f"_act_triggered_{ln}"] = {"action": action, "content_id": cid, "row_dict": rdict}
-                        # Reset here — the one place Streamlit lets you write a widget's own
-                        # key. Without it the value sticks and on_change re-fires every rerun.
-                        st.session_state[akey] = "— action —"
-
-                c3.selectbox(
-                    "Action",
-                    _opts,
-                    index=0,
-                    key=_act_key,
-                    on_change=_on_action_change,
-                    label_visibility="collapsed",
-                )
+            c3.selectbox(
+                "Action",
+                _MEMBER_QUESTION_OPTS if _is_question else _opts,
+                index=0,
+                key=_act_key,
+                on_change=_on_action_change,
+                label_visibility="collapsed",
+            )
 
             _ca = row.get("assigned_to")
             _ca = _ca.strip() if isinstance(_ca, str) else ""  # NULL → NaN float in pandas
@@ -1771,7 +1757,9 @@ with tab_main:
     if st.session_state._pending_action:
         _pa = st.session_state._pending_action
         st.session_state._pending_action = None
-        if _pa["action"] == "Answer":
+        if _pa["action"] == "Answer" and _pa["row"].get("source") == "member_question":
+            show_member_question_dialog(_pa["content_id"], _pa["row"])
+        elif _pa["action"] == "Answer":
             show_ticket_dialog(_pa["content_id"], thread_id_hint=_pa["row"].get("thread_id"))
         elif _pa["action"] == "Flag":
             show_flag_dialog(_pa["content_id"], _pa["row"])
