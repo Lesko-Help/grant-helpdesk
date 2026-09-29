@@ -155,6 +155,89 @@ section, alongside `waiting_count`/`merge_into_tickets`):
 > Test: tests/test_coach_inbox.py (member_other_threads section) — plain
 > pandas fixtures, no fake BigQuery client needed.
 
+## Agentic review
+
+Verdict: FAIL
+
+Review of commit `487c5d2` by the overseer (2026-09-29), 2 blockers + 7 minors.
+
+### Findings
+
+1. BLOCKER — `tests/test_app_followup_cache.py` never imported `app.py`,
+   so it tested a locally re-typed copy of the caching logic rather than
+   the real code; deleting the real `@st.cache_data` decorator or
+   reverting to the old uncached call left the suite green.
+2. BLOCKER — `tests/test_member_history.py`'s `_expected_ticket_line` read
+   its expected icon from `member_history.STATUS_ICON` — the code under
+   test — so an icon regression there was invisible to the test.
+3. MINOR A — `app.py:1272` `_cached_member_history`: no try/except, no
+   spinner; first open per member adds ~1.9s of BigQuery time after the
+   form draws. Fix: `show_spinner="Loading history…"`, try/except →
+   `st.caption("History unavailable")`.
+4. MINOR B — `member_history.py:17-25` vs `app.py:83-90`: `STATUS_ICON`
+   defined twice. Have `app.py` import `member_history.STATUS_ICON`.
+5. MINOR C — `member_history.py:65`: preview shows the last message (may
+   be the coach's own reply); `html.escape` alone still lets markdown
+   images/links through, and newlines break the line. Use the member's
+   first message, flatten newlines, escape markdown too.
+6. MINOR D — `member_history.py:49/72`: sort mixes timestamps from two
+   sources; add one test with tz-aware datetimes.
+7. MINOR E — `app.py:371` `load_followup_statuses`: docstring (input
+   tuple of ids, output dict, why) instead of a `#` comment. `app.py:623`
+   `show_ticket_dialog`: add a docstring.
+8. MINOR F — Brief `## State` is stale (said nothing committed yet).
+   Rewrite to match.
+9. MINOR G — Community history is capped at the newest 20
+   (`bq_reads.py:675` `LIMIT 20`) — informational only, the overseer is
+   telling Martin directly; not to be changed by this worktree.
+
+### Fixed in
+
+1. `763d9b3` — moved the cached wrapper into its own importable module,
+   `followup_cache.py` (same pattern as `member_history.py`/
+   `reply_form.py`); `app.py` now calls
+   `followup_cache.load_followup_statuses(...)`. The test imports that
+   same module and drives the real function via `AppTest.from_function`,
+   with `bq_client.get_followup_statuses` monkeypatched to a counting
+   fake. Proven red by stripping the decorator (3 calls across 3 reruns
+   instead of 1), green restored.
+2. `3cb9c18` — hardcoded a literal `_EXPECTED_ICON` dict in the test file,
+   copied from origin/main's values, instead of reading
+   `member_history.STATUS_ICON`. Proven red by changing
+   `STATUS_ICON["answered"]` to a wrong value (assertion failure showing
+   the mismatch), green restored.
+3. `78d18ab` — `_cached_member_history` now shows
+   `show_spinner="Loading history…"`; both call sites
+   (`show_ticket_dialog`, `show_member_question_dialog`) catch a failed
+   read, log it via `raillog.alert("coach-inbox", "SOURCE_FAILED", ...)`,
+   and fall back to `st.caption("History unavailable")` instead of
+   crashing the dialog. Plain fix + verify (py_compile clean, full suite
+   green) — no test can pin this without driving app.py's own
+   `@st.dialog`-wrapped function, which needs the login gate the
+   testable-module pattern exists to route around.
+4. `e9fa90d` — `app.py` now does `STATUS_ICON = member_history.STATUS_ICON`
+   instead of carrying its own second literal dict. Plain fix + verify.
+5. `67f331a` — `_private_thread_line` now picks the member's own first
+   message, flattens newlines to spaces, and backslash-escapes markdown's
+   special characters in addition to HTML-escaping. Proven red by
+   reverting to `messages[-1]["body"]` + `html.escape` only — the 3 new
+   tests failed exactly as expected (coach reply shown instead of the
+   member's question, a raw newline breaking the line, raw `*`/`[]()`
+   passing through unescaped) — green restored.
+6. `fc96299` — added `_sort_key`, converting a tz-aware timestamp to naive
+   UTC before comparison; both `_ticket_line` and `_private_thread_line`
+   use it for their sort key. Proven red by reverting both call sites to
+   bare `pd.Timestamp(...)` — the new mixed-tz test failed with
+   `TypeError: Cannot compare tz-naive and tz-aware timestamps` — green
+   restored.
+7. `763d9b3` (docstring on the new `followup_cache.load_followup_statuses`,
+   input/output/why, written when the module was created) + `f07b91b`
+   (added the same shape of docstring to `show_ticket_dialog`).
+8. This commit — `## State` below rewritten to match the current, complete
+   picture.
+9. Not fixed — informational only, per the overseer's explicit
+   instruction; left for the overseer to handle directly with Martin.
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
@@ -167,52 +250,22 @@ Done (2026-09-29):
   `coach_inbox.member_other_threads`; the Answer dialog's combined-history
   wiring; the `load_followup_statuses` caching fix. Reported to
   helpdesk-opzichter, full suite 149 passed, `wt-done.sh --check` passed.
-- Overseer reviewed 487c5d2: **FAIL**, 2 blockers + 7 minors (G is
-  informational only — a pre-existing 20-row cap in bq_reads.py the
-  overseer is telling Martin about, not for me to change).
-- Blocker 1 fixed (763d9b3): `tests/test_app_followup_cache.py` never
-  imported app.py, so deleting the real `@st.cache_data` decorator left it
-  green. Moved the wrapper into its own importable module,
-  `followup_cache.py` (same pattern as `member_history.py`/`reply_form.py`);
-  app.py now does `import followup_cache` and calls
-  `followup_cache.load_followup_statuses(...)`. Test now imports the same
-  module and drives the real function via `AppTest.from_function`, with
-  `bq_client.get_followup_statuses` monkeypatched to a counting fake. Proven
-  red by stripping the decorator (3 calls across 3 reruns), green restored.
-- Blocker 2 fixed (3cb9c18): `tests/test_member_history.py`'s
-  `_expected_ticket_line` read its icon from `member_history.STATUS_ICON` —
-  the code under test — so an icon mutation there was invisible. Hardcoded
-  a literal `_EXPECTED_ICON` dict in the test file instead. Proven red by
-  changing `STATUS_ICON["answered"]`, green restored.
-- Full suite after both blocker fixes: 148 passed (one test count lower
-  than before — the old standalone "old shape" reproduction test in
-  test_app_followup_cache.py was replaced by two tests that both drive the
-  real module, not a third copy).
+- Overseer reviewed 487c5d2: **FAIL**, 2 blockers + 7 minors (G
+  informational only). Full findings/fixes recorded in `## Agentic review`
+  above.
+- Both blockers and all 6 actionable minors (A-F) fixed, one commit each
+  (763d9b3, 3cb9c18, e9fa90d, 67f331a, fc96299, 78d18ab, f07b91b — see
+  `## Agentic review` → Fixed in for which commit covers which finding).
+  Minor G left untouched, per explicit instruction. The shared stash entry
+  `coach-inbox-dialog-history-redcheck-1790675883` left alone, per explicit
+  instruction.
+- Full suite after every fix: 152 passed.
 
-In flight: minors A-F not yet started (B: dedupe STATUS_ICON between app.py
-and member_history.py; C: private-thread preview should use the member's
-first message not whichever is last, flatten newlines, escape markdown too
-— html.escape alone isn't enough under unsafe_allow_html; D: `_ticket_line`/
-`_private_thread_line` sort keys are raw `pd.Timestamp` — confirmed locally
-that comparing a tz-aware one against a tz-naive one raises TypeError, needs
-a shared naive-UTC normalizer + a test; A: `_cached_member_history` calls at
-app.py have no show_spinner text or try/except fallback; E: `show_ticket_
-dialog` still has no docstring). Nothing uncommitted lost — no code changes
-made yet for A/B/C/D/E, only the two blocker-fix commits above exist so far
-on top of 487c5d2.
-
-Next (in order):
-1. Fix minors B, C (+tests), D (+test), A, E — one commit each, red-then-
-   green where the fix is a behavior change (C, D), plain fix+verify for the
-   rest (A, B, E).
-2. One final brief commit: `## Agentic review` section (Verdict: FAIL line
-   in column 0, Findings 1-9, Fixed in 1-9 referencing commit shas) + this
-   State section rewritten to match.
-3. `git add -N .`, verify clean tree; origin/main was already an ancestor
-   last check, re-verify with `git merge-base --is-ancestor origin/main
-   HEAD`.
-4. Run `wt-done.sh --check coach-inbox-dialog-history` until it exits 0.
-5. Report the new commit range to `helpdesk-opzichter [8ddd8b]` (there are
+Next:
+1. `git add -N .`, verify clean tree; re-verify `git merge-base
+   --is-ancestor origin/main HEAD`.
+2. Run `wt-done.sh --check coach-inbox-dialog-history` until it exits 0.
+3. Report the new commit range to `helpdesk-opzichter [8ddd8b]` (there are
    two agents named helpdesk-opzichter — the ref matters) with red-then-green
    proof for both blockers, then stop and wait.
 
