@@ -1241,7 +1241,9 @@ def show_member_question_dialog(content_id: str, row_dict: dict):
     question, then any earlier coach replies) and the reply box.
     row_dict["messages"] is already on the row from load_member_questions —
     no extra BigQuery read needed to open this. thread_id is content_id
-    with the "pc:" prefix load_member_questions adds stripped back off."""
+    with the "pc:" prefix load_member_questions adds stripped back off.
+    Output: none — draws the dialog; closes via reply_form's st.rerun()
+    on a successful send."""
     mem = row_dict.get("member_name") or "Unknown"
     st.markdown(f"Question from **{mem}**")
     thread_id = str(content_id)[len("pc:"):]
