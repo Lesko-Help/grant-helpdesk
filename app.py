@@ -530,7 +530,7 @@ def _lookup_coach_member_id(email: str):
 def _cached_upcoming_events():
     return bq_client.get_upcoming_events()
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner="Loading history…")
 def _cached_member_history(member_id, exclude_content_id=None):
     return bq_client.get_member_history(member_id, exclude_content_id=exclude_content_id)
 
@@ -930,10 +930,15 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
 
     # Same panel show_member_question_dialog draws below its own reply form —
     # one shared function (member_history.py) instead of two copies.
-    history = _cached_member_history(
-        ticket["member_id"], exclude_content_id=ticket["content_id"]
-    )
-    member_history.render_member_history(ticket.get("member_name", ""), history)
+    try:
+        history = _cached_member_history(
+            ticket["member_id"], exclude_content_id=ticket["content_id"]
+        )
+    except Exception as err:
+        raillog.alert("coach-inbox", "SOURCE_FAILED", f"member history lookup failed: {type(err).__name__}")
+        st.caption("History unavailable")
+    else:
+        member_history.render_member_history(ticket.get("member_name", ""), history)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1252,11 +1257,16 @@ def show_member_question_dialog(content_id: str, row_dict: dict):
 
     st.divider()
     member_id = row_dict.get("member_id")
-    ticket_history = _cached_member_history(member_id) if member_id else pd.DataFrame()
-    private_threads = coach_inbox.member_other_threads(
-        load_member_questions(), member_id, content_id
-    )
-    member_history.render_member_history(mem, ticket_history, private_threads)
+    try:
+        ticket_history = _cached_member_history(member_id) if member_id else pd.DataFrame()
+    except Exception as err:
+        raillog.alert("coach-inbox", "SOURCE_FAILED", f"member history lookup failed: {type(err).__name__}")
+        st.caption("History unavailable")
+    else:
+        private_threads = coach_inbox.member_other_threads(
+            load_member_questions(), member_id, content_id
+        )
+        member_history.render_member_history(mem, ticket_history, private_threads)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
