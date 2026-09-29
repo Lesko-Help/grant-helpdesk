@@ -1230,7 +1230,11 @@ def show_assign_dialog(content_id: str, row_dict: dict):
 @st.dialog("Member Question", width="large")
 def show_member_question_dialog(content_id: str, row_dict: dict):
     """Answer for a member-question row: shows the private thread (the
-    question, then any earlier coach replies) and the reply box.
+    question, then any earlier coach replies), the reply box, and below a
+    divider this member's other history — community tickets plus their
+    other private-chat threads, drawn by the same member_history module
+    show_ticket_dialog's own Member-history panel uses, so the two dialogs
+    never carry two copies of that code.
     row_dict["messages"] is already on the row from load_member_questions —
     no extra BigQuery read needed to open this. thread_id is content_id
     with the "pc:" prefix load_member_questions adds stripped back off.
@@ -1249,6 +1253,14 @@ def show_member_question_dialog(content_id: str, row_dict: dict):
         coach_inbox.add_coach_reply,
         load_member_questions.clear,
     )
+
+    st.divider()
+    member_id = row_dict.get("member_id")
+    ticket_history = _cached_member_history(member_id) if member_id else pd.DataFrame()
+    private_threads = coach_inbox.member_other_threads(
+        load_member_questions(), member_id, content_id
+    )
+    member_history.render_member_history(mem, ticket_history, private_threads)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
