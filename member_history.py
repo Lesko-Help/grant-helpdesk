@@ -65,7 +65,7 @@ def _ticket_line(row):
     return _sort_key(row["created_at"]), line
 
 
-_MARKDOWN_ESCAPE = {ord(c): f"\\{c}" for c in "\\`*_{}[]()#+-.!"}
+_MARKDOWN_ESCAPE = {ord(c): f"\\{c}" for c in "\\`*_{}[]()#+-.!~|"}
 
 
 def _escape_preview(body):
