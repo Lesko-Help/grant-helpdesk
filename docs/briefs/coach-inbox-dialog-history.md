@@ -304,6 +304,33 @@ action.
 5. Not fixed — no action needed, per the overseer's explicit finding
    (harmless).
 
+### Round 3 — commit `5ebc672`
+
+Verdict: PASS
+
+Re-check of `da71bc7..5ebc672` by the overseer (2026-09-29). No blockers.
+
+### Findings (round 3)
+
+- Scope: only `member_history.py`, `tests/test_member_history.py`,
+  `tests/test_app_followup_cache.py` and the brief. Tree clean, 0 behind
+  `origin/main`.
+- Tests: 138 passed, with `smoke_test.py` excluded.
+- Mutations: each broke only its own test and was green again after
+  restore: (a) `body.split()`, (b) dropping `~|`, (c) a direct
+  `bq_client.get_followup_statuses(` in `app.py`.
+- No other `None`/empty-data crash spots found.
+
+### Open minors (round 3 — not fixed, listed here per the overseer's instruction)
+
+1. `member_history.py:101`: `first["body"]` would raise `KeyError` if the
+   field were absent. The query always includes it today.
+   `first.get("body")` would be safer.
+2. `member_history.py:131`: a `None`/`NaT` timestamp has an undefined
+   place in the newest-first sort.
+3. `tests/test_app_followup_cache.py:77`: `open("app.py")` depends on the
+   folder pytest runs from, so it only works from the repo root.
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
