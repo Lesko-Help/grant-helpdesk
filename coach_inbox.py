@@ -363,3 +363,34 @@ def merge_into_tickets(tickets: pd.DataFrame, questions: pd.DataFrame) -> pd.Dat
     ).drop(columns=["_group", "_activity_at"])
 
     return combined.reset_index(drop=True)
+
+
+def member_other_threads(questions: pd.DataFrame, member_id, exclude_content_id: str) -> pd.DataFrame:
+    """
+    Input: the frame from load_member_questions (every member's private
+    threads); the member_id whose other threads the Answer dialog wants;
+    the content_id of the thread already open, so it doesn't list itself.
+    Output: that member's remaining threads, newest activity first — the
+    Answer dialog's Member-history panel merges this with the ticket
+    history bq_client.get_member_history already returns, the same way
+    show_ticket_dialog's own panel does for tickets.
+
+    No new BigQuery read: questions is the frame app.py's load_member_questions
+    already fetched (cached) for the Tickets tab itself, so opening the
+    Answer dialog costs nothing extra here — it only filters a frame
+    already in memory.
+
+    member_id arrives as whatever type the caller's row carries it as
+    (BigQuery's INT64 comes back through pandas as a Python int or numpy
+    int64, depending on the column's null-ness) — compared as a string on
+    both sides so a numpy int64 caller value and a Python int column value
+    (or vice versa) still match instead of silently filtering to nothing.
+    """
+    if questions.empty:
+        return questions
+
+    others = questions[
+        (questions["member_id"].astype(str) == str(member_id))
+        & (questions["content_id"] != exclude_content_id)
+    ]
+    return others.sort_values("last_activity_at", ascending=False).reset_index(drop=True)

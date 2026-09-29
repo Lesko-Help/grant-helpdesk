@@ -432,3 +432,40 @@ def test_read_failed_is_carried_by_the_frame_not_a_shared_flag(capsys):
     coach_inbox.load_member_questions(client=_FakeBigQueryClient(empty_threads))
 
     assert coach_inbox.read_failed(failed_frame) is True
+
+
+# ── member_other_threads (coach-inbox-dialog-history) ───────────────────────
+#
+# Filters the already-loaded load_member_questions frame down to one
+# member's other threads, for the Answer dialog's shared history panel — no
+# BigQuery call of its own, so these fixtures are plain pandas, no fake
+# client needed.
+
+_QUESTIONS = pd.DataFrame([
+    {"content_id": "pc:t1", "member_id": 42, "last_activity_at": "2026-09-20", "status": "waiting"},
+    {"content_id": "pc:t2", "member_id": 42, "last_activity_at": "2026-09-25", "status": "answered"},
+    {"content_id": "pc:t3", "member_id": 99, "last_activity_at": "2026-09-28", "status": "waiting"},
+])
+
+
+def test_member_other_threads_filters_to_one_member_and_excludes_the_open_thread():
+    result = coach_inbox.member_other_threads(_QUESTIONS, 42, exclude_content_id="pc:t1")
+    assert result["content_id"].tolist() == ["pc:t2"]
+
+
+def test_member_other_threads_sorts_newest_activity_first():
+    result = coach_inbox.member_other_threads(_QUESTIONS, 42, exclude_content_id="pc:nonexistent")
+    assert result["content_id"].tolist() == ["pc:t2", "pc:t1"]
+
+
+def test_member_other_threads_matches_across_int_and_string_member_id():
+    # BigQuery's INT64 comes back through pandas as a Python int or a numpy
+    # int64 depending on the column's null-ness — a caller passing either
+    # must still match the other.
+    result = coach_inbox.member_other_threads(_QUESTIONS, "42", exclude_content_id="pc:t1")
+    assert result["content_id"].tolist() == ["pc:t2"]
+
+
+def test_member_other_threads_on_empty_questions_returns_empty():
+    result = coach_inbox.member_other_threads(pd.DataFrame(), 42, exclude_content_id="pc:t1")
+    assert result.empty

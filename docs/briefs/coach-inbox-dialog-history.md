@@ -133,6 +133,28 @@ never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
 
+**`docs/specs/modules/coach_inbox.md`** does not yet document the new
+function this task added, `member_other_threads`. Proposed addition (own
+section, alongside `waiting_count`/`merge_into_tickets`):
+
+> ### `member_other_threads(questions, member_id, exclude_content_id) -> pd.DataFrame`
+>
+> Input: the frame from `load_member_questions` (every member's private
+> threads, already loaded by the Tickets tab); the member_id whose other
+> threads the Answer dialog wants; the content_id of the thread already
+> open, so it doesn't list itself.
+>
+> Output: that member's remaining threads, newest activity first.
+>
+> Why: the Answer dialog's Member-history panel (member_history.py) needs
+> this member's other private-chat threads alongside their community
+> tickets (bq_client.get_member_history), the same way show_ticket_dialog's
+> own panel already showed a member's other tickets. No new BigQuery read —
+> filters the frame the Tickets tab already fetched and cached.
+>
+> Test: tests/test_coach_inbox.py (member_other_threads section) — plain
+> pandas fixtures, no fake BigQuery client needed.
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
