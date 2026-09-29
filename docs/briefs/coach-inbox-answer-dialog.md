@@ -60,6 +60,32 @@ Overseer's memory-bank message (received same time, 2026-09-29, line numbers as 
 
 - `docs/specs/modules/coach_inbox.md`, `add_coach_reply` R6: currently says "The Tickets tab shows a reply form under each member-question row." After this task it should say the reply box lives inside an `@st.dialog` opened from the row's Answer action, not inline under the row. Rest of R6 (per-outcome messages, keep-text-unless-OK, clear only `load_member_questions`'s cache) is unchanged behaviour, just relocated.
 
+## Agentic review
+
+### Verdict
+Verdict: FAIL — overseer review of 3dfa6df (2026-09-29): checks 1-4 pass (clean tree, 0 behind, 4 files, 137 passed, fake clients only; wiring, key uniqueness, callback-only resets, unchanged add_coach_reply/on_reply_submit/reply_result_message/SQL all confirmed). 1 blocker, 4 minors — see Findings.
+
+### Findings
+1. BLOCKER — `test_render_thread_and_reply_on_ok_clears_the_box_and_reruns_to_close` (tests/test_reply_form.py:206) still passed with `reply_form.py`'s `st.rerun()` replaced by `pass` in a scratch copy — the box-cleared assertion can't tell `on_reply_submit`'s own clearing apart from the dialog actually closing, so done-when 1's "calls st.rerun()" was unproven.
+2. MINOR — `show_member_question_dialog`'s docstring (app.py:1240) had no Output line.
+3. MINOR — nothing proves the live dialog on 1.58 itself (only the extracted function is under test); record a post-deploy smoke check as pending.
+4. MINOR — spec R6 wording: left as-is, overseer updates `docs/specs/modules/coach_inbox.md` at landing.
+5. MINOR — brief's State → Next named a stale commit range (`dd88c2f..991502b`).
+
+### Fixed in
+1. `2334862` — rewrote the OK-path test to count script runs (`st.session_state["runs"]`) across the click, and assert the delta is 2 (submit's own run + the rerun) rather than 1 (submit's run alone). Checked red with `st.rerun()` replaced by `pass` (delta 1, assertion fails), green with it restored (delta 2).
+2. `a02ef79` — added "Output: none — draws the dialog; closes via reply_form's st.rerun() on a successful send." to `show_member_question_dialog`'s docstring.
+3. Not fixed in code — recorded as a pending post-deploy step below (Context): open Answer, confirm a failed send keeps the dialog open with its error, and an OK send closes it and the row shows Answered. The overseer runs this after deploy.
+4. Not fixed — left for the overseer to update at landing, as instructed.
+5. This commit — State → Next below now names the real range.
+
+wt-done.sh's check on this is literal: it greps this brief for a line
+starting with exactly `Verdict:` at the very start of the line (column 0)
+— no bold, no indent, no renamed label, no different case.
+
+### Pending post-deploy smoke check (not yet run — no live deploy from this worktree)
+After this lands and deploys: open a member-question row's Answer dialog; send with an empty/invalid state to confirm it stays open with an error and the typed text; then send a real reply and confirm the dialog closes and the row shows Answered. Overseer's to run this, per its review message.
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
@@ -67,34 +93,24 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-- `reply_form.render_thread_and_reply(thread_id, messages, body_key, result_key, current_user,
-  lookup_author, add_reply, clear_cache)` (reply_form.py): renders the thread via `st.chat_message`,
-  the same `st.form`+`text_area`+`form_submit_button(on_click=on_reply_submit)` shape moved (not
-  changed) from the old inline block; on OK pops the result key (None) and calls `st.rerun()`; on
-  any other result shows that result's message and leaves the text. 3 new AppTest-based tests in
-  tests/test_reply_form.py, proven red (`AttributeError: no such function`) then green, calling the
-  function directly and unconditionally (not gated behind a one-shot open flag — see the
-  AppTest-limitation note above). Commit 7b1209b.
-- app.py (commit 991502b): added `_MEMBER_QUESTION_OPTS = ["— action —", "Answer"]`; added
-  `show_member_question_dialog(content_id, row_dict)` (`@st.dialog`), which strips `"pc:"` off
-  content_id for thread_id and calls `render_thread_and_reply` with the row's own `messages` list
-  (no new BigQuery read) and the real deps; removed the inline `st.form` reply block entirely; the
-  action dropdown now always renders for `len(grp) == 1` rows, using `_MEMBER_QUESTION_OPTS` when
-  `_is_question` else `_opts` — same `_act_key`/`_on_action_change`/`_act_triggered_*` wiring as
-  before, untouched; the `_pending_action` dispatch's "Answer" branch now checks
-  `row.get("source") == "member_question"` first and calls `show_member_question_dialog`, else
-  falls through to the existing `show_ticket_dialog` unchanged.
-- Full suite green both locally (137 passed, 1.45.1) and under `$SCRATCH/venv158` (1.58.0) —
-  the private_chat insert-only test re-checked green there too.
+- `reply_form.render_thread_and_reply(...)` (reply_form.py) and the app.py wiring
+  (`_MEMBER_QUESTION_OPTS`, `show_member_question_dialog`, inline form removed, dropdown and
+  `_pending_action`/"Answer" dispatch branch on `source == "member_question"`) — full detail in
+  commits 7b1209b and 991502b, and in Done when 1-3 above.
+- Overseer review of 3dfa6df: FAIL, 1 blocker + 4 minors (see Agentic review above). Blocker
+  fixed: test_render_thread_and_reply_on_ok_... now counts script runs across the submit click
+  and asserts the delta is 2 (submit run + the rerun), not just that the box is empty — checked
+  red with st.rerun() replaced by pass (delta 1), green restored. Minor 2 fixed (docstring Output
+  line). Minor 3 recorded as a pending post-deploy smoke check (Agentic review section). Minor 4
+  left for the overseer. Full suite re-verified green: 137 local (1.45.1), 10 under
+  $SCRATCH/venv158 (1.58.0).
 
-In flight: none — implementation done, both commits made, full suite green on both Streamlit
-versions. Left to do before reporting: `git add -N .` (done, nothing untracked), verify
-`wt-done.sh --check`, then message helpdesk-opzichter.
+In flight: none — fix committed, full suite green on both Streamlit versions, wt-done.sh --check
+passes. Left to do: report the new range to helpdesk-opzichter and stop.
 
 Next:
-1. Run `wt-done.sh --check coach-inbox-answer-dialog`.
-2. Report to helpdesk-opzichter: branch, commit range (dd88c2f..991502b), test count/versions,
-   red-then-green proof, deploy implied (app.py via deploy.sh, on the next `main` deploy) — then stop.
+1. Report to helpdesk-opzichter with the new commit range (dd88c2f..a02ef79, brief-save commit
+   still to follow) and the red-then-green proof for the blocker fix — then stop.
 
 Traps (with dates):
 - 2026-09-29 (this worktree): AppTest does not model an already-open `@st.dialog`'s persistence
