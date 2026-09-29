@@ -66,3 +66,17 @@ def test_calls_bigquery_again_for_a_different_set_of_ids(monkeypatch):
 
     assert list(at.exception) == [] and list(at2.exception) == []
     assert len(calls) == 2
+
+
+def test_app_source_calls_the_cached_wrapper_not_bigquery_directly():
+    # Every test above drives followup_cache.load_followup_statuses
+    # straight, never app.py — so none of them would notice if app.py
+    # reverted to calling bq_client.get_followup_statuses( directly (the
+    # exact bug this whole module fixes). Read app.py's own source text
+    # instead, since that's the only place this regression could reappear.
+    with open("app.py") as f:
+        source = f.read()
+
+    # Proven red: temporarily reintroducing this exact call string into
+    # app.py made this assertion fail as expected, then it was reverted.
+    assert "bq_client.get_followup_statuses(" not in source
