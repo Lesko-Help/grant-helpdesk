@@ -67,6 +67,22 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 
 *Test:* same command and file, fixture frames -> order (R1) and `source` values (R2); red first against `origin/main`.
 
+### member_other_threads(questions, member_id, exclude_content_id)
+
+`def member_other_threads(questions: pd.DataFrame, member_id: str, exclude_content_id: str) -> pd.DataFrame`
+
+*What it does:*
+- R1: given the frame `load_member_questions` already returned, it returns only that member's private threads, minus the thread whose `content_id` is `exclude_content_id`, newest activity first.
+- R2: it runs no BigQuery read of its own; it filters the cached frame the Tickets tab already loaded.
+
+*Examples:* a member with 3 threads, one of them open -> the other 2; an unknown member -> an empty frame.
+
+*Inputs / Outputs:* the questions frame, a member id and the open thread's content id -> a frame with the same columns.
+
+*Errors:* none (pure).
+
+*Test:* `tests/test_coach_inbox.py` (member_other_threads section), plain pandas fixtures; red first.
+
 ### report_source_failure(operation, err)
 
 `def report_source_failure(operation: str, err: Exception) -> None`
@@ -129,7 +145,7 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 - R3: when the query runs but writes zero rows (the thread does not exist), it returns `UNKNOWN_THREAD` and raises no alert.
 - R4: when the query raises, it calls `report_source_failure("write", err)` and returns `WRITE_FAILED`.
 - R5: `author_member_id` always comes from `grant_coaches` via the logged-in email (the admin has a row there too). Any coach may reply in any thread. The body never appears in any log line.
-- R6: each member-question row in the Tickets tab has the regular action dropdown, offering only "Answer"; "Answer" opens a dialog with the member's thread and the reply form (`reply_form.render_thread_and_reply`). The form shows a distinct message for each result, keeps the typed text unless the result is `OK`, and on `OK` clears only the `load_member_questions` cache. A failed coach lookup shows `st.error`, alerts `SOURCE_FAILED`, and is not cached.
+- R6: each member-question row in the Tickets tab has the regular action dropdown, offering only "Answer"; "Answer" opens a dialog with the member's thread and the reply form (`reply_form.render_thread_and_reply`), followed by the member's history: their community tickets and their other private threads (`member_other_threads`), rendered by the same `member_history.render_member_history` the regular ticket dialog uses. A failed history lookup shows "History unavailable" and alerts, and the reply form still works. The form shows a distinct message for each result, keeps the typed text unless the result is `OK`, and on `OK` clears only the `load_member_questions` cache. A failed coach lookup shows `st.error`, alerts `SOURCE_FAILED`, and is not cached.
 
 *Examples:* existing thread, body "Thanks, see the link" -> `OK`, one coach row. Body of spaces -> `REFUSED`, no query. Thread id not in `private_threads` -> `UNKNOWN_THREAD`, no alert. BigQuery raises `Forbidden` -> `WRITE_FAILED` plus stdout `{"severity": "ERROR", "message": "BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat write failed: Forbidden"}`.
 
@@ -170,3 +186,4 @@ No source file in the repo may contain SQL that runs UPDATE, DELETE, MERGE, TRUN
 - 2026-09-28: `add_coach_reply` returns a `ReplyResult` enum instead of a bool, so the coach sees a different message for a refused body, a thread that no longer exists, and a real outage (review finding; Martin chose fix-and-re-review).
 - 2026-09-28: read fire drill passed: a missing dataset gave `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat read failed: Forbidden` (13:25:21Z, revision 00065) and the email arrived. A missing dataset surfaces as `Forbidden`, not `NotFound`.
 - 2026-09-29: no live write fire drill. Breaking `PRIVATE_CHAT_DATASET` breaks the read too, so no question row shows to reply to. Martin accepted the unit-test proof of the write alert over revoking the append role for a drill.
+- 2026-09-29: the Answer dialog shows the member's history (community tickets, capped at the newest 20, plus their other private threads) through one shared `member_history.render_member_history`, the same code as the regular ticket dialog. The slow open was `get_followup_statuses` running on every rerun; it is now cached for 300 s and cleared after a follow-up is queued (Martin's request; landed 98ce387).
