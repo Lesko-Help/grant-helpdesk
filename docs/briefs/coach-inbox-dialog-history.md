@@ -245,29 +245,48 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done (2026-09-29):
-- First implementation landed as 4 commits (301f41e..487c5d2): shared
-  `member_history.py` + `show_ticket_dialog` extraction;
-  `coach_inbox.member_other_threads`; the Answer dialog's combined-history
-  wiring; the `load_followup_statuses` caching fix. Reported to
-  helpdesk-opzichter, full suite 149 passed, `wt-done.sh --check` passed.
-- Overseer reviewed 487c5d2: **FAIL**, 2 blockers + 7 minors (G
-  informational only). Full findings/fixes recorded in `## Agentic review`
-  above.
-- Both blockers and all 6 actionable minors (A-F) fixed, one commit each
-  (763d9b3, 3cb9c18, e9fa90d, 67f331a, fc96299, 78d18ab, f07b91b — see
-  `## Agentic review` → Fixed in for which commit covers which finding).
-  Minor G left untouched, per explicit instruction. The shared stash entry
-  `coach-inbox-dialog-history-redcheck-1790675883` left alone, per explicit
-  instruction.
-- Full suite after every fix: 152 passed.
+- First implementation (301f41e..487c5d2), reviewed FAIL (2 blockers + 7
+  minors, G informational). Both blockers + minors A-F fixed, one commit
+  each (763d9b3, 3cb9c18, e9fa90d, 67f331a, fc96299, 78d18ab, f07b91b),
+  recorded in `## Agentic review` above; brief committed at da71bc7. Full
+  suite 152 passed (includes tests/smoke_test.py — see minor 1 below,
+  this count was wrong to report as clean).
+- Reported da71bc7 to helpdesk-opzichter. Overseer re-reviewed at da71bc7:
+  **PASS**, 0 blockers, 6 minors (numbered 0-5). Martin's call: "fix the
+  crash, then land." Real suite (excluding smoke_test.py, which writes to
+  live BigQuery): 135 passed.
 
-Next:
-1. `git add -N .`, verify clean tree; re-verify `git merge-base
-   --is-ancestor origin/main HEAD`.
-2. Run `wt-done.sh --check coach-inbox-dialog-history` until it exits 0.
-3. Report the new commit range to `helpdesk-opzichter [8ddd8b]` (there are
-   two agents named helpdesk-opzichter — the ref matters) with red-then-green
-   proof for both blockers, then stop and wait.
+In flight — fixing the PASS-round minors, one commit each, red-then-green
+where marked:
+- Minor 0 (MUST FIX): no source test blocks app.py from reverting to a
+  direct, uncached `bq_client.get_followup_statuses(` call — add one
+  asserting that string is absent from app.py, proven red by putting the
+  call back temporarily.
+- Minor 2 (MUST FIX, Martin's call): `member_history.py`'s
+  `_escape_preview` does `body.split()` — a NULL body straight from
+  BigQuery (coach_inbox.py:88) crashes the Answer dialog, outside the
+  try/except at app.py:1276-1279. Fix `(body or "").split()`, red-then-
+  green test with a None body.
+- Minor 4 (fix): `_MARKDOWN_ESCAPE` (member_history.py:68) is missing `~`
+  and `|`. Add them, red-then-green test.
+- Minor 1 (brief-only): from now on run pytest with
+  `--ignore=tests/smoke_test.py` (that file MERGEs `_smoke_test_*` rows
+  into live BigQuery) and report that count, not the combined one.
+- Minor 3 (brief-only, accepted risk — do not change bq_reads.py):
+  `bq_reads.get_followup_statuses` swallows errors and returns `{}`; now
+  cached 300s via followup_cache.py, so one transient BigQuery failure
+  hides follow-up badges for up to 5 minutes.
+- Minor 5: no action (harmless — config.TICKET_STATUSES has no "waiting").
+
+Next (in order):
+1. Fix minors 0, 2, 4 — one commit each, red-then-green.
+2. One brief commit: `## Agentic review` gets this round's `Verdict: PASS`
+   line + findings 0-5 + fixed-in; note minors 1 and 3 there (not code
+   changes); this State section rewritten again.
+3. `git add -N .`, clean tree; re-verify `git merge-base --is-ancestor
+   origin/main HEAD`; `wt-done.sh --check` until it exits 0.
+4. Report the new commit range to `helpdesk-opzichter [8ddd8b]` (two
+   agents share the bare name) with proof, then stop and wait.
 
 Traps (with dates):
 - 2026-05-18: slow dialog open before was a hidden-spinner cache; the fix
