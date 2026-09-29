@@ -11,6 +11,7 @@ import coach_inbox
 import config
 import raillog
 import reply_form
+import member_history
 from mn_format import mn_mention, build_mn_body, _linkify, space_label, MEMBER_BIO_LABEL  # noqa: F401
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lesko-ui"))
@@ -931,21 +932,12 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
         st.text_input("Domain", value=ticket.get("domain") or "",       disabled=True)
         st.button("Generate Report", disabled=True, help="Coming soon", key=f"callsheet_{content_id}")
 
-    with st.expander(f"📋 Member history ({ticket.get('member_name', '')})"):
-        history = _cached_member_history(
-            ticket["member_id"], exclude_content_id=ticket["content_id"]
-        )
-        if history.empty:
-            st.write("No other tickets from this member.")
-        else:
-            for _, h in history.iterrows():
-                h_icon = STATUS_ICON.get(h["ticket_status"], "⚪")
-                h_link = f'&nbsp;<a href="{h["permalink"]}" target="_blank" style="font-size:0.75rem;color:#4a52a3">↗ MN</a>' if h.get("permalink") else ""
-                st.markdown(
-                    f'{h_icon} <span style="font-size:0.8rem;color:#6b7280">`{str(h["created_at"])[:10]}`</span>'
-                    f' — {h["body_preview"]}{h_link}',
-                    unsafe_allow_html=True,
-                )
+    # Same panel show_member_question_dialog draws below its own reply form —
+    # one shared function (member_history.py) instead of two copies.
+    history = _cached_member_history(
+        ticket["member_id"], exclude_content_id=ticket["content_id"]
+    )
+    member_history.render_member_history(ticket.get("member_name", ""), history)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
