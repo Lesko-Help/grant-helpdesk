@@ -604,6 +604,16 @@ def _mark_answer_posted(content_id: str, body: str) -> None:
 
 @st.dialog("Ticket Detail", width="large")
 def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
+    """Detail for a community-ticket row: the ticket itself, its thread of
+    comments, the reply/answer form, and below a divider this member's
+    other history — their other community tickets, drawn by the same
+    member_history module show_member_question_dialog's own Member-history
+    panel uses, so the two dialogs never carry two copies of that code.
+    content_id identifies the ticket to load; thread_id_hint lets a caller
+    that already knows the thread skip a lookup (falls back to the
+    ticket's own thread_id, then to content_id itself, when not given).
+    Output: none — draws the dialog; returns early with a warning/error if
+    the ticket can't be loaded or doesn't exist."""
     # ── Data fetch ─────────────────────────────────────────────────────────────
     # All BQ calls happen here before any rendering, so coaches see a spinner
     # instead of a blank dialog while data loads. The thread fetch runs in a
