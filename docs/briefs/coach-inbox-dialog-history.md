@@ -162,67 +162,59 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done (2026-09-29):
-- Brief committed as the first commit on this branch (4e8316b).
-- `member_history.py` written: `render_member_history(member_name,
-  ticket_history, private_threads=None)`. `private_threads=None` reproduces
-  `show_ticket_dialog`'s old inline block exactly; given a private_threads
-  frame it merges in `coach_inbox.member_other_threads`' rows, HTML-escaped,
-  newest-activity-first, with its own combined empty message.
-- `coach_inbox.member_other_threads(questions, member_id, exclude_content_id)`
-  added (end of coach_inbox.py) — pure pandas filter/sort, no new BigQuery
-  call, matches member_id as a string on both sides (numpy int64 vs int).
-  Its Spec proposal entry is still a stub below — fill in before reporting.
-- app.py wired up: `import member_history`; show_ticket_dialog's inline
-  Member-history block replaced by one call to
-  `member_history.render_member_history(...)` (no `private_threads` arg);
-  `show_member_question_dialog` now adds `st.divider()` + the combined
-  history call after the reply form; `load_followup_statuses` (ttl=300,
-  keyed on a tuple of content_ids) wraps the old uncached
-  `bq_client.get_followup_statuses` call at the old app.py:1637 site;
-  `load_followup_statuses.clear()` added next to the other three clears in
-  the one write path that queues a follow-up (`_fu_enabled and
-  _fu_msg.strip()` branch, ~app.py:813-816).
-- Tests written and proven red-then-green:
-  `tests/test_member_history.py` (5 tests, proven red via temporarily
-  moving member_history.py aside — ModuleNotFoundError — then green);
-  `tests/test_coach_inbox.py` (+4 tests for member_other_threads, proven red
-  by `git stash` of coach_inbox.py alone, restored via `git stash apply
-  <sha>`, not pop — a leftover stash entry with tag
-  `coach-inbox-dialog-history-redcheck-1790675883` still exists in the
-  shared stash list, already reapplied, safe to leave or drop later);
-  `tests/test_app_followup_cache.py` (3 tests — the first IS the red proof,
-  no app.py import needed since it reproduces both shapes standalone; had
-  to add `st.cache_data.clear()` at the top of the two cache-dependent
-  tests because Streamlit's cache_data key is global by source-hash+args,
-  so two tests redefining an identically-worded nested cached function
-  collided with each other otherwise).
-- Full suite green: `pytest tests/ -q -p no:cacheprovider` → 149 passed,
-  including `test_private_chat_insert_only.py` (4 passed, untouched).
-  `py_compile app.py coach_inbox.py member_history.py` also clean.
-- Docstrings updated on `show_member_question_dialog` to mention the new
-  history section and shared module.
+- First implementation landed as 4 commits (301f41e..487c5d2): shared
+  `member_history.py` + `show_ticket_dialog` extraction;
+  `coach_inbox.member_other_threads`; the Answer dialog's combined-history
+  wiring; the `load_followup_statuses` caching fix. Reported to
+  helpdesk-opzichter, full suite 149 passed, `wt-done.sh --check` passed.
+- Overseer reviewed 487c5d2: **FAIL**, 2 blockers + 7 minors (G is
+  informational only — a pre-existing 20-row cap in bq_reads.py the
+  overseer is telling Martin about, not for me to change).
+- Blocker 1 fixed (763d9b3): `tests/test_app_followup_cache.py` never
+  imported app.py, so deleting the real `@st.cache_data` decorator left it
+  green. Moved the wrapper into its own importable module,
+  `followup_cache.py` (same pattern as `member_history.py`/`reply_form.py`);
+  app.py now does `import followup_cache` and calls
+  `followup_cache.load_followup_statuses(...)`. Test now imports the same
+  module and drives the real function via `AppTest.from_function`, with
+  `bq_client.get_followup_statuses` monkeypatched to a counting fake. Proven
+  red by stripping the decorator (3 calls across 3 reruns), green restored.
+- Blocker 2 fixed (3cb9c18): `tests/test_member_history.py`'s
+  `_expected_ticket_line` read its icon from `member_history.STATUS_ICON` —
+  the code under test — so an icon mutation there was invisible. Hardcoded
+  a literal `_EXPECTED_ICON` dict in the test file instead. Proven red by
+  changing `STATUS_ICON["answered"]`, green restored.
+- Full suite after both blocker fixes: 148 passed (one test count lower
+  than before — the old standalone "old shape" reproduction test in
+  test_app_followup_cache.py was replaced by two tests that both drive the
+  real module, not a third copy).
 
-In flight: nothing uncommitted has been lost — all of the above is only in
-the working tree, NOT YET COMMITTED as git commits (still one commit total:
-the brief). Was about to also touch `show_ticket_dialog`'s own docstring
-(app.py:623) to mention the extraction when the context guard fired.
+In flight: minors A-F not yet started (B: dedupe STATUS_ICON between app.py
+and member_history.py; C: private-thread preview should use the member's
+first message not whichever is last, flatten newlines, escape markdown too
+— html.escape alone isn't enough under unsafe_allow_html; D: `_ticket_line`/
+`_private_thread_line` sort keys are raw `pd.Timestamp` — confirmed locally
+that comparing a tz-aware one against a tz-naive one raises TypeError, needs
+a shared naive-UTC normalizer + a test; A: `_cached_member_history` calls at
+app.py have no show_spinner text or try/except fallback; E: `show_ticket_
+dialog` still has no docstring). Nothing uncommitted lost — no code changes
+made yet for A/B/C/D/E, only the two blocker-fix commits above exist so far
+on top of 487c5d2.
 
 Next (in order):
-1. Finish the small docstring touch on `show_ticket_dialog` (app.py:623) —
-   optional polish, skip if short on time.
-2. Fill in the `## Spec proposals` section below for
-   `coach_inbox.member_other_threads` (not yet written).
-3. Commit the actual changes — split into sensible commits (e.g. one for
-   member_history.py + the show_ticket_dialog extraction + its test; one
-   for member_other_threads + its test; one for the load_followup_statuses
-   caching fix + its test; one for show_member_question_dialog's wiring).
-   One idea per commit, per CLAUDE.md.
-4. `git add -N .`, verify clean tree.
-5. Merge `origin/main` once (never rebase mid-round).
-6. Run `wt-done.sh --check coach-inbox-dialog-history` until it exits 0.
-7. Report to `helpdesk-opzichter` via SendMessage: branch, commit range,
-   HEAD sha, 5-line summary, how done-when was proven red-then-green,
-   deploy implications (`deploy.sh`). Then stop and wait.
+1. Fix minors B, C (+tests), D (+test), A, E — one commit each, red-then-
+   green where the fix is a behavior change (C, D), plain fix+verify for the
+   rest (A, B, E).
+2. One final brief commit: `## Agentic review` section (Verdict: FAIL line
+   in column 0, Findings 1-9, Fixed in 1-9 referencing commit shas) + this
+   State section rewritten to match.
+3. `git add -N .`, verify clean tree; origin/main was already an ancestor
+   last check, re-verify with `git merge-base --is-ancestor origin/main
+   HEAD`.
+4. Run `wt-done.sh --check coach-inbox-dialog-history` until it exits 0.
+5. Report the new commit range to `helpdesk-opzichter [8ddd8b]` (there are
+   two agents named helpdesk-opzichter — the ref matters) with red-then-green
+   proof for both blockers, then stop and wait.
 
 Traps (with dates):
 - 2026-05-18: slow dialog open before was a hidden-spinner cache; the fix
