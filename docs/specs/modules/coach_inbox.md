@@ -139,7 +139,7 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 
 *Errors:* BigQuery error or denied access -> `WRITE_FAILED`, UI `st.error` -> `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED`.
 
-*Test:* `/opt/anaconda3/bin/python -m pytest tests/test_coach_inbox_reply.py` with a fake client: SQL shape and parameters (R1), 0/4001-char and None-author refusals send no query (R2), zero affected rows (R3), raising client -> exact alert line with the body absent (R4, R5), two calls -> two different message ids (R1); red first. Live proof: after deploy, the write fire drill (`PRIVATE_CHAT_DATASET=lesko-486515.no_such_dataset`, send one reply, BTB-ALERT email arrives, restore).
+*Test:* `/opt/anaconda3/bin/python -m pytest tests/test_coach_inbox_reply.py` with a fake client: SQL shape and parameters (R1), 0/4001-char and None-author refusals send no query (R2), zero affected rows (R3), raising client -> exact alert line with the body absent (R4, R5), two calls -> two different message ids (R1); red first. UI: `tests/test_reply_form.py` (AppTest) covers R6's callback in `reply_form.py`; app.py's wiring of it is not under test. No live write drill: the unit tests prove the alert line, and the read drill proved the alert path end to end (Martin's decision, 2026-09-29).
 
 ### set_thread_workflow(thread_id, status, assignee, lane)
 
@@ -169,3 +169,4 @@ No source file in the repo may contain SQL that runs UPDATE, DELETE, MERGE, TRUN
 - 2026-09-25: re-notify needs a metric + threshold policy; a log-match policy rejects `notificationChannelStrategy` (found live 2026-09-24).
 - 2026-09-28: `add_coach_reply` returns a `ReplyResult` enum instead of a bool, so the coach sees a different message for a refused body, a thread that no longer exists, and a real outage (review finding; Martin chose fix-and-re-review).
 - 2026-09-28: read fire drill passed: a missing dataset gave `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat read failed: Forbidden` (13:25:21Z, revision 00065) and the email arrived. A missing dataset surfaces as `Forbidden`, not `NotFound`.
+- 2026-09-29: no live write fire drill. Breaking `PRIVATE_CHAT_DATASET` breaks the read too, so no question row shows to reply to. Martin accepted the unit-test proof of the write alert over revoking the append role for a drill.
