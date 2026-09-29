@@ -129,7 +129,7 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 - R3: when the query runs but writes zero rows (the thread does not exist), it returns `UNKNOWN_THREAD` and raises no alert.
 - R4: when the query raises, it calls `report_source_failure("write", err)` and returns `WRITE_FAILED`.
 - R5: `author_member_id` always comes from `grant_coaches` via the logged-in email (the admin has a row there too). Any coach may reply in any thread. The body never appears in any log line.
-- R6: the Tickets tab shows a reply form under each member-question row. It shows a distinct message for each result, keeps the typed text unless the result is `OK`, and on `OK` clears only the `load_member_questions` cache. A failed coach lookup shows `st.error`, alerts `SOURCE_FAILED`, and is not cached.
+- R6: each member-question row in the Tickets tab has the regular action dropdown, offering only "Answer"; "Answer" opens a dialog with the member's thread and the reply form (`reply_form.render_thread_and_reply`). The form shows a distinct message for each result, keeps the typed text unless the result is `OK`, and on `OK` clears only the `load_member_questions` cache. A failed coach lookup shows `st.error`, alerts `SOURCE_FAILED`, and is not cached.
 
 *Examples:* existing thread, body "Thanks, see the link" -> `OK`, one coach row. Body of spaces -> `REFUSED`, no query. Thread id not in `private_threads` -> `UNKNOWN_THREAD`, no alert. BigQuery raises `Forbidden` -> `WRITE_FAILED` plus stdout `{"severity": "ERROR", "message": "BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat write failed: Forbidden"}`.
 
@@ -139,7 +139,7 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 
 *Errors:* BigQuery error or denied access -> `WRITE_FAILED`, UI `st.error` -> `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED`.
 
-*Test:* `/opt/anaconda3/bin/python -m pytest tests/test_coach_inbox_reply.py` with a fake client: SQL shape and parameters (R1), 0/4001-char and None-author refusals send no query (R2), zero affected rows (R3), raising client -> exact alert line with the body absent (R4, R5), two calls -> two different message ids (R1); red first. UI: `tests/test_reply_form.py` (AppTest) covers R6's callback in `reply_form.py`; app.py's wiring of it is not under test. No live write drill: the unit tests prove the alert line, and the read drill proved the alert path end to end (Martin's decision, 2026-09-29).
+*Test:* `/opt/anaconda3/bin/python -m pytest tests/test_coach_inbox_reply.py` with a fake client: SQL shape and parameters (R1), 0/4001-char and None-author refusals send no query (R2), zero affected rows (R3), raising client -> exact alert line with the body absent (R4, R5), two calls -> two different message ids (R1); red first. UI: `tests/test_reply_form.py` (AppTest) covers R6's callback and `render_thread_and_reply` (an OK send reruns to close the dialog, counted in script runs); app.py's dropdown and dialog wiring is not under test and is checked by hand on Streamlit 1.58 after deploy. No live write drill: the unit tests prove the alert line, and the read drill proved the alert path end to end (Martin's decision, 2026-09-29).
 
 ### set_thread_workflow(thread_id, status, assignee, lane)
 
