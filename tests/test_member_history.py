@@ -36,8 +36,14 @@ _TICKETS = pd.DataFrame([
 ])
 
 
+# Literal icons copied from origin/main's show_ticket_dialog, not read from
+# member_history.STATUS_ICON — the code under test — so mutating an icon
+# there is caught here rather than staying invisible to this test.
+_EXPECTED_ICON = {"open": "🔵", "answered": "✅"}
+
+
 def _expected_ticket_line(row):
-    icon = member_history.STATUS_ICON[row["ticket_status"]]
+    icon = _EXPECTED_ICON[row["ticket_status"]]
     link = (
         f'&nbsp;<a href="{row["permalink"]}" target="_blank" '
         f'style="font-size:0.75rem;color:#4a52a3">↗ MN</a>'
