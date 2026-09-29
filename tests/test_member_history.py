@@ -185,6 +185,22 @@ def test_combined_mode_sorts_correctly_when_one_source_is_tz_aware_and_the_other
     assert "Naive-clock ticket" in lines[1]
 
 
+def test_combined_mode_does_not_crash_on_a_null_message_body():
+    # coach_inbox.py:88 can hand back a message row with body=None straight
+    # from BigQuery; this must not crash the Answer dialog.
+    private = pd.DataFrame([
+        {
+            "content_id": "pc:t6", "last_activity_at": "2026-09-25", "status": "waiting",
+            "messages": [{"author_role": "member", "body": None, "created_at": "2026-09-25"}],
+        },
+    ])
+    at = AppTest.from_function(_render_script, args=("Jamie", pd.DataFrame(), private))
+    at.run()
+
+    assert list(at.exception) == []
+    assert "(private message)" in at.markdown[0].value
+
+
 def test_combined_mode_both_empty_shows_the_combined_message():
     at = AppTest.from_function(_render_script, args=("Jamie", pd.DataFrame(), pd.DataFrame()))
     at.run()

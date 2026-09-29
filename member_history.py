@@ -80,7 +80,7 @@ def _escape_preview(body):
     otherwise let both raw HTML and markdown formatting/links through,
     not just HTML.
     """
-    flattened = " ".join(body.split())
+    flattened = " ".join((body or "").split())
     return html.escape(flattened.translate(_MARKDOWN_ESCAPE))
 
 
