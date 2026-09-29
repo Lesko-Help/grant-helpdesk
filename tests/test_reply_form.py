@@ -153,3 +153,85 @@ def test_on_reply_submit_unknown_coach_never_calls_add_reply():
     assert [e.value for e in at.error] == [
         "Could not identify your coach profile — ask an admin to link your login."
     ]
+
+
+# ── render_thread_and_reply: the answer-dialog's body ───────────────────────
+#
+# Same fake-dependency shape as _fixed_script above, but calling the dialog
+# body function directly and unconditionally (no one-shot open/close flag
+# wrapped around it) rather than reproducing app.py's @st.dialog/
+# _pending_action dispatch — an AppTest scratch probe (see
+# docs/briefs/coach-inbox-answer-dialog.md, Context) found that AppTest
+# does not re-invoke a function gated behind such a flag on a widget's own
+# rerun, which would make the dialog look closed regardless of outcome.
+# The open/close dispatch itself is the same _pending_action -> single
+# @st.dialog call -> st.rerun() idiom show_flag_dialog/show_assign_dialog/
+# show_delete_dialog already use unchanged in production.
+
+_MESSAGES = [
+    {"author_role": "member", "body": "When is the next cohort?", "created_at": "2026-09-01"},
+    {"author_role": "coach", "body": "Starts October 6th.", "created_at": "2026-09-02"},
+]
+
+
+def _dialog_script(add_reply_result, lookup_result, messages):
+    import streamlit as st
+
+    import reply_form
+
+    st.session_state.setdefault("calls", [])
+
+    def _add_reply(thread_id, author_id, body):
+        st.session_state["calls"].append((thread_id, author_id, body))
+        return add_reply_result
+
+    def _lookup(email):
+        return lookup_result
+
+    def _clear_cache():
+        st.session_state["cache_cleared"] = True
+
+    reply_form.render_thread_and_reply(
+        "th1", messages, "reply_body", "reply_result", "coach@example.com",
+        _lookup, _add_reply, _clear_cache,
+    )
+
+
+def test_render_thread_and_reply_shows_the_messages_oldest_first():
+    at = AppTest.from_function(_dialog_script, args=(coach_inbox.ReplyResult.OK, 42, _MESSAGES))
+    at.run()
+
+    assert list(at.exception) == []
+    assert [cm.name for cm in at.chat_message] == ["user", "assistant"]
+    assert [m.value for cm in at.chat_message for m in cm.markdown] == [
+        "When is the next cohort?", "Starts October 6th.",
+    ]
+
+
+def test_render_thread_and_reply_on_ok_clears_the_box_and_reruns_to_close():
+    at = AppTest.from_function(_dialog_script, args=(coach_inbox.ReplyResult.OK, 42, _MESSAGES))
+    at.run()
+    at.text_area[0].set_value("hello there").run()
+    at.button[0].click().run()
+
+    assert list(at.exception) == []
+    assert at.session_state["calls"] == [("th1", 42, "hello there")]
+    assert at.session_state["cache_cleared"] is True
+    assert at.text_area[0].value == ""
+    assert list(at.error) == []
+
+
+def test_render_thread_and_reply_on_failure_keeps_the_dialog_open_with_the_text():
+    at = AppTest.from_function(_dialog_script, args=(coach_inbox.ReplyResult.UNKNOWN_THREAD, 42, _MESSAGES))
+    at.run()
+    at.text_area[0].set_value("still here").run()
+    at.button[0].click().run()
+
+    assert list(at.exception) == []
+    assert "cache_cleared" not in at.session_state
+    # the dialog stayed open: the form (and its text) is still on screen
+    assert len(at.text_area) == 1
+    assert at.text_area[0].value == "still here"
+    assert [e.value for e in at.error] == [
+        "This conversation could not be found — it may have been removed."
+    ]

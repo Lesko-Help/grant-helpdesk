@@ -63,3 +63,46 @@ def on_reply_submit(thread_id, body_key, result_key, current_user, lookup_author
     if result is coach_inbox.ReplyResult.OK:
         st.session_state[body_key] = ""
         clear_cache()
+
+
+def render_thread_and_reply(thread_id, messages, body_key, result_key, current_user, lookup_author, add_reply, clear_cache):
+    """
+    Input: the private thread's id; its messages so far, oldest first, each
+    a dict with author_role/body/created_at — the same shape
+    coach_inbox.load_member_questions already returns on the row, so opening
+    this needs no extra BigQuery read; the reply box's and outcome's own
+    session_state keys; the logged-in coach's email; and the three
+    dependency callables on_reply_submit needs (author lookup, the actual
+    write, the cache to clear on success).
+    Output: none — draws the thread and the reply form. On a successful
+    send it calls st.rerun(), the same idiom show_flag_dialog,
+    show_assign_dialog and show_delete_dialog already use to close their
+    @st.dialog after a write; on any other outcome it shows that outcome's
+    own message and leaves the typed text in place.
+    Why this is a plain function and not inline in app.py's dialog: app.py
+    can't run under AppTest (login gate, live BigQuery loaders), so the
+    dialog's real logic has to live somewhere a real widget test can call
+    it directly, the same reason on_reply_submit above was pulled out.
+    """
+    for message in messages:
+        role = "assistant" if message["author_role"] == "coach" else "user"
+        with st.chat_message(role):
+            st.write(message["body"])
+
+    with st.form(f"reply_form_{thread_id}", clear_on_submit=False):
+        st.text_area(
+            "Reply", key=body_key, label_visibility="collapsed",
+            placeholder="Type a reply to this member…", max_chars=4000, height=80,
+        )
+        st.form_submit_button(
+            "Send reply",
+            on_click=on_reply_submit,
+            args=(thread_id, body_key, result_key, current_user, lookup_author, add_reply, clear_cache),
+        )
+
+    if result_key in st.session_state:
+        message = st.session_state.pop(result_key)
+        if message:
+            st.error(message)
+        else:
+            st.rerun()
