@@ -67,34 +67,34 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-- Read coach_inbox.md spec, reply_form.py, and the relevant app.py sections (610-960 dialogs,
-  1280-1620 render_ticket_table, 1720-1810 dispatch). Confirmed a member-question row's `_gk`
-  (ticket_group_key) is always its own content_id, so it never hits the `len(grp) > 1` branch —
-  only the `len(grp) == 1` branch and the `_pending_action`/"Answer" dispatch need touching.
-  Confirmed message shape `{author_role, body, created_at}` (dict-like, from
-  tests/test_coach_inbox.py's `_msg` helper and coach_inbox.py's own indexing).
-- Built a scratch venv at `$SCRATCH/venv158` (streamlit==1.58.0, pandas, pytest,
-  google-cloud-bigquery) for the cross-version proof — base anaconda install untouched.
-- Probed AppTest's dialog support with scratch scripts (`$SCRATCH/dialog_probe.py`,
-  `dialog_probe2.py`, not part of the repo) — see the AppTest-limitation note under Context.
+- `reply_form.render_thread_and_reply(thread_id, messages, body_key, result_key, current_user,
+  lookup_author, add_reply, clear_cache)` (reply_form.py): renders the thread via `st.chat_message`,
+  the same `st.form`+`text_area`+`form_submit_button(on_click=on_reply_submit)` shape moved (not
+  changed) from the old inline block; on OK pops the result key (None) and calls `st.rerun()`; on
+  any other result shows that result's message and leaves the text. 3 new AppTest-based tests in
+  tests/test_reply_form.py, proven red (`AttributeError: no such function`) then green, calling the
+  function directly and unconditionally (not gated behind a one-shot open flag — see the
+  AppTest-limitation note above). Commit 7b1209b.
+- app.py (commit 991502b): added `_MEMBER_QUESTION_OPTS = ["— action —", "Answer"]`; added
+  `show_member_question_dialog(content_id, row_dict)` (`@st.dialog`), which strips `"pc:"` off
+  content_id for thread_id and calls `render_thread_and_reply` with the row's own `messages` list
+  (no new BigQuery read) and the real deps; removed the inline `st.form` reply block entirely; the
+  action dropdown now always renders for `len(grp) == 1` rows, using `_MEMBER_QUESTION_OPTS` when
+  `_is_question` else `_opts` — same `_act_key`/`_on_action_change`/`_act_triggered_*` wiring as
+  before, untouched; the `_pending_action` dispatch's "Answer" branch now checks
+  `row.get("source") == "member_question"` first and calls `show_member_question_dialog`, else
+  falls through to the existing `show_ticket_dialog` unchanged.
+- Full suite green both locally (137 passed, 1.45.1) and under `$SCRATCH/venv158` (1.58.0) —
+  the private_chat insert-only test re-checked green there too.
 
-In flight: no code written yet in app.py or reply_form.py. Brief is the only commit so far.
+In flight: none — implementation done, both commits made, full suite green on both Streamlit
+versions. Left to do before reporting: `git add -N .` (done, nothing untracked), verify
+`wt-done.sh --check`, then message helpdesk-opzichter.
 
 Next:
-1. Add `reply_form.render_thread_and_reply(thread_id, messages, body_key, result_key,
-   current_user, lookup_author, add_reply, clear_cache)` to reply_form.py: renders messages via
-   `st.chat_message`, the existing `st.form`+`text_area`+`form_submit_button(on_click=on_reply_submit)`
-   shape (moved, not changed), then `if result_key in st.session_state: msg = pop(...); st.error(msg)
-   if msg else st.rerun()`.
-2. Write its AppTest-based tests in tests/test_reply_form.py first (red), following
-   `_fixed_script`'s pattern (call the function directly, unconditionally) — then implement (green).
-3. Copy the same new tests to run under `$SCRATCH/venv158/bin/python -m pytest` (green there too).
-4. app.py: add `_MEMBER_QUESTION_OPTS`, add `show_member_question_dialog`, remove the inline
-   `st.form` block (~1492-1531), let member-question rows reach the action-dropdown block
-   (currently skipped by `if not _is_question:`) using `_MEMBER_QUESTION_OPTS` instead of `_opts`,
-   and branch the `_pending_action`/"Answer" dispatch on `row.get("source") == "member_question"`.
-5. Full `pytest tests/ -q -p no:cacheprovider`, `git add -N .`, `wt-done.sh --check`, merge
-   origin/main, report to helpdesk-opzichter.
+1. Run `wt-done.sh --check coach-inbox-answer-dialog`.
+2. Report to helpdesk-opzichter: branch, commit range (dd88c2f..991502b), test count/versions,
+   red-then-green proof, deploy implied (app.py via deploy.sh, on the next `main` deploy) — then stop.
 
 Traps (with dates):
 - 2026-09-29 (this worktree): AppTest does not model an already-open `@st.dialog`'s persistence
