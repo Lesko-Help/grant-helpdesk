@@ -63,9 +63,9 @@ Overseer's memory-bank message (received same time, 2026-09-29, line numbers as 
 ## Agentic review
 
 ### Verdict
-Verdict: FAIL — overseer review of 3dfa6df (2026-09-29): checks 1-4 pass (clean tree, 0 behind, 4 files, 137 passed, fake clients only; wiring, key uniqueness, callback-only resets, unchanged add_coach_reply/on_reply_submit/reply_result_message/SQL all confirmed). 1 blocker, 4 minors — see Findings.
+Verdict: PASS — overseer re-review of c528454 (2026-09-29): tree clean, HEAD c528454, 0 behind; 4 files, nothing under `.claude/`, `coach_inbox.py`/`on_reply_submit`/`reply_result_message` unchanged; 137 passed. Blocker fixed — reviewer independently replaced `reply_form.py:108`'s `st.rerun()` with `pass` in a scratch copy: `test_render_thread_and_reply_on_ok_reruns_to_close_not_just_clears_the_box` failed (1 failed, 9 passed); restored, 10 pass. Expected count 2 is a literal, not read from the code under test. Minors 2 and 3 (from the 3dfa6df review) done; minor 4 is the overseer's. No blockers, 2 new minors — see Findings. Landing is Martin's call.
 
-### Findings
+### Findings (3dfa6df review, 2026-09-29)
 1. BLOCKER — `test_render_thread_and_reply_on_ok_clears_the_box_and_reruns_to_close` (tests/test_reply_form.py:206) still passed with `reply_form.py`'s `st.rerun()` replaced by `pass` in a scratch copy — the box-cleared assertion can't tell `on_reply_submit`'s own clearing apart from the dialog actually closing, so done-when 1's "calls st.rerun()" was unproven.
 2. MINOR — `show_member_question_dialog`'s docstring (app.py:1240) had no Output line.
 3. MINOR — nothing proves the live dialog on 1.58 itself (only the extracted function is under test); record a post-deploy smoke check as pending.
@@ -77,11 +77,20 @@ Verdict: FAIL — overseer review of 3dfa6df (2026-09-29): checks 1-4 pass (clea
 2. `a02ef79` — added "Output: none — draws the dialog; closes via reply_form's st.rerun() on a successful send." to `show_member_question_dialog`'s docstring.
 3. Not fixed in code — recorded as a pending post-deploy step below (Context): open Answer, confirm a failed send keeps the dialog open with its error, and an OK send closes it and the row shows Answered. The overseer runs this after deploy.
 4. Not fixed — left for the overseer to update at landing, as instructed.
-5. This commit — State → Next below now names the real range.
+5. `c528454` — State → Next named the real range as of that commit.
 
 wt-done.sh's check on this is literal: it greps this brief for a line
 starting with exactly `Verdict:` at the very start of the line (column 0)
 — no bold, no indent, no renamed label, no different case.
+
+### Findings (c528454 re-review, 2026-09-29)
+A. MINOR — `tests/test_reply_form.py:238` (`test_render_thread_and_reply_on_failure_keeps_the_dialog_open_with_the_text`) doesn't assert exactly 1 run added on the failure path. Left as-is per the overseer's explicit instruction not to change code after this review — low risk, the existing `at.error` assertion would likely already catch a spurious rerun.
+B. MINOR — brief's State → Next still said `dd88c2f..a02ef79, brief-save commit still to follow`; final range is `dd88c2f..c528454` plus this verdict commit. Fixed in this commit (see State below).
+
+### Open items
+- Minor A above (test_reply_form.py:238's failure-path run-count coverage) — not fixed, left open per the overseer's instruction.
+- Minor 4 above (spec R6 wording) — the overseer's, at landing.
+- The pending post-deploy smoke check below — the overseer's, after deploy.
 
 ### Pending post-deploy smoke check (not yet run — no live deploy from this worktree)
 After this lands and deploys: open a member-question row's Answer dialog; send with an empty/invalid state to confirm it stays open with an error and the typed text; then send a real reply and confirm the dialog closes and the row shows Answered. Overseer's to run this, per its review message.
@@ -103,14 +112,18 @@ Done:
   red with st.rerun() replaced by pass (delta 1), green restored. Minor 2 fixed (docstring Output
   line). Minor 3 recorded as a pending post-deploy smoke check (Agentic review section). Minor 4
   left for the overseer. Full suite re-verified green: 137 local (1.45.1), 10 under
-  $SCRATCH/venv158 (1.58.0).
+  $SCRATCH/venv158 (1.58.0). Reported to helpdesk-opzichter at range dd88c2f..c528454.
+- Overseer re-review of c528454: PASS, no blockers, 2 minors (A and B, see Agentic review above).
+  Blocker independently reconfirmed fixed. Minor B (this stale Next section) fixed in this commit.
+  Minor A left open, per the overseer's explicit instruction not to change code after this review.
 
-In flight: none — fix committed, full suite green on both Streamlit versions, wt-done.sh --check
-passes. Left to do: report the new range to helpdesk-opzichter and stop.
+In flight: none — PASS verdict received, both minors from the re-review resolved or recorded as
+open items, wt-done.sh --check passes. Left to do: report the final HEAD to helpdesk-opzichter
+and stop. Landing is Martin's call, not this worktree's.
 
 Next:
-1. Report to helpdesk-opzichter with the new commit range (dd88c2f..a02ef79, brief-save commit
-   still to follow) and the red-then-green proof for the blocker fix — then stop.
+1. Report to helpdesk-opzichter with the final HEAD (this brief-save commit, after c528454) — then
+   stop.
 
 Traps (with dates):
 - 2026-09-29 (this worktree): AppTest does not model an already-open `@st.dialog`'s persistence
