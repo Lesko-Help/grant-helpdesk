@@ -157,6 +157,8 @@ section, alongside `waiting_count`/`merge_into_tickets`):
 
 ## Agentic review
 
+### Round 1 — commit `487c5d2`
+
 Verdict: FAIL
 
 Review of commit `487c5d2` by the overseer (2026-09-29), 2 blockers + 7 minors.
@@ -238,6 +240,70 @@ Review of commit `487c5d2` by the overseer (2026-09-29), 2 blockers + 7 minors.
 9. Not fixed — informational only, per the overseer's explicit
    instruction; left for the overseer to handle directly with Martin.
 
+### Round 2 — commit `da71bc7`
+
+Verdict: PASS
+
+Re-review of commit `da71bc7` by the overseer (2026-09-29), 0 blockers +
+6 minors (numbered 0-5). Martin's explicit call, relayed by the overseer:
+"fix the crash, then land" — fix 0, 2, 4 in code (one commit each,
+red-then-green); note 1 and 3 here instead of changing code; 5 needs no
+action.
+
+### Findings (round 2)
+
+0. MUST FIX — no source test blocked `app.py` from reverting to a direct,
+   uncached `bq_client.get_followup_statuses(` call (the exact bug
+   `followup_cache.py` exists to fix); the suite stayed green even if
+   reverted.
+1. Brief said "152 passed" but that includes `tests/smoke_test.py`
+   (135 + 17), which writes to live BigQuery (MERGEs `_smoke_test_*` rows
+   into META_TABLE). From now on, run pytest with
+   `--ignore=tests/smoke_test.py` and report that count.
+2. MUST FIX (Martin's call: "fix the crash") — `member_history.py:79`
+   `_escape_preview`'s `body.split()` crashes on a NULL body (bodies come
+   straight from BigQuery via `coach_inbox.py:88`), outside the
+   try/except at `app.py:1276-1279` — one such message crashed the whole
+   Answer dialog.
+3. Accepted risk, brief-only, do not change `bq_reads.py` —
+   `followup_cache.py:32`'s `bq_reads.get_followup_statuses` swallows
+   errors and returns `{}`; now cached 300s, so one transient BigQuery
+   failure hides follow-up badges for up to 5 minutes.
+4. `member_history.py:69` markdown-escape set (`_MARKDOWN_ESCAPE`) is
+   missing `~` and `|`.
+5. `member_history.py:24` `STATUS_ICON` gained a `"waiting"` key; harmless
+   since `config.TICKET_STATUSES` has no such status.
+
+### Fixed in (round 2)
+
+0. `6c1578a` — added `test_app_source_calls_the_cached_wrapper_not_
+   bigquery_directly` to `tests/test_app_followup_cache.py`, reading
+   `app.py`'s own source text and asserting the literal string
+   `"bq_client.get_followup_statuses("` is absent. Proven red by
+   temporarily reintroducing that exact call at `app.py`'s real call
+   site (the assertion failed, showing the offending line); `app.py`
+   restored to its committed state (confirmed via `git diff`), green
+   restored.
+1. Brief note only (this entry) — full-suite command from now on is
+   `pytest tests/ -q -p no:cacheprovider --ignore=tests/smoke_test.py`;
+   true count for this task's suite is 138 passed (135 baseline + 3 new
+   tests added this round: the null-body test, the tilde/pipe test, and
+   minor 0's source test).
+2. `e8afcdd` — `_escape_preview` now does `(body or "").split()`. Proven
+   red first: with the old `body.split()`, the new
+   `test_combined_mode_does_not_crash_on_a_null_message_body` failed with
+   `AttributeError: 'NoneType' object has no attribute 'split'` at
+   `member_history.py:83`, matching the finding exactly; green restored.
+3. Brief note only (this entry) — accepted risk, `bq_reads.py` not
+   touched, per the overseer's explicit instruction.
+4. `0a4ac8b` — added `~` and `|` to `_MARKDOWN_ESCAPE`. Proven red first:
+   with the old set, the new
+   `test_combined_mode_escapes_tilde_and_pipe_in_the_preview` failed —
+   the preview line held the raw `~~strike~~ | table` instead of the
+   escaped form; green restored.
+5. Not fixed — no action needed, per the overseer's explicit finding
+   (harmless).
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
@@ -248,44 +314,26 @@ Done (2026-09-29):
 - First implementation (301f41e..487c5d2), reviewed FAIL (2 blockers + 7
   minors, G informational). Both blockers + minors A-F fixed, one commit
   each (763d9b3, 3cb9c18, e9fa90d, 67f331a, fc96299, 78d18ab, f07b91b),
-  recorded in `## Agentic review` above; brief committed at da71bc7. Full
-  suite 152 passed (includes tests/smoke_test.py — see minor 1 below,
-  this count was wrong to report as clean).
+  recorded in `## Agentic review` above; brief committed at da71bc7.
 - Reported da71bc7 to helpdesk-opzichter. Overseer re-reviewed at da71bc7:
   **PASS**, 0 blockers, 6 minors (numbered 0-5). Martin's call: "fix the
-  crash, then land." Real suite (excluding smoke_test.py, which writes to
-  live BigQuery): 135 passed.
-
-In flight — fixing the PASS-round minors, one commit each, red-then-green
-where marked:
-- Minor 0 (MUST FIX): no source test blocks app.py from reverting to a
-  direct, uncached `bq_client.get_followup_statuses(` call — add one
-  asserting that string is absent from app.py, proven red by putting the
-  call back temporarily.
-- Minor 2 (MUST FIX, Martin's call): `member_history.py`'s
-  `_escape_preview` does `body.split()` — a NULL body straight from
-  BigQuery (coach_inbox.py:88) crashes the Answer dialog, outside the
-  try/except at app.py:1276-1279. Fix `(body or "").split()`, red-then-
-  green test with a None body.
-- Minor 4 (fix): `_MARKDOWN_ESCAPE` (member_history.py:68) is missing `~`
-  and `|`. Add them, red-then-green test.
-- Minor 1 (brief-only): from now on run pytest with
-  `--ignore=tests/smoke_test.py` (that file MERGEs `_smoke_test_*` rows
-  into live BigQuery) and report that count, not the combined one.
-- Minor 3 (brief-only, accepted risk — do not change bq_reads.py):
-  `bq_reads.get_followup_statuses` swallows errors and returns `{}`; now
-  cached 300s via followup_cache.py, so one transient BigQuery failure
-  hides follow-up badges for up to 5 minutes.
-- Minor 5: no action (harmless — config.TICKET_STATUSES has no "waiting").
+  crash, then land."
+- Fixed minors 0, 2, 4 in code, one commit each, all red-then-green
+  proven: minor 2 (e8afcdd, NULL-body crash), minor 4 (0a4ac8b, missing
+  ~/| escapes), minor 0 (6c1578a, source test on app.py). Minors 1, 3, 5
+  recorded in `## Agentic review` above (brief-only/no action, per the
+  overseer's instruction — bq_reads.py not touched). Full round-2
+  `## Agentic review` entry (Verdict: PASS, findings 0-5, fixed-in 0-5)
+  committed alongside this State rewrite.
+- Full suite (excluding tests/smoke_test.py, which writes to live
+  BigQuery — always exclude it from now on):
+  `pytest tests/ -q -p no:cacheprovider --ignore=tests/smoke_test.py` ->
+  138 passed (135 baseline + 3 new tests this round).
 
 Next (in order):
-1. Fix minors 0, 2, 4 — one commit each, red-then-green.
-2. One brief commit: `## Agentic review` gets this round's `Verdict: PASS`
-   line + findings 0-5 + fixed-in; note minors 1 and 3 there (not code
-   changes); this State section rewritten again.
-3. `git add -N .`, clean tree; re-verify `git merge-base --is-ancestor
+1. `git add -N .`, clean tree; re-verify `git merge-base --is-ancestor
    origin/main HEAD`; `wt-done.sh --check` until it exits 0.
-4. Report the new commit range to `helpdesk-opzichter [8ddd8b]` (two
+2. Report the new commit range to helpdesk-opzichter [8ddd8b] (two
    agents share the bare name) with proof, then stop and wait.
 
 Traps (with dates):
