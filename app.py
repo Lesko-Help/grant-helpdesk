@@ -368,6 +368,17 @@ def load_member_questions():
     # coach expects to see change within a minute of a member writing in.
     return coach_inbox.load_member_questions()
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_followup_statuses(content_ids: tuple):
+    # tab_main called bq_client.get_followup_statuses uncached, so it paid a
+    # live BigQuery round trip (~2s measured, see docs/briefs/
+    # coach-inbox-dialog-history.md) on every single script rerun of the
+    # Tickets tab, including the rerun that opens either Answer dialog —
+    # that was the actual cause of "takes very long to open". content_ids
+    # must be a tuple (not the list bq_client.get_followup_statuses takes):
+    # st.cache_data hashes its arguments, and a list isn't hashable.
+    return bq_client.get_followup_statuses(list(content_ids))
+
 @st.cache_data(ttl=300)
 def load_report(report_type: str, date_from: str, date_to: str):
     return bq_client.get_report_data(report_type, date_from, date_to)
@@ -814,6 +825,8 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
                     load_tickets.clear()
                     load_open_stats.clear()
                     load_daily_stats.clear()
+                    if _fu_enabled and _fu_msg.strip():
+                        load_followup_statuses.clear()
                     _thread_link = ticket.get("permalink") or ""
                     if _new_comment_id and _post_id:
                         _thread_link = (
@@ -1638,7 +1651,7 @@ with tab_main:
     )
     open_stats  = load_open_stats()
     daily_stats = load_daily_stats()
-    _followup_map = bq_client.get_followup_statuses(tickets["content_id"].tolist()) if not tickets.empty else {}
+    _followup_map = load_followup_statuses(tuple(tickets["content_id"])) if not tickets.empty else {}
 
     # ── KPI toggle ────────────────────────────────────────────────────────────
     _kpi_label = "▲ Hide stats" if st.session_state.show_kpis else "▼ Show stats"
