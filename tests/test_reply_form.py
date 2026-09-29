@@ -179,6 +179,11 @@ def _dialog_script(add_reply_result, lookup_result, messages):
 
     import reply_form
 
+    # Counts every script execution, including ones triggered by a
+    # st.rerun() inside render_thread_and_reply itself — a plain "box got
+    # cleared" assertion can't tell that apart from the on_click callback
+    # clearing the box on its own, since that happens either way.
+    st.session_state["runs"] = st.session_state.get("runs", 0) + 1
     st.session_state.setdefault("calls", [])
 
     def _add_reply(thread_id, author_id, body):
@@ -208,15 +213,23 @@ def test_render_thread_and_reply_shows_the_messages_oldest_first():
     ]
 
 
-def test_render_thread_and_reply_on_ok_clears_the_box_and_reruns_to_close():
+def test_render_thread_and_reply_on_ok_reruns_to_close_not_just_clears_the_box():
+    # A reviewer's scratch copy with render_thread_and_reply's st.rerun()
+    # replaced by `pass` still passed a box-cleared-only assertion here (the
+    # on_click callback clears the box on its own) — count script runs
+    # instead, since only an actual st.rerun() adds one beyond the submit's
+    # own run. Checked red with st.rerun() removed (delta 1) before this was
+    # written; green with it in place (delta 2).
     at = AppTest.from_function(_dialog_script, args=(coach_inbox.ReplyResult.OK, 42, _MESSAGES))
     at.run()
     at.text_area[0].set_value("hello there").run()
+    _runs_before_submit = at.session_state["runs"]
     at.button[0].click().run()
 
     assert list(at.exception) == []
     assert at.session_state["calls"] == [("th1", 42, "hello there")]
     assert at.session_state["cache_cleared"] is True
+    assert at.session_state["runs"] - _runs_before_submit == 2
     assert at.text_area[0].value == ""
     assert list(at.error) == []
 
