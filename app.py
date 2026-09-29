@@ -81,14 +81,7 @@ DOMAIN_ICON = {
     "Other":                   "📌",
 }
 
-STATUS_ICON = {
-    "open":            "🔵",
-    "answered":        "✅",
-    "closed":          "🟢",
-    "cancelled":       "🔴",
-    "flagged":         "🚩",
-    "archived":        "⚪",
-}
+STATUS_ICON = member_history.STATUS_ICON
 URGENCY_ICON = {
     "normal":   "🟢",
     "urgent":   "🟡",
