@@ -158,6 +158,33 @@ def test_combined_mode_escapes_markdown_special_characters_in_the_preview():
     assert "\\[click\\]\\(http://evil\\)" in line
 
 
+def test_combined_mode_sorts_correctly_when_one_source_is_tz_aware_and_the_other_is_not():
+    # 2026-09-24T10:00:00-05:00 is 2026-09-24T15:00:00 UTC — later in real
+    # time than the tz-naive ticket's 2026-09-24T12:00:00, so it must sort
+    # first. Before the fix this mismatch raised TypeError instead.
+    tickets = pd.DataFrame([
+        {
+            "content_id": "c1", "permalink": None,
+            "body_preview": "Naive-clock ticket", "created_at": "2026-09-24T12:00:00",
+            "ticket_status": "open",
+        },
+    ])
+    private = pd.DataFrame([
+        {
+            "content_id": "pc:t5", "last_activity_at": "2026-09-24T10:00:00-05:00", "status": "waiting",
+            "messages": [{"author_role": "member", "body": "Later in real time", "created_at": "2026-09-24T10:00:00-05:00"}],
+        },
+    ])
+    at = AppTest.from_function(_render_script, args=("Jamie", tickets, private))
+    at.run()
+
+    assert list(at.exception) == []
+    lines = [m.value for m in at.markdown]
+    assert len(lines) == 2
+    assert "Later in real time" in lines[0]
+    assert "Naive-clock ticket" in lines[1]
+
+
 def test_combined_mode_both_empty_shows_the_combined_message():
     at = AppTest.from_function(_render_script, args=("Jamie", pd.DataFrame(), pd.DataFrame()))
     at.run()

@@ -25,6 +25,22 @@ STATUS_ICON = {
 }
 
 
+def _sort_key(value):
+    """
+    Input: a timestamp-like value (str, or a tz-aware/tz-naive pd.Timestamp)
+    as returned by either bq_client.get_member_history (ticket created_at)
+    or coach_inbox.member_other_threads (private last_activity_at).
+    Output: a tz-naive pd.Timestamp, safe to compare against any other
+    value this function returns.
+    Why: pd.Timestamp comparison raises TypeError when one side is
+    tz-aware and the other tz-naive, and the two BigQuery sources are not
+    guaranteed to agree on tz-awareness — merging and sorting both kinds
+    of row (render_member_history's combined mode) would otherwise crash.
+    """
+    ts = pd.Timestamp(value)
+    return ts.tz_convert("UTC").tz_localize(None) if ts.tzinfo is not None else ts
+
+
 def _ticket_line(row):
     """
     Input: one row of the ticket-history frame bq_client.get_member_history
@@ -46,7 +62,7 @@ def _ticket_line(row):
         f'`{str(row["created_at"])[:10]}`</span>'
         f' — {row["body_preview"]}{link}'
     )
-    return pd.Timestamp(row["created_at"]), line
+    return _sort_key(row["created_at"]), line
 
 
 _MARKDOWN_ESCAPE = {ord(c): f"\\{c}" for c in "\\`*_{}[]()#+-.!"}
@@ -88,7 +104,7 @@ def _private_thread_line(row):
         f'`{str(row["last_activity_at"])[:10]}`</span>'
         f' — {preview} <span style="font-size:0.75rem;color:#6b7280">(private message)</span>'
     )
-    return pd.Timestamp(row["last_activity_at"]), line
+    return _sort_key(row["last_activity_at"]), line
 
 
 def render_member_history(member_name, ticket_history, private_threads=None):
