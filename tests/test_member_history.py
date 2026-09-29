@@ -107,6 +107,57 @@ def test_combined_mode_html_escapes_the_private_message_body():
     assert "&lt;b&gt;privately&lt;/b&gt;" in line
 
 
+def test_combined_mode_preview_uses_the_members_first_message_not_a_later_reply():
+    private = pd.DataFrame([
+        {
+            "content_id": "pc:t2", "last_activity_at": "2026-09-25", "status": "waiting",
+            "messages": [
+                {"author_role": "member", "body": "Can you help with my report?", "created_at": "2026-09-20"},
+                {"author_role": "coach", "body": "Sure, sending now", "created_at": "2026-09-25"},
+            ],
+        },
+    ])
+    at = AppTest.from_function(_render_script, args=("Jamie", pd.DataFrame(), private))
+    at.run()
+
+    assert list(at.exception) == []
+    line = at.markdown[0].value
+    assert "Can you help with my report?" in line
+    assert "Sure, sending now" not in line
+
+
+def test_combined_mode_flattens_newlines_in_the_preview():
+    private = pd.DataFrame([
+        {
+            "content_id": "pc:t3", "last_activity_at": "2026-09-25", "status": "waiting",
+            "messages": [{"author_role": "member", "body": "Line one\nLine two", "created_at": "2026-09-25"}],
+        },
+    ])
+    at = AppTest.from_function(_render_script, args=("Jamie", pd.DataFrame(), private))
+    at.run()
+
+    assert list(at.exception) == []
+    line = at.markdown[0].value
+    assert "\n" not in line
+    assert "Line one Line two" in line
+
+
+def test_combined_mode_escapes_markdown_special_characters_in_the_preview():
+    private = pd.DataFrame([
+        {
+            "content_id": "pc:t4", "last_activity_at": "2026-09-25", "status": "waiting",
+            "messages": [{"author_role": "member", "body": "*urgent* please [click](http://evil)", "created_at": "2026-09-25"}],
+        },
+    ])
+    at = AppTest.from_function(_render_script, args=("Jamie", pd.DataFrame(), private))
+    at.run()
+
+    assert list(at.exception) == []
+    line = at.markdown[0].value
+    assert "\\*urgent\\*" in line
+    assert "\\[click\\]\\(http://evil\\)" in line
+
+
 def test_combined_mode_both_empty_shows_the_combined_message():
     at = AppTest.from_function(_render_script, args=("Jamie", pd.DataFrame(), pd.DataFrame()))
     at.run()

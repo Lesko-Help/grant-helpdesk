@@ -49,20 +49,40 @@ def _ticket_line(row):
     return pd.Timestamp(row["created_at"]), line
 
 
+_MARKDOWN_ESCAPE = {ord(c): f"\\{c}" for c in "\\`*_{}[]()#+-.!"}
+
+
+def _escape_preview(body):
+    """
+    Input: a member's raw typed message body.
+    Output: the same text on one line (newlines flattened to spaces),
+    HTML-escaped and with markdown's own special characters
+    backslash-escaped.
+    Why both: this line is drawn with unsafe_allow_html=True, so a
+    member's own typed text — which, unlike a ticket's server-side
+    body_preview, has never passed through any sanitizer — would
+    otherwise let both raw HTML and markdown formatting/links through,
+    not just HTML.
+    """
+    flattened = " ".join(body.split())
+    return html.escape(flattened.translate(_MARKDOWN_ESCAPE))
+
+
 def _private_thread_line(row):
     """
     Input: one row of coach_inbox.member_other_threads's frame (content_id,
     last_activity_at, status, messages).
     Output: (sort key, markdown line) — same visual shape as _ticket_line so
-    the two kinds read as one list, but the preview text comes from the
-    thread's own last message body rather than a ticket's body_preview, so
-    it is HTML-escaped here: unlike a ticket's body (already cut down to
-    plain-ish text server-side), a private message is a member's own typed
-    text and has never passed through any sanitizer before this point.
+    the two kinds read as one list. The preview is the member's own first
+    message in the thread (the question that started it, the same role a
+    ticket's body_preview plays), not whichever message happens to be last
+    — the last message is often the coach's own reply, not the member's.
     """
     icon = STATUS_ICON.get(row["status"], "⚪")
     messages = row.get("messages") or []
-    preview = html.escape(messages[-1]["body"][:300]) if messages else "(no messages)"
+    member_messages = [m for m in messages if m.get("author_role") == "member"]
+    first = (member_messages or messages or [None])[0]
+    preview = _escape_preview(first["body"])[:300] if first else "(no messages)"
     line = (
         f'{icon} <span style="font-size:0.8rem;color:#6b7280">'
         f'`{str(row["last_activity_at"])[:10]}`</span>'
