@@ -1,4 +1,5 @@
 # Goal
+Status: draft
 
 ## What this repo is for
 State it in the user's terms, one line, as it stands today — not what it

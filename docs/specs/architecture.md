@@ -1,4 +1,5 @@
 # Architecture
+Status: draft
 
 ## Services
 One line per service, queue or store this repo runs or talks to, as
