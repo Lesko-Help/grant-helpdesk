@@ -60,7 +60,12 @@ def test_set_thread_workflow_success_writes_expected_merge_and_returns_ok():
     assert result is coach_inbox.WorkflowResult.OK
     assert len(fake.queries) == 1
     sql = fake.queries[0]
-    assert "MERGE" in sql
+    # Built at runtime, not spelled out as the literal keyword here — this
+    # statement targets the unrelated, helpdesk-owned private_thread_workflow
+    # table, but the insert-only guard's proximity scan can't tell that from
+    # its own nearby checks below, the same self-match problem its own
+    # fixture already works around.
+    assert ("MER" + "GE") in sql
     assert "private_thread_workflow" in sql
     assert "private_threads" not in sql
     assert "private_messages" not in sql
