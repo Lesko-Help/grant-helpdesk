@@ -19,6 +19,12 @@ See `docs/specs/architecture.md`.
 |---|---|---|---|
 | `coach_inbox` | coaches see members' private questions from the questions zone inside the Tickets tab, and answer them there | `deploy.sh` (app), `jobs/deploy-alerts.sh` (alert) | `docs/specs/modules/coach_inbox.md` |
 
+### Helpers
+
+| Module | What it does | Deploy | Spec |
+|---|---|---|---|
+| `tests` | the test suite — a plain `pytest tests/` stays offline; the live BigQuery smoke test runs only with `LIVE_SMOKE=1`, which `deploy.sh` sets | none (never shipped; `deploy.sh` runs it before shipping) | `docs/specs/modules/tests.md` |
+
 <!-- spec:modules end -->
 
 ## Open questions
