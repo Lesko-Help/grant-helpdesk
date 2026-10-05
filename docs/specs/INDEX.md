@@ -17,7 +17,7 @@ See `docs/specs/architecture.md`.
 
 | Module | What it does | Deploy | Spec |
 |---|---|---|---|
-| `coach_inbox` | coaches see members' private questions from the questions zone inside the Tickets tab, and answer them there | `deploy.sh` (app), `jobs/deploy-alerts.sh` (alert) | `docs/specs/modules/coach_inbox.md` |
+| `coach_inbox` | coaches see members' private questions from the questions zone inside the Tickets tab, answer them there and close them | `deploy.sh` (app), `jobs/deploy-alerts.sh` (alert) | `docs/specs/modules/coach_inbox.md` |
 
 ### Helpers
 

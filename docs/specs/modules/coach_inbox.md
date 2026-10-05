@@ -1,17 +1,33 @@
 # coach_inbox
 Status: agreed 2026-09-25 (approved by Martin)
 Kind: app
-Summary: coaches see members' private questions from the questions zone inside the Tickets tab, and answer them there
+Summary: coaches see members' private questions from the questions zone inside the Tickets tab, answer them there and close them
 
-Part of: `docs/specs/INDEX.md` · Deploy: `deploy.sh` (app), `jobs/deploy-alerts.sh` (alert) · Updated: 2026-09-25
+Part of: `docs/specs/INDEX.md` · Deploy: `deploy.sh` (app), `jobs/deploy-alerts.sh` (alert) · Updated: 2026-10-05
 
 ## Overview
 
-Coaches see members' private questions (from the questions zone) inside the Tickets tab, and later answer them.
-Owns: `coach_inbox.py`, the root `raillog.py` copy, the Cloud Run service's BTB_ALERT policies, and (later) `grant_helpdesk.private_thread_workflow`.
+Coaches see members' private questions (from the questions zone) inside the Tickets tab, answer them there and close them.
+Owns: `coach_inbox.py`, the root `raillog.py` copy, the Cloud Run service's BTB_ALERT policies, and `grant_helpdesk.private_thread_workflow`.
 Reads `lesko-486515.private_chat.private_threads` / `private_messages` (EU, owned by the zone) and `bigtribebuilders.dataform.core_members` for names.
-Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `report_source_failure`, `raillog.alert`, `add_coach_reply`; later `set_thread_workflow`.
-*Not in scope:* telling members of a reply (the zone shows it on next load), emailing coaches, any change to `private_chat`'s schema or grants, a heartbeat (the app is not scheduled).
+Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `report_source_failure`, `raillog.alert`, `add_coach_reply`, `set_thread_workflow`.
+*Not in scope:* assigning a thread to a coach or moving it to a lane (the table has the columns; a later task), telling members of a reply (the zone shows it on next load), emailing coaches, any change to `private_chat`'s schema or grants, a heartbeat (the app is not scheduled).
+
+Who: coaches and the admin · Where: Streamlit, the Tickets tab of the grant-helpdesk app
+
+## Screens
+
+### Tickets tab: member-question rows
+
+- Shows each 1:1 thread as a row among the community tickets, with a `Member question` badge, a `waiting`, `Answered` or `Closed` badge, and an action dropdown offering `Answer` then `Close` (only `Answer` once closed). The tab label counts the waiting threads.
+- Reads / Writes: reads `private_threads`, `private_messages`, `core_members` and `private_thread_workflow`; `Close` writes `private_thread_workflow`.
+- Error view: threads unreadable -> `st.error` and the community tickets still show; workflow table unreadable -> the threads show, none as closed; a failed `Close` -> `st.error` and the row stays.
+
+### Answer dialog
+
+- Shows the member's thread, a reply form, and the member's history (community tickets and other private threads). Sending a reply closes the thread and closes the dialog.
+- Reads / Writes: reads the same tables plus the member's community tickets; a reply inserts one row into `private_messages` and closes the thread in `private_thread_workflow`.
+- Error view: a distinct message per reply result with the typed text kept; "Answer sent, but the thread could not be closed" when only the close fails; "History unavailable" when the history lookup fails, with the reply form still working.
 
 ## Functions
 
@@ -22,18 +38,20 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 *What it does:*
 - R1: when called, it reads every thread with its messages in one parameterised query (tables named from `config.PRIVATE_CHAT_DATASET`, default `lesko-486515.private_chat`) and returns one row per thread.
 - R2: each row carries `content_id = "pc:" + thread_id`, `source = "member_question"`, `member_id`, `member_name` (from `core_members`, else `"Member <id>"`), `topic`, `subject`, `created_at`, `last_activity_at`, `messages` (list, oldest first), `status`.
-- R3: `status` is derived, never stored: newest message by `created_at` is `member` -> `waiting`, `coach` -> `answered`.
+- R3: `status` is derived on every read, never stored as such: when the thread has a `closed_at` in `private_thread_workflow` and no member message with a `created_at` after it -> `closed`; otherwise the newest message by `created_at` is `member` -> `waiting`, `coach` -> `answered`.
+- R5: a member message newer than `closed_at` brings a closed thread back as `waiting`, with nothing written; closing it again later moves `closed_at` forward.
+- R6: when only the `private_thread_workflow` read raises, it calls `report_source_failure("workflow read", err)` and still returns the threads, with no thread shown as `closed`, so an outage of the workflow table never hides a member's question.
 - R4: when the read raises, it calls `report_source_failure("read", err)` and returns an empty frame with the same columns, so the Tickets tab still renders its MN tickets.
 
-*Examples:* one thread, messages member then coach -> one row, `status="answered"`. Empty tables -> empty frame, no alert.
+*Examples:* one thread, messages member then coach, no workflow row -> one row, `status="answered"`. The same thread closed at 10:00 -> `closed`; the member writes at 10:05 -> `waiting`. Empty tables -> empty frame, no alert.
 
 *Inputs:* an optional BigQuery client (tests pass a fake).
 
 *Outputs:* a DataFrame, one row per thread.
 
-*Errors:* BigQuery error or denied access -> empty frame, UI shows `st.error` -> `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED`.
+*Errors:* BigQuery error or denied access -> empty frame, UI shows `st.error` -> `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED`. Workflow table unreadable or missing -> threads still returned, none closed -> `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat workflow read failed: ...`.
 
-*Test:* `/opt/anaconda3/bin/pytest tests/test_coach_inbox.py` in `.claude/worktrees/coach-inbox-list`, fake client seeded with two threads -> R1-R3 rows asserted; fake client that raises -> R4 empty frame and one captured `BTB_ALERT` line; red first against `origin/main`.
+*Test:* `/opt/anaconda3/bin/pytest tests/test_coach_inbox.py` in `.claude/worktrees/coach-inbox-list`, fake client seeded with two threads -> R1-R3 rows asserted; fake client that raises -> R4 empty frame and one captured `BTB_ALERT` line; red first against `origin/main`. Closing: same file, fake client seeded with a closed thread, a closed thread with a newer member message, and a workflow read that raises -> `closed`, `waiting`, and all threads returned with one captured `BTB_ALERT` line (R3, R5, R6); red first against `origin/main`, where no row is ever `closed`.
 
 ### waiting_count(questions)
 
@@ -57,7 +75,8 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 
 *What it does:*
 - R1: when given the Tickets-lane frame and the questions frame, it returns one frame: waiting member questions first, then everything by `last_activity_at` newest first.
-- R2: member-question rows render with a `Member question` badge, their messages HTML-escaped, and no action dropdown until the workflow slice lands.
+- R2: member-question rows render with a `Member question` badge, their messages HTML-escaped, and the action dropdown described under `set_thread_workflow` R5.
+- R4: closed member questions follow the sidebar Status filter the way closed community tickets do: they show only when Status is `closed`, and then they are the only member questions shown. Under every other Status choice, including "All", the member questions shown are the ones not closed *(as-built: member questions ignore the rest of the Status filter)*.
 - R3: sidebar filters that have no meaning for a thread (urgency, domain, space) leave member questions out only when the filter is set to something other than "All".
 
 *Examples:* 2 tickets + 1 waiting question -> 3 rows, the question first.
@@ -146,7 +165,8 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 - R3: when the query runs but writes zero rows (the thread does not exist), it returns `UNKNOWN_THREAD` and raises no alert.
 - R4: when the query raises, it calls `report_source_failure("write", err)` and returns `WRITE_FAILED`.
 - R5: `author_member_id` always comes from `grant_coaches` via the logged-in email (the admin has a row there too). Any coach may reply in any thread. The body never appears in any log line.
-- R6: each member-question row in the Tickets tab has the regular action dropdown, offering only "Answer"; "Answer" opens a dialog with the member's thread and the reply form (`reply_form.render_thread_and_reply`), followed by the member's history: their community tickets and their other private threads (`member_other_threads`), rendered by the same `member_history.render_member_history` the regular ticket dialog uses. A failed history lookup shows "History unavailable" and alerts, and the reply form still works. The form shows a distinct message for each result, keeps the typed text unless the result is `OK`, and on `OK` clears only the `load_member_questions` cache. A failed coach lookup shows `st.error`, alerts `SOURCE_FAILED`, and is not cached.
+- R6: each member-question row in the Tickets tab has the regular action dropdown, offering "Answer" and underneath it "Close" (`set_thread_workflow` R5); "Answer" opens a dialog with the member's thread and the reply form (`reply_form.render_thread_and_reply`), followed by the member's history: their community tickets and their other private threads (`member_other_threads`), rendered by the same `member_history.render_member_history` the regular ticket dialog uses. A failed history lookup shows "History unavailable" and alerts, and the reply form still works. The form shows a distinct message for each result, keeps the typed text unless the result is `OK`, and on `OK` clears only the `load_member_questions` cache. A failed coach lookup shows `st.error`, alerts `SOURCE_FAILED`, and is not cached.
+- R7: when a reply returns `OK`, the form closes the thread at once with `set_thread_workflow(thread_id, status="closed", updated_by=<the coach's email>)`. When that close does not return `OK`, the reply stays sent, the typed text is cleared, the thread shows as `answered`, and the coach reads "Answer sent, but the thread could not be closed". No reply result other than `OK` closes anything.
 
 *Examples:* existing thread, body "Thanks, see the link" -> `OK`, one coach row. Body of spaces -> `REFUSED`, no query. Thread id not in `private_threads` -> `UNKNOWN_THREAD`, no alert. BigQuery raises `Forbidden` -> `WRITE_FAILED` plus stdout `{"severity": "ERROR", "message": "BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat write failed: Forbidden"}`.
 
@@ -158,13 +178,29 @@ Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `r
 
 *Test:* `/opt/anaconda3/bin/python -m pytest tests/test_coach_inbox_reply.py` with a fake client: SQL shape and parameters (R1), 0/4001-char and None-author refusals send no query (R2), zero affected rows (R3), raising client -> exact alert line with the body absent (R4, R5), two calls -> two different message ids (R1); red first. UI: `tests/test_reply_form.py` (AppTest) covers R6's callback and `render_thread_and_reply` (an OK send reruns to close the dialog, counted in script runs); app.py's dropdown and dialog wiring is not under test and is checked by hand on Streamlit 1.58 after deploy. No live write drill: the unit tests prove the alert line, and the read drill proved the alert path end to end (Martin's decision, 2026-09-29).
 
-### set_thread_workflow(thread_id, status, assignee, lane)
+### set_thread_workflow(thread_id, status, updated_by, client=None)
 
-`def set_thread_workflow(thread_id: str, *, status=None, assignee=None, lane=None) -> None`
+`def set_thread_workflow(thread_id: str, *, status: str, updated_by: str, client: bigquery.Client | None = None) -> WorkflowResult`
 
-<!-- spec:stub -->
+`WorkflowResult` is an enum: `OK`, `REFUSED`, `WRITE_FAILED`. The table is `bigtribebuilders.grant_helpdesk.private_thread_workflow (thread_id STRING, status STRING, assignee STRING, lane STRING, closed_at TIMESTAMP, updated_at TIMESTAMP, updated_by STRING)`, one row per `thread_id`, created by `migrations/018_private_thread_workflow.sql`. It is helpdesk-owned, so MERGE is allowed there.
 
-Agreed shape: one row per `thread_id` in `bigtribebuilders.grant_helpdesk.private_thread_workflow (thread_id STRING, status STRING, assignee STRING, lane STRING, closed_at TIMESTAMP, updated_at TIMESTAMP, updated_by STRING)`, created by a file in `migrations/`. It is helpdesk-owned, so MERGE is allowed there. A member message newer than `closed_at` shows the thread as waiting again.
+*What it does:*
+- R1: when given a thread id, `status="closed"` and who closes, it writes one parameterised `MERGE` into `private_thread_workflow` keyed on `@thread_id`, setting `status = 'closed'`, `closed_at = CURRENT_TIMESTAMP()`, `updated_at = CURRENT_TIMESTAMP()`, `updated_by = @updated_by`. A second close of the same thread updates that one row; it never adds a second.
+- R2: `assignee` and `lane` are left NULL on a new row and untouched on an existing one.
+- R3: `status` must be exactly `"closed"`, and `thread_id` and `updated_by` must not be empty; otherwise it returns `REFUSED` before any query is sent.
+- R4: when the query raises, it calls `report_source_failure("workflow write", err)` and returns `WRITE_FAILED`. The statement never names `private_threads` or `private_messages`, so the insert-only code rule below keeps holding.
+- R5: a member-question row's action dropdown offers `Answer`, then `Close`, whether or not a coach has answered. `Close` asks nothing: it calls R1 with the logged-in coach's email, and on `OK` clears only the `load_member_questions` cache and reruns, so the row leaves the open list. On `WRITE_FAILED` it shows `st.error` and the row stays. A row that is already `closed` offers only `Answer` and shows a `Closed` badge.
+- R6: any coach may close any thread, and no reason is asked.
+
+*Examples:* thread `t1`, never closed, `status="closed"`, `updated_by="coach@x.org"` -> `OK`, one row with `closed_at` now. The same call an hour later -> `OK`, still one row, `closed_at` moved. `status="open"` -> `REFUSED`, no query. BigQuery raises `NotFound` (migration not run) -> `WRITE_FAILED` plus stdout `{"severity": "ERROR", "message": "BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat workflow write failed: NotFound"}`.
+
+*Inputs:* thread id, the status to set, the coach's email, and an optional BigQuery client (tests pass a fake).
+
+*Outputs:* a `WorkflowResult`; on `OK`, one new or updated row in `private_thread_workflow`.
+
+*Errors:* BigQuery error, denied access or missing table -> `WRITE_FAILED`, UI `st.error` -> `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED`.
+
+*Test:* `/opt/anaconda3/bin/python -m pytest tests/test_coach_inbox_workflow.py` with a fake client: MERGE shape and parameters, and no `assignee` or `lane` in the SET list (R1, R2); wrong status, empty thread id and empty `updated_by` send no query (R3); raising client -> `WRITE_FAILED` and the exact alert line (R4); `tests/test_private_chat_insert_only.py` still green (R4); red first against `origin/main`, where the function does not exist. UI: `tests/test_reply_form.py` (AppTest) — an `OK` reply calls the close once, a non-`OK` reply never calls it, and a failed close after an `OK` reply shows the "could not be closed" message (`add_coach_reply` R7). The dropdown options (R5) are asserted from the list `app.py` builds; the click-through in `app.py` is checked by hand on the live app after deploy. No live fire drill: the alert line is proven in the unit tests and the alert path end to end by the 2026-09-28 read drill.
 
 ## Code rule: private_chat is insert-only
 
@@ -188,3 +224,8 @@ No source file in the repo may contain SQL that runs UPDATE, DELETE, MERGE, TRUN
 - 2026-09-28: read fire drill passed: a missing dataset gave `BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat read failed: Forbidden` (13:25:21Z, revision 00065) and the email arrived. A missing dataset surfaces as `Forbidden`, not `NotFound`.
 - 2026-09-29: no live write fire drill. Breaking `PRIVATE_CHAT_DATASET` breaks the read too, so no question row shows to reply to. Martin accepted the unit-test proof of the write alert over revoking the append role for a drill.
 - 2026-09-29: the Answer dialog shows the member's history (community tickets, capped at the newest 20, plus their other private threads) through one shared `member_history.render_member_history`, the same code as the regular ticket dialog. The slow open was `get_followup_statuses` running on every rerun; it is now cached for 300 s and cleared after a follow-up is queued (Martin's request; landed 98ce387).
+- 2026-10-05: sending a coach answer closes the thread by itself; a later member message brings it back as waiting. Why: an answered question is done until the member says otherwise, and coaches should not have to close by hand after every answer (Martin).
+- 2026-10-05: `Close` sits under `Answer` on every member question, answered or not, and asks no reason. Why: a "thanks" or a duplicate needs no answer (Martin).
+- 2026-10-05: a closed thread shows only under Status `closed`, like a closed community ticket, with its badge. Why: one rule for both kinds (Martin).
+- 2026-10-05: this task builds close only; assign and lane for threads stay a later task, so `set_thread_workflow` accepts only `status="closed"` for now and returns a `WorkflowResult` instead of the `None` first sketched, for the same reason `add_coach_reply` returns a `ReplyResult`.
+- 2026-10-05: an unreadable workflow table shows every thread as not closed rather than hiding the list. Why: a wrongly reopened thread costs a click, a hidden question costs a member an answer.
