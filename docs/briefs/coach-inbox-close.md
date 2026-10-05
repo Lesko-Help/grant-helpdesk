@@ -189,49 +189,54 @@ and why. The overseer applies what it agrees with on main.
 
 ## State
 
-Done (commits so far, oldest first): 668bea6 brief filled in; b6e5811 `config.py`
-`PRIVATE_THREAD_WORKFLOW_TABLE` + `migrations/018_private_thread_workflow.sql` (simple
-`CREATE TABLE IF NOT EXISTS`, not yet run); f0a2e4c `WorkflowResult` enum + `set_thread_workflow`
-in `coach_inbox.py` (one MERGE on `private_thread_workflow` only, REFUSED before any query on bad
-status/empty id/updated_by, WRITE_FAILED + alert on a raising client) with
-`tests/test_coach_inbox_workflow.py`, proven red before green, insert-only guard still green.
-Not yet committed but done and green locally: `coach_inbox.py` now also has
-`filter_questions_by_status` (R4) and `load_member_questions` derives `status="closed"` via a new
-`_read_workflow_closed_at(client)` helper (R3/R5/R6) called after the main threads query, with its
-own try/except so a workflow-read failure never looks like a main-read failure;
-`tests/test_coach_inbox.py` has the extended `_FakeBigQueryClient` (`workflow_df` param,
-dispatches on `"private_thread_workflow" in sql`), a new `_WorkflowRaisingClient` fake, and new
-tests for closed/reopen/unrelated-thread/R6-failure plus 3 for `filter_questions_by_status` — all
-30 tests in `tests/test_coach_inbox.py` pass. The "exactly one query" test needed no change: with
-empty threads the function returns before ever querying workflow, so that test still sees 1 query.
+Done (commits so far, oldest first):
+668bea6 brief filled in.
+b6e5811 `config.py` `PRIVATE_THREAD_WORKFLOW_TABLE` + `migrations/018_private_thread_workflow.sql`
+(simple `CREATE TABLE IF NOT EXISTS`, not yet run).
+f0a2e4c `WorkflowResult` enum + `set_thread_workflow` in `coach_inbox.py` (one MERGE on
+`private_thread_workflow` only, REFUSED before any query on bad status/empty id/updated_by,
+WRITE_FAILED + alert on a raising client) with `tests/test_coach_inbox_workflow.py`.
+e5cd1bf `load_member_questions` derives `status="closed"` via `_read_workflow_closed_at` (R3/R5/R6,
+own try/except so a workflow-read failure never looks like a main-read failure) and
+`filter_questions_by_status` (R4), with the extended `tests/test_coach_inbox.py` (30 tests).
+0add7d1 `reply_form.py`: `close_thread` param on `on_reply_submit`/`render_thread_and_reply` — an OK
+reply closes the thread at once (R7), a non-OK close overwrites the message with "Answer sent, but
+the thread could not be closed" while still clearing the box/cache; `tests/test_reply_form.py` now
+13 tests.
+e0d7004 fixed a false positive the workflow MERGE test tripped in
+`tests/test_private_chat_insert_only.py`'s 200-char proximity scan (its own literal "MERGE" sitting
+near its own "private_threads"/"private_messages" negative-assertion strings) by building the
+keyword at runtime, the same trick that guard's own fixture already uses.
+1487f40 `app.py`: `_member_question_opts(status)` (Close offered until closed, then only Answer);
+Close dispatch in the `_triggered` single-row branch calls `set_thread_workflow` directly (no
+dialog — R5/R6), clears `load_member_questions` cache and reruns on OK, `st.error` with the row left
+in place on `WRITE_FAILED`; inline-style Closed badge next to waiting/answered; `filter_questions_
+by_status(_member_questions, filter_status)` wired in alongside `should_include_questions`; a
+`close_thread` lambda now passed into `show_member_question_dialog`'s `render_thread_and_reply`
+call.
 
-In flight: about to `git add -N .` and commit the `coach_inbox.py` + `tests/test_coach_inbox.py`
-changes just described (one commit, not yet made).
+Full suite green: `unset LIVE_SMOKE; /opt/anaconda3/bin/python3 -m pytest tests/ -q -p
+no:cacheprovider` → 158 passed, 17 skipped (baseline 141 passed + 17 new this branch, no
+regressions).
+
+Not yet done: app.py's own dropdown/dialog click-through has no automated test — its login gate and
+live BigQuery loaders keep it out of AppTest, same as `add_coach_reply`/`set_thread_workflow`'s own
+spec test notes say for the rest of app.py's wiring — so it needs a by-hand check on the live app
+after deploy (Streamlit 1.58), not before.
 
 Next, in order:
-1. Commit the in-flight `coach_inbox.py`/`tests/test_coach_inbox.py` change described above.
-2. `reply_form.py`: add `close_thread` param to `on_reply_submit`/`render_thread_and_reply`; after
-   a reply returns OK, call it and if not `WorkflowResult.OK` overwrite the result message with
-   "Answer sent, but the thread could not be closed" (body/cache still clear either way). Update
-   `tests/test_reply_form.py` call sites plus new R7 tests, red before green.
-3. `app.py`: status-dependent `_MEMBER_QUESTION_OPTS` (Close hidden once a row is closed); Close
-   dispatch in the `_triggered` short-circuit's member-question branch, calling
-   `set_thread_workflow(thread_id, status="closed", updated_by=current_user)` directly (no dialog,
-   per R5/R6 — "Close asks nothing"), clearing `load_member_questions` cache and rerunning on OK,
-   `st.error` and no state change on WRITE_FAILED; inline-style Closed badge next to the existing
-   waiting/answered ones; `filter_questions_by_status(_member_questions, filter_status)` applied
-   alongside the existing `should_include_questions` check (~1734-1754); pass a `close_thread`
-   lambda into `show_member_question_dialog`'s call to `render_thread_and_reply`. Verify line
-   numbers fresh (they drift) before editing.
-4. Full suite: `unset LIVE_SMOKE; /opt/anaconda3/bin/python3 -m pytest tests/ -q -p no:cacheprovider`
-   — expect 141 + new tests passed, 17 skipped, no regressions.
-5. Merge `origin/main` once, right before reporting. `git add -N .`. `wt-done.sh --check
-   coach-inbox-close` until 0. Report to `helpdesk-opzichter`, then stop.
+1. Merge `origin/main` once, right before reporting (never rebase mid-round).
+2. `git add -N .`, confirm `git status` clean of anything unexpected.
+3. Run `wt-done.sh --check coach-inbox-close` until it exits 0.
+4. Report to `helpdesk-opzichter`: branch, commit range (668bea6..1487f40), HEAD sha, summary, the
+   red-then-green proofs run this branch, and that migration 018 must run before deploy (the table
+   `private_thread_workflow` does not exist yet). Then stop and wait.
 
 Traps (with dates):
 - 2026-10-05 (overseer relay): zone tables read-only except INSERT into `private_messages`,
   enforced only by `tests/test_private_chat_insert_only.py` — workflow MERGE must never name
-  `private_threads`/`private_messages`.
+  `private_threads`/`private_messages`, and must avoid the guard's own literal-proximity false
+  positive too (see e0d7004 above) — build the keyword at runtime if a test needs both close by.
 - 2026-10-05 (overseer relay): never run migration 018 or touch BigQuery with `bq`/`gcloud` — the
   table does not exist yet; that is exactly R6's case, prove it with a fake, not a real outage.
 - 2026-10-05 (overseer relay): only `/opt/anaconda3/bin/python3` has pytest/deps; never
@@ -241,3 +246,7 @@ Traps (with dates):
 - 2026-10-05 (self, during reading): `show_member_question_dialog` is at app.py ~1242, not ~1782
   as the relay said — 1782 is the `_pending_action` dispatch that opens it. Verify line numbers
   fresh each time; they drift as app.py is edited this round.
+- 2026-10-05 (self): `app.py` cannot be imported directly even for a pure-logic unit test —
+  `st.user.is_logged_in` raises at module import time with no `DEV_USER` set and no live script
+  context, so anything defined inside app.py (like `_member_question_opts`) is checked by hand, not
+  by pytest, unless it's moved into a module app.py merely imports.
