@@ -69,15 +69,55 @@ Architecture — gate 2: agreed text is `docs/specs/modules/coach_inbox.md`, sec
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass with fixes, now resolved
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+Overseer review of 668bea6..d260c16, by mutation testing a scratch copy
+(14 mutations):
+1. `load_member_questions`'s closed-status derivation forced a reopened
+   thread back to "waiting" even once a coach had answered it again —
+   should keep "answered" (load R3's own newest-message rule).
+2. `test_coach_inbox_workflow.py`'s MERGE-shape assertions only checked
+   that words appeared somewhere in the SQL string — `ON TRUE`, dropping
+   `closed_at` from the UPDATE branch, and `status = 'open'` all still
+   passed.
+3. `_member_question_opts` lived in app.py with no automated test — the
+   spec's own test note expects it tested, but app.py's login gate makes
+   it unimportable under pytest.
+4. The existing closed/reopen tests used ISO strings for `created_at`/
+   `closed_at`, proving only string-sort order, not real datetime
+   comparison.
+5. `closed_at is None` missed `pd.NaT`, which is how a NULL column
+   actually surfaces from `.to_dataframe()` — a row like that stuck
+   "closed" forever.
+6. Tidy: migration 018's `thread_id` had `NOT NULL`, which the spec does
+   not; several touched functions and test helpers were missing the
+   docstrings the global CLAUDE.md rule asks for.
+
+Held back by the overseer, not part of this round: a cache/race-condition
+question on `closed_at` being "now" at click time, escalated to Martin
+separately — no fix attempted here pending that answer. The outage-wording
+question in app.py was left as-is, no action needed.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. `a924fa8` — kept the newest-message-derived status unless there is no
+   member message after `closed_at`; new tests for reopen-then-reanswer
+   and for the plain reopen case with real `pd.Timestamp` values (covers
+   finding 4 too).
+2. `df73684` — whitespace-normalized, branch-exact assertions on the
+   WHEN MATCHED/WHEN NOT MATCHED text; verified red on all three
+   mutations from finding 2 on a scratch copy, then green on the real
+   code, before committing.
+3. `4bcba20` — moved the function into `coach_inbox.py` as
+   `member_question_action_opts`, three new tests, app.py's call site
+   and dropdown comment updated.
+5. `a924fa8` — same commit as finding 1 (`pd.isna(closed_at)` instead of
+   `is None`), with its own reopen test using `pd.NaT` directly.
+6. `b80b747` — migration 018's `thread_id` column, and docstrings for
+   `reply_form.py`'s module docstring, app.py's Close branch, `_params`,
+   `_thread_row`, and both `_close_thread` fakes.
+
+Full suite: 164 passed, 17 skipped (was 158 passed before this round).
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
@@ -189,48 +229,40 @@ and why. The overseer applies what it agrees with on main.
 
 ## State
 
-Done (commits so far, oldest first):
-668bea6 brief filled in.
-b6e5811 `config.py` `PRIVATE_THREAD_WORKFLOW_TABLE` + `migrations/018_private_thread_workflow.sql`
-(simple `CREATE TABLE IF NOT EXISTS`, not yet run).
-f0a2e4c `WorkflowResult` enum + `set_thread_workflow` in `coach_inbox.py` (one MERGE on
-`private_thread_workflow` only, REFUSED before any query on bad status/empty id/updated_by,
-WRITE_FAILED + alert on a raising client) with `tests/test_coach_inbox_workflow.py`.
-e5cd1bf `load_member_questions` derives `status="closed"` via `_read_workflow_closed_at` (R3/R5/R6,
-own try/except so a workflow-read failure never looks like a main-read failure) and
-`filter_questions_by_status` (R4), with the extended `tests/test_coach_inbox.py` (30 tests).
-0add7d1 `reply_form.py`: `close_thread` param on `on_reply_submit`/`render_thread_and_reply` — an OK
-reply closes the thread at once (R7), a non-OK close overwrites the message with "Answer sent, but
-the thread could not be closed" while still clearing the box/cache; `tests/test_reply_form.py` now
-13 tests.
-e0d7004 fixed a false positive the workflow MERGE test tripped in
-`tests/test_private_chat_insert_only.py`'s 200-char proximity scan (its own literal "MERGE" sitting
-near its own "private_threads"/"private_messages" negative-assertion strings) by building the
-keyword at runtime, the same trick that guard's own fixture already uses.
-1487f40 `app.py`: `_member_question_opts(status)` (Close offered until closed, then only Answer);
-Close dispatch in the `_triggered` single-row branch calls `set_thread_workflow` directly (no
-dialog — R5/R6), clears `load_member_questions` cache and reruns on OK, `st.error` with the row left
-in place on `WRITE_FAILED`; inline-style Closed badge next to waiting/answered; `filter_questions_
-by_status(_member_questions, filter_status)` wired in alongside `should_include_questions`; a
-`close_thread` lambda now passed into `show_member_question_dialog`'s `render_thread_and_reply`
-call.
+Done: the original close-only build (668bea6..1487f40 — workflow table/migration 018,
+`set_thread_workflow`, closed-status derivation in `load_member_questions`, close-on-answer in
+`reply_form.py`, the Close action and closed badge in `app.py`), then the overseer's PASS WITH
+FIXES review of that range, now all fixed (a924fa8..b80b747):
+- a924fa8: two closed-status bugs — a reopened-then-reanswered thread now keeps "answered" (was
+  forced to "waiting"); `pd.isna(closed_at)` replaces `is None` (NULL surfaces as `pd.NaT`, which
+  used to stick a row closed forever). Tests include a real-`pd.Timestamp` case.
+- df73684: `test_coach_inbox_workflow.py`'s MERGE assertion rewritten branch-exact and whitespace-
+  normalized; verified red on all three mutations the overseer found before going green.
+- 4bcba20: `_member_question_opts` moved from (untestable) app.py into `coach_inbox.py` as
+  `member_question_action_opts`, three new tests.
+- b80b747: migration 018's `thread_id` dropped `NOT NULL` to match spec; missing docstrings added
+  (reply_form.py module docstring, app.py Close branch, `_params`/`_thread_row`/`_close_thread`).
 
 Full suite green: `unset LIVE_SMOKE; /opt/anaconda3/bin/python3 -m pytest tests/ -q -p
-no:cacheprovider` → 158 passed, 17 skipped (baseline 141 passed + 17 new this branch, no
-regressions).
+no:cacheprovider` → 164 passed, 17 skipped (baseline 141, no regressions).
 
-Not yet done: app.py's own dropdown/dialog click-through has no automated test — its login gate and
-live BigQuery loaders keep it out of AppTest, same as `add_coach_reply`/`set_thread_workflow`'s own
-spec test notes say for the rest of app.py's wiring — so it needs a by-hand check on the live app
-after deploy (Streamlit 1.58), not before.
+Not yet done: app.py's own dropdown/dialog click-through still has no automated test (login gate +
+live BigQuery loaders keep it out of AppTest) — a by-hand check on the live app after deploy
+(Streamlit 1.58), not before.
+
+On hold, not this worker's call: a cache/race-condition question on `closed_at` being "now" at
+click time, escalated to Martin separately — no fix attempted pending that answer.
+
+In flight: none — all six review fixes committed, brief's `## Agentic review` filled in with
+`Verdict: pass with fixes, now resolved`. Next is the report-and-stop sequence below.
 
 Next, in order:
 1. Merge `origin/main` once, right before reporting (never rebase mid-round).
 2. `git add -N .`, confirm `git status` clean of anything unexpected.
 3. Run `wt-done.sh --check coach-inbox-close` until it exits 0.
-4. Report to `helpdesk-opzichter`: branch, commit range (668bea6..1487f40), HEAD sha, summary, the
-   red-then-green proofs run this branch, and that migration 018 must run before deploy (the table
-   `private_thread_workflow` does not exist yet). Then stop and wait.
+4. Report to `helpdesk-opzichter`: branch, commit range (668bea6..b80b747), HEAD sha, summary of the
+   six review fixes and their red-then-green proofs, and that migration 018 must run before deploy
+   (the table `private_thread_workflow` does not exist yet). Then stop and wait.
 
 Traps (with dates):
 - 2026-10-05 (overseer relay): zone tables read-only except INSERT into `private_messages`,
@@ -248,5 +280,13 @@ Traps (with dates):
   fresh each time; they drift as app.py is edited this round.
 - 2026-10-05 (self): `app.py` cannot be imported directly even for a pure-logic unit test —
   `st.user.is_logged_in` raises at module import time with no `DEV_USER` set and no live script
-  context, so anything defined inside app.py (like `_member_question_opts`) is checked by hand, not
-  by pytest, unless it's moved into a module app.py merely imports.
+  context, so anything defined inside app.py (like the former `_member_question_opts`) is checked by
+  hand, not by pytest, unless it's moved into a module app.py merely imports. Fixed in 4bcba20: it now
+  lives in `coach_inbox.py` as `member_question_action_opts` and app.py just calls it — trap 5 above
+  (`_MEMBER_QUESTION_OPTS`/`_member_question_opts`) is stale as of that commit.
+- 2026-10-05 (overseer review, mutation testing a scratch copy): six findings — two real bugs in
+  `load_member_questions`'s closed-status derivation (reopen-then-reanswer, `pd.NaT`), a weak MERGE-
+  shape test assertion, an untestable dropdown-options function, an ISO-string-only test, and several
+  missing docstrings/a migration mismatch. All six fixed — see `## Agentic review` above for the full
+  findings/fixed mapping. A `closed_at`-is-"now"-at-click-time race condition was raised but held back
+  for a spec answer from Martin, not fixed here.
