@@ -30,7 +30,7 @@ Used by: every worktree session and the overseer's review (offline run); `deploy
 - R4: all other test files run as before; none of them needs BigQuery or credentials.
 
 *Examples:*
-`python3 -m pytest tests/ -q` -> `138 passed, 17 skipped`, exit 0, nothing read from or written to BigQuery.
+`python3 -m pytest tests/ -q` -> `141 passed, 17 skipped`, exit 0, nothing read from or written to BigQuery.
 `LIVE_SMOKE=true python3 -m pytest tests/smoke_test.py -q` -> `17 skipped`, exit 0.
 
 *Inputs:* the environment variable `LIVE_SMOKE`.
