@@ -94,3 +94,20 @@ Done:
 In flight (file:line):
 Next:
 Traps (with dates):
+
+## Agentic review
+
+### Verdict
+Verdict: pass
+
+### Findings
+1. The default-Python test (`test_deploy_sh_defaults_to_anaconda_python_when_python_is_unset`)
+   only checks that the string `/opt/anaconda3/bin/python3` appears in
+   `deploy.sh` — a comment would satisfy it too. Accepted as is: the spec's
+   Test line for R3 asks for exactly a text read here.
+2. Deploy implied: nothing running changes from this landing alone; no
+   deploy follows it automatically. The change proves itself (R1) at the
+   next real `./deploy.sh` run, by hand.
+
+### Fixed in
+Not fixed — neither finding needs a code change (overseer verdict: PASS).
