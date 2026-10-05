@@ -8,7 +8,18 @@ this file never needs live credentials or touches BigQuery, and migration
 018 (the real table) has not been run anywhere yet.
 """
 
+import re
+
 import coach_inbox
+
+
+def _normalize_sql(sql):
+    """Input: a MERGE statement's raw text, indented however coach_inbox.py
+    happens to format it. Output: the same text with every run of
+    whitespace collapsed to one space, so a test can assert an exact phrase
+    (e.g. a whole WHEN branch) without being tied to the source file's own
+    line breaks and indentation."""
+    return re.sub(r"\s+", " ", sql).strip()
 
 
 class _FakeWorkflowJob:
@@ -45,6 +56,9 @@ class _RaisingWorkflowClient:
 
 
 def _params(job_config):
+    """Input: a job_config a fake client recorded. Output: its query
+    parameters as a plain {name: value} dict, so a test can assert on
+    values directly instead of walking ScalarQueryParameter objects."""
     return {p.name: p.value for p in job_config.query_parameters}
 
 
@@ -69,6 +83,26 @@ def test_set_thread_workflow_success_writes_expected_merge_and_returns_ok():
     assert "private_thread_workflow" in sql
     assert "private_threads" not in sql
     assert "private_messages" not in sql
+
+    # Branch-exact, not just "this text appears somewhere": a looser
+    # per-substring check (status/closed_at/updated_at/updated_by each
+    # present anywhere in sql) stayed green even with the ON clause
+    # replaced by "ON TRUE", closed_at dropped from the UPDATE branch, or
+    # status set to 'open' — each of those was tried on a scratch copy and
+    # left the old assertions passing. Matching each WHEN branch's whole
+    # phrase, whitespace-normalized, catches all three.
+    normalized = _normalize_sql(sql)
+    assert "ON target.thread_id = source.thread_id" in normalized
+    assert "ON TRUE" not in normalized
+    assert (
+        "WHEN MATCHED THEN UPDATE SET status = 'closed', "
+        "closed_at = CURRENT_TIMESTAMP(), updated_at = CURRENT_TIMESTAMP(), "
+        "updated_by = @updated_by"
+    ) in normalized
+    assert (
+        "WHEN NOT MATCHED THEN INSERT (thread_id, status, closed_at, updated_at, updated_by) "
+        "VALUES (@thread_id, 'closed', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), @updated_by)"
+    ) in normalized
 
     params = _params(fake.job_configs[0])
     assert params["thread_id"] == "th1"
