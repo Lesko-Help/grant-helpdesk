@@ -32,14 +32,14 @@ def reply_result_message(result):
     return "Could not send the reply. Please try again."
 
 
-def on_reply_submit(thread_id, body_key, result_key, current_user, lookup_author, add_reply, clear_cache):
+def on_reply_submit(thread_id, body_key, result_key, current_user, lookup_author, add_reply, clear_cache, close_thread):
     """
     Input: the thread's id; the text_area widget's own session_state key;
     a session_state key to stash the outcome message in for the main script
-    body to show; the logged-in coach's email; and three callables (author
-    lookup, the actual write, the cache to clear on success) so app.py can
-    pass the real bq_client/coach_inbox/load_member_questions and a test can
-    pass fakes.
+    body to show; the logged-in coach's email; and four callables (author
+    lookup, the actual write, the cache to clear on success, and closing the
+    thread) so app.py can pass the real bq_client/coach_inbox functions and a
+    test can pass fakes.
     Output: none — writes the outcome into session_state[result_key], and on
     success also clears session_state[body_key].
     Why this runs as an on_click callback rather than inline code after the
@@ -49,6 +49,11 @@ def on_reply_submit(thread_id, body_key, result_key, current_user, lookup_author
     this is the one place allowed to reset the text_area — resetting it
     after the button check, in the script body, raises StreamlitAPIException
     on every successful send, because by then the text_area already exists.
+
+    R7: a reply that returns OK closes the thread at once via close_thread —
+    the reply still counts as sent and the box still clears even when that
+    close itself does not return OK, but the outcome message changes to say
+    so, since the coach needs to know the thread is still open.
     """
     body = st.session_state.get(body_key, "")
     if not body.strip():
@@ -63,17 +68,20 @@ def on_reply_submit(thread_id, body_key, result_key, current_user, lookup_author
     if result is coach_inbox.ReplyResult.OK:
         st.session_state[body_key] = ""
         clear_cache()
+        close_result = close_thread(thread_id, current_user)
+        if close_result is not coach_inbox.WorkflowResult.OK:
+            st.session_state[result_key] = "Answer sent, but the thread could not be closed"
 
 
-def render_thread_and_reply(thread_id, messages, body_key, result_key, current_user, lookup_author, add_reply, clear_cache):
+def render_thread_and_reply(thread_id, messages, body_key, result_key, current_user, lookup_author, add_reply, clear_cache, close_thread):
     """
     Input: the private thread's id; its messages so far, oldest first, each
     a dict with author_role/body/created_at — the same shape
     coach_inbox.load_member_questions already returns on the row, so opening
     this needs no extra BigQuery read; the reply box's and outcome's own
-    session_state keys; the logged-in coach's email; and the three
+    session_state keys; the logged-in coach's email; and the four
     dependency callables on_reply_submit needs (author lookup, the actual
-    write, the cache to clear on success).
+    write, the cache to clear on success, and closing the thread on OK).
     Output: none — draws the thread and the reply form. On a successful
     send it calls st.rerun(), the same idiom show_flag_dialog,
     show_assign_dialog and show_delete_dialog already use to close their
@@ -97,7 +105,7 @@ def render_thread_and_reply(thread_id, messages, body_key, result_key, current_u
         st.form_submit_button(
             "Send reply",
             on_click=on_reply_submit,
-            args=(thread_id, body_key, result_key, current_user, lookup_author, add_reply, clear_cache),
+            args=(thread_id, body_key, result_key, current_user, lookup_author, add_reply, clear_cache, close_thread),
         )
 
     if result_key in st.session_state:

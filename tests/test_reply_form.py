@@ -38,12 +38,17 @@ def _old_buggy_script(add_reply_result):
             st.session_state["reply_body"] = ""
 
 
-def _fixed_script(add_reply_result, lookup_result):
+def _fixed_script(add_reply_result, lookup_result, close_thread_result=None):
     import streamlit as st
 
+    import coach_inbox
     import reply_form
 
+    if close_thread_result is None:
+        close_thread_result = coach_inbox.WorkflowResult.OK
+
     st.session_state.setdefault("calls", [])
+    st.session_state.setdefault("close_calls", [])
 
     def _add_reply(thread_id, author_id, body):
         st.session_state["calls"].append((thread_id, author_id, body))
@@ -55,6 +60,10 @@ def _fixed_script(add_reply_result, lookup_result):
     def _clear_cache():
         st.session_state["cache_cleared"] = True
 
+    def _close_thread(thread_id, current_user):
+        st.session_state["close_calls"].append((thread_id, current_user))
+        return close_thread_result
+
     with st.form("reply_form", clear_on_submit=False):
         st.text_area("Reply", key="reply_body", label_visibility="collapsed")
         st.form_submit_button(
@@ -62,7 +71,7 @@ def _fixed_script(add_reply_result, lookup_result):
             on_click=reply_form.on_reply_submit,
             args=(
                 "th1", "reply_body", "reply_result", "coach@example.com",
-                _lookup, _add_reply, _clear_cache,
+                _lookup, _add_reply, _clear_cache, _close_thread,
             ),
         )
     msg = st.session_state.pop("reply_result", None)
@@ -155,6 +164,44 @@ def test_on_reply_submit_unknown_coach_never_calls_add_reply():
     ]
 
 
+# ── R7: a successful reply closes the thread ────────────────────────────────
+
+def test_on_reply_submit_success_closes_the_thread_once():
+    at = AppTest.from_function(_fixed_script, args=(coach_inbox.ReplyResult.OK, 42))
+    at.run()
+    at.text_area[0].set_value("hello there").run()
+    at.button[0].click().run()
+
+    assert list(at.exception) == []
+    assert at.session_state["close_calls"] == [("th1", "coach@example.com")]
+    assert list(at.error) == []
+
+
+def test_on_reply_submit_non_ok_never_calls_close_thread():
+    at = AppTest.from_function(_fixed_script, args=(coach_inbox.ReplyResult.WRITE_FAILED, 42))
+    at.run()
+    at.text_area[0].set_value("x").run()
+    at.button[0].click().run()
+
+    assert at.session_state["close_calls"] == []
+
+
+def test_on_reply_submit_success_with_failed_close_still_clears_but_warns():
+    at = AppTest.from_function(
+        _fixed_script,
+        args=(coach_inbox.ReplyResult.OK, 42, coach_inbox.WorkflowResult.WRITE_FAILED),
+    )
+    at.run()
+    at.text_area[0].set_value("hello there").run()
+    at.button[0].click().run()
+
+    assert list(at.exception) == []
+    assert at.session_state["close_calls"] == [("th1", "coach@example.com")]
+    assert at.session_state["cache_cleared"] is True
+    assert at.text_area[0].value == ""
+    assert [e.value for e in at.error] == ["Answer sent, but the thread could not be closed"]
+
+
 # ── render_thread_and_reply: the answer-dialog's body ───────────────────────
 #
 # Same fake-dependency shape as _fixed_script above, but calling the dialog
@@ -174,10 +221,14 @@ _MESSAGES = [
 ]
 
 
-def _dialog_script(add_reply_result, lookup_result, messages):
+def _dialog_script(add_reply_result, lookup_result, messages, close_thread_result=None):
     import streamlit as st
 
+    import coach_inbox
     import reply_form
+
+    if close_thread_result is None:
+        close_thread_result = coach_inbox.WorkflowResult.OK
 
     # Counts every script execution, including ones triggered by a
     # st.rerun() inside render_thread_and_reply itself — a plain "box got
@@ -185,6 +236,7 @@ def _dialog_script(add_reply_result, lookup_result, messages):
     # clearing the box on its own, since that happens either way.
     st.session_state["runs"] = st.session_state.get("runs", 0) + 1
     st.session_state.setdefault("calls", [])
+    st.session_state.setdefault("close_calls", [])
 
     def _add_reply(thread_id, author_id, body):
         st.session_state["calls"].append((thread_id, author_id, body))
@@ -196,9 +248,13 @@ def _dialog_script(add_reply_result, lookup_result, messages):
     def _clear_cache():
         st.session_state["cache_cleared"] = True
 
+    def _close_thread(thread_id, current_user):
+        st.session_state["close_calls"].append((thread_id, current_user))
+        return close_thread_result
+
     reply_form.render_thread_and_reply(
         "th1", messages, "reply_body", "reply_result", "coach@example.com",
-        _lookup, _add_reply, _clear_cache,
+        _lookup, _add_reply, _clear_cache, _close_thread,
     )
 
 
