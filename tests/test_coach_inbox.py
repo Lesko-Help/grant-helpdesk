@@ -380,6 +380,10 @@ def test_load_member_questions_builds_rows_from_threads_and_messages():
 # ── closed status, derived from private_thread_workflow (R3, R5, R6) ───────
 
 def _thread_row(thread_id, member_id, messages, full_name=""):
+    """Input: a thread's id, member_id, its messages (oldest first) and an
+    optional member full_name. Output: one row of the shape the real
+    threads_sql query returns, for building a _FakeBigQueryClient's
+    threads_df without repeating every column by hand in each test."""
     return {
         "thread_id": thread_id,
         "member_id": member_id,

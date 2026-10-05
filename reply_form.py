@@ -6,7 +6,7 @@ Pulled out of app.py so it can be exercised by a real Streamlit widget test
 loaders getting in the way — see tests/test_reply_form.py. app.py imports
 and calls on_reply_submit directly; nothing in this file talks to BigQuery
 itself, the caller always passes that in (lookup_author, add_reply,
-clear_cache), which is also what lets the test use fakes.
+clear_cache, close_thread), which is also what lets the test use fakes.
 """
 
 import streamlit as st

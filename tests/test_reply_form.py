@@ -61,6 +61,9 @@ def _fixed_script(add_reply_result, lookup_result, close_thread_result=None):
         st.session_state["cache_cleared"] = True
 
     def _close_thread(thread_id, current_user):
+        """Fakes coach_inbox.set_thread_workflow: records the call (so a
+        test can assert it happened, and with what args) and returns the
+        WorkflowResult the test wants, without ever touching BigQuery."""
         st.session_state["close_calls"].append((thread_id, current_user))
         return close_thread_result
 
@@ -249,6 +252,7 @@ def _dialog_script(add_reply_result, lookup_result, messages, close_thread_resul
         st.session_state["cache_cleared"] = True
 
     def _close_thread(thread_id, current_user):
+        """Same fake as _fixed_script's own _close_thread above — see there."""
         st.session_state["close_calls"].append((thread_id, current_user))
         return close_thread_result
 

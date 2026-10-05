@@ -1417,7 +1417,15 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
                 st.rerun(scope="app")  # must reach top-level dialog trigger
         else:
             if _t_act == "Close" and _t_rdict.get("source") == "member_question":
-                # Close asks nothing (R5/R6): one MERGE, no dialog, no reason.
+                # A member-question row's own Close, distinct from a ticket's
+                # Close just below: no dialog, no reason asked (R5/R6) — one
+                # MERGE via set_thread_workflow against private_thread_workflow,
+                # the helpdesk-owned table, never a write to a ticket.
+                # content_id is "pc:<thread_id>" (see load_member_questions),
+                # so the prefix is stripped before the call. On success the
+                # cached read is cleared so the next load shows it closed; on
+                # failure the row is left alone with its own error, matching
+                # the spec's "a failed Close -> st.error and the row stays".
                 _wf_thread_id = _t_cid[len("pc:"):]
                 _wf_result = coach_inbox.set_thread_workflow(
                     _wf_thread_id, status="closed", updated_by=current_user

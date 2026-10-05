@@ -11,7 +11,7 @@
 -- before the app that depends on this table deploys.
 
 CREATE TABLE IF NOT EXISTS `bigtribebuilders.grant_helpdesk.private_thread_workflow` (
-  thread_id   STRING      NOT NULL,
+  thread_id   STRING,
   status      STRING,
   assignee    STRING,
   lane        STRING,
