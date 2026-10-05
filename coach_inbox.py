@@ -38,7 +38,10 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
     created_at (the thread's own), last_activity_at (its newest message),
     messages (list of {author_role, body, created_at}, oldest first), and
     status ("waiting" when the member spoke last, "answered" when a coach
-    did).
+    did, "closed" when private_thread_workflow (see
+    _read_workflow_closed_at) carries a closed_at newer than every member
+    message in the thread — a later member message instead reopens it,
+    keeping whatever waiting/answered its own newest message already says).
 
     Why: the Tickets tab needs one row per thread, not per message, and
     needs to know at a glance whether a reply is owed.
@@ -135,16 +138,23 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
         closed_at_by_thread = _read_workflow_closed_at(client)
         for rec, thread_id in zip(records, thread_ids):
             closed_at = closed_at_by_thread.get(thread_id)
-            if closed_at is None:
+            # pd.isna, not `is None`: a NULL closed_at comes back from
+            # .to_dataframe() as pd.NaT, not None — missing this left a row
+            # stuck "closed" forever, since any comparison against NaT is
+            # always False and so could never satisfy the reopen check below.
+            if pd.isna(closed_at):
                 continue
             newest_member_at = max(
                 (m["created_at"] for m in rec["messages"] if m["author_role"] == "member"),
                 default=None,
             )
-            # R5: a member message after closed_at reopens the thread as
-            # waiting, nothing written; otherwise it stays closed (R3),
-            # overriding whatever waiting/answered the loop above set.
-            rec["status"] = "waiting" if newest_member_at and newest_member_at > closed_at else "closed"
+            # R5: a member message after closed_at reopens the thread — the
+            # loop above already derived the right waiting/answered status
+            # from the true newest message overall, so that is left as-is;
+            # only the genuinely still-closed case (no member message after
+            # closed_at) overrides it to "closed" (R3).
+            if not (newest_member_at and newest_member_at > closed_at):
+                rec["status"] = "closed"
 
         result = pd.DataFrame.from_records(records, columns=_QUESTION_COLUMNS)
         result.attrs["read_failed"] = False

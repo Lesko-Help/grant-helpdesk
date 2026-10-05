@@ -427,6 +427,66 @@ def test_load_member_questions_other_threads_unaffected_by_an_unrelated_closed_r
     assert by_id == {"pc:th1": "waiting", "pc:th2": "closed"}
 
 
+def test_load_member_questions_reopened_then_reanswered_shows_answered_not_waiting():
+    # Bug found in review: a member reopens a closed thread and a coach
+    # answers again — load R3's own rule is "the newest message decides",
+    # and the newest message here is the coach's, so this must read
+    # "answered", not get forced back to "waiting" just because some member
+    # message exists somewhere after closed_at.
+    threads_df = pd.DataFrame([
+        _thread_row("th1", 111, [
+            _msg("member", "Which form do I use?", "2026-10-01T08:00:00Z"),
+            _msg("coach", "Use form B", "2026-10-01T09:00:00Z"),
+            _msg("member", "Actually, one more question", "2026-10-01T10:05:00Z"),
+            _msg("coach", "Sure, here you go", "2026-10-01T10:10:00Z"),
+        ]),
+    ])
+    workflow_df = pd.DataFrame([{"thread_id": "th1", "closed_at": "2026-10-01T10:00:00Z"}])
+    fake = _FakeBigQueryClient(threads_df, workflow_df=workflow_df)
+
+    result = coach_inbox.load_member_questions(client=fake)
+
+    assert result.iloc[0]["status"] == "answered"
+
+
+def test_load_member_questions_reopen_check_uses_real_datetime_comparison():
+    # The earlier closed/reopen tests above use ISO strings, which happen to
+    # sort the same way real time does — proving only that string ordering
+    # works, not that the comparison handles the real datetime/Timestamp
+    # values BigQuery's to_dataframe() actually returns.
+    threads_df = pd.DataFrame([
+        _thread_row("th1", 111, [
+            _msg("member", "Which form do I use?", pd.Timestamp("2026-10-01T08:00:00Z")),
+            _msg("coach", "Use form B", pd.Timestamp("2026-10-01T09:00:00Z")),
+            _msg("member", "One more thing", pd.Timestamp("2026-10-01T10:05:00Z")),
+        ]),
+    ])
+    workflow_df = pd.DataFrame([{"thread_id": "th1", "closed_at": pd.Timestamp("2026-10-01T10:00:00Z")}])
+    fake = _FakeBigQueryClient(threads_df, workflow_df=workflow_df)
+
+    result = coach_inbox.load_member_questions(client=fake)
+
+    assert result.iloc[0]["status"] == "waiting"
+
+
+def test_load_member_questions_nat_closed_at_does_not_stick_closed_forever():
+    # Bug found in review: `closed_at is None` misses pd.NaT, which is how a
+    # NULL closed_at actually surfaces after .to_dataframe() — a row like
+    # this used to get stuck "closed" forever, since any comparison against
+    # NaT is always False and so could never satisfy the reopen check.
+    # pd.isna() catches it instead, leaving the row's status as whatever the
+    # first loop already derived from its real newest message.
+    threads_df = pd.DataFrame([
+        _thread_row("th1", 111, [_msg("member", "hi", "2026-10-01T08:00:00Z")]),
+    ])
+    workflow_df = pd.DataFrame([{"thread_id": "th1", "closed_at": pd.NaT}])
+    fake = _FakeBigQueryClient(threads_df, workflow_df=workflow_df)
+
+    result = coach_inbox.load_member_questions(client=fake)
+
+    assert result.iloc[0]["status"] == "waiting"
+
+
 def test_load_member_questions_workflow_read_failure_returns_all_threads_none_closed(capsys):
     # R6: only the workflow read raises -> every thread still comes back,
     # none shown closed, with its own distinct alert line (not "read").
