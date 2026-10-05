@@ -64,6 +64,10 @@ GRANT_COACHES_TABLE     = f"{PROJECT_ID}.{DATASET}.grant_coaches"
 FOLLOWUP_QUEUE_TABLE    = f"{PROJECT_ID}.{DATASET}.followup_queue"
 STANDARD_REPLIES_TABLE  = f"{PROJECT_ID}.{DATASET}.standard_replies"
 
+# Close/assign/lane state for a 1:1 member question thread (migrations/018).
+# Keyed on thread_id, written only by coach_inbox.set_thread_workflow.
+PRIVATE_THREAD_WORKFLOW_TABLE = f"{PROJECT_ID}.{DATASET}.private_thread_workflow"
+
 # space_id → space_name lookup. Populated monthly by jobs/sync_spaces.py from
 # the MN Admin API (/spaces). Read once (cached) to label which space/channel a
 # ticket was commented in. Comments on a member's own profile carry space_id =
