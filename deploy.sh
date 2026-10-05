@@ -31,7 +31,19 @@ echo ""
 
 cd "$(dirname "$0")"  # always run from the project root
 
-if LIVE_SMOKE=1 python3 -m pytest tests/ -v --tb=short; then
+# Which Python runs the suite: PYTHON when Martin sets it, otherwise the
+# one Python on this machine that has pytest installed. Never a bare
+# `python3` — on this machine that resolves to a Python without pytest.
+PYTHON_BIN="${PYTHON:-/opt/anaconda3/bin/python3}"
+
+if ! "$PYTHON_BIN" -c "import pytest" >/dev/null 2>&1; then
+    echo "❌  $PYTHON_BIN has no pytest installed."
+    echo "    PYTHON=/path/to/python ./deploy.sh"
+    echo ""
+    exit 1
+fi
+
+if LIVE_SMOKE=1 "$PYTHON_BIN" -m pytest tests/ -v --tb=short; then
     echo ""
     echo "✅  All tests passed."
 else
