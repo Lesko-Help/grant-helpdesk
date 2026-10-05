@@ -189,47 +189,43 @@ and why. The overseer applies what it agrees with on main.
 
 ## State
 
-Done: nothing coded yet. This brief itself is the only change so far, about to become the first
-commit on this branch. Read `docs/specs/modules/coach_inbox.md` in full, plus `coach_inbox.py`,
-`app.py` (action options ~1330, dispatch ~1548, `show_member_question_dialog` ~1242, status
-filter ~409-421, row rendering ~1466-1572), `config.py` (table constants ~63), `reply_form.py`,
-`tests/test_coach_inbox.py`, `tests/test_coach_inbox_reply.py`, `tests/test_reply_form.py`,
-migrations 008/017 (style reference), CSS files (no existing closed-badge style — plan is inline
-style like the existing "Member question" badge, not a new class).
+Done (commits so far, oldest first): 668bea6 brief filled in; b6e5811 `config.py`
+`PRIVATE_THREAD_WORKFLOW_TABLE` + `migrations/018_private_thread_workflow.sql` (simple
+`CREATE TABLE IF NOT EXISTS`, not yet run); f0a2e4c `WorkflowResult` enum + `set_thread_workflow`
+in `coach_inbox.py` (one MERGE on `private_thread_workflow` only, REFUSED before any query on bad
+status/empty id/updated_by, WRITE_FAILED + alert on a raising client) with
+`tests/test_coach_inbox_workflow.py`, proven red before green, insert-only guard still green.
+Not yet committed but done and green locally: `coach_inbox.py` now also has
+`filter_questions_by_status` (R4) and `load_member_questions` derives `status="closed"` via a new
+`_read_workflow_closed_at(client)` helper (R3/R5/R6) called after the main threads query, with its
+own try/except so a workflow-read failure never looks like a main-read failure;
+`tests/test_coach_inbox.py` has the extended `_FakeBigQueryClient` (`workflow_df` param,
+dispatches on `"private_thread_workflow" in sql`), a new `_WorkflowRaisingClient` fake, and new
+tests for closed/reopen/unrelated-thread/R6-failure plus 3 for `filter_questions_by_status` — all
+30 tests in `tests/test_coach_inbox.py` pass. The "exactly one query" test needed no change: with
+empty threads the function returns before ever querying workflow, so that test still sees 1 query.
 
-In flight: none — about to start `config.py`.
+In flight: about to `git add -N .` and commit the `coach_inbox.py` + `tests/test_coach_inbox.py`
+changes just described (one commit, not yet made).
 
 Next, in order:
-1. `config.py`: add `PRIVATE_THREAD_WORKFLOW_TABLE = f"{PROJECT_ID}.{DATASET}.private_thread_workflow"`
-   near the other `*_TABLE` constants.
-2. `migrations/018_private_thread_workflow.sql`: simple `CREATE TABLE IF NOT EXISTS` style (like
-   008, not 017's transactional rewrite) — write only, header comment says not yet run.
-3. `coach_inbox.py`: `WorkflowResult` enum (OK/REFUSED/WRITE_FAILED); `set_thread_workflow`
-   (one parameterised MERGE on `private_thread_workflow` only, refuse before any query unless
-   `status == "closed"` and both `thread_id`/`updated_by` are non-empty, `report_source_failure`
-   on a raising client); extend `load_member_questions` with a second, independently-caught
-   workflow-table read nested inside the existing try (so a main-read failure and a workflow-read
-   failure stay distinct per R6); add `filter_questions_by_status`.
-   New test file `tests/test_coach_inbox_workflow.py`; extend `_FakeBigQueryClient` in
-   `tests/test_coach_inbox.py` with an optional `workflow_df` param, dispatching `query()` on
-   whether `"private_thread_workflow"` is in the SQL text; add a workflow-raising fake; update
-   `test_load_member_questions_sends_exactly_one_query...` (now 2 queries on success). Red before
-   green against `origin/main` for every new test.
-4. `reply_form.py`: add `close_thread` param to `on_reply_submit`/`render_thread_and_reply`; after
+1. Commit the in-flight `coach_inbox.py`/`tests/test_coach_inbox.py` change described above.
+2. `reply_form.py`: add `close_thread` param to `on_reply_submit`/`render_thread_and_reply`; after
    a reply returns OK, call it and if not `WorkflowResult.OK` overwrite the result message with
    "Answer sent, but the thread could not be closed" (body/cache still clear either way). Update
    `tests/test_reply_form.py` call sites plus new R7 tests, red before green.
-5. `app.py`: status-dependent `_MEMBER_QUESTION_OPTS` (Close hidden once a row is closed); Close
+3. `app.py`: status-dependent `_MEMBER_QUESTION_OPTS` (Close hidden once a row is closed); Close
    dispatch in the `_triggered` short-circuit's member-question branch, calling
    `set_thread_workflow(thread_id, status="closed", updated_by=current_user)` directly (no dialog,
    per R5/R6 — "Close asks nothing"), clearing `load_member_questions` cache and rerunning on OK,
    `st.error` and no state change on WRITE_FAILED; inline-style Closed badge next to the existing
    waiting/answered ones; `filter_questions_by_status(_member_questions, filter_status)` applied
    alongside the existing `should_include_questions` check (~1734-1754); pass a `close_thread`
-   lambda into `show_member_question_dialog`'s call to `render_thread_and_reply`.
-6. Full suite: `unset LIVE_SMOKE; /opt/anaconda3/bin/python3 -m pytest tests/ -q -p no:cacheprovider`
+   lambda into `show_member_question_dialog`'s call to `render_thread_and_reply`. Verify line
+   numbers fresh (they drift) before editing.
+4. Full suite: `unset LIVE_SMOKE; /opt/anaconda3/bin/python3 -m pytest tests/ -q -p no:cacheprovider`
    — expect 141 + new tests passed, 17 skipped, no regressions.
-7. Merge `origin/main` once, right before reporting. `git add -N .`. `wt-done.sh --check
+5. Merge `origin/main` once, right before reporting. `git add -N .`. `wt-done.sh --check
    coach-inbox-close` until 0. Report to `helpdesk-opzichter`, then stop.
 
 Traps (with dates):

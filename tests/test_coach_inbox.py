@@ -28,7 +28,31 @@ class _FakeBigQueryClient:
     """Stands in for google.cloud.bigquery.Client. load_member_questions
     sends a single query joining threads, messages and core_members (review
     finding 6: both datasets confirmed EU, so there is no region reason to
-    split them) — this just hands back the one canned frame it's given."""
+    split them), then — only once it has at least one thread — a second
+    query against private_thread_workflow (R3/R5/R6). Dispatches on the SQL
+    text so one fake covers both; workflow_df defaults to empty (no thread
+    closed), matching every test written before the workflow read existed."""
+
+    def __init__(self, threads_df, workflow_df=None):
+        self._threads_df = threads_df
+        self._workflow_df = (
+            workflow_df if workflow_df is not None
+            else pd.DataFrame(columns=["thread_id", "closed_at"])
+        )
+        self.queries = []
+
+    def query(self, sql, job_config=None):
+        self.queries.append(sql)
+        if "private_thread_workflow" in sql:
+            return _FakeQueryResult(self._workflow_df)
+        return _FakeQueryResult(self._threads_df)
+
+
+class _WorkflowRaisingClient:
+    """Succeeds on the main threads+messages+core_members query but raises
+    on the private_thread_workflow read — proves R6: a workflow-table
+    outage alone must never hide a member's question, only leave every
+    thread unmarked as closed."""
 
     def __init__(self, threads_df):
         self._threads_df = threads_df
@@ -36,6 +60,8 @@ class _FakeBigQueryClient:
 
     def query(self, sql, job_config=None):
         self.queries.append(sql)
+        if "private_thread_workflow" in sql:
+            raise RuntimeError("could not reach BigQuery")
         return _FakeQueryResult(self._threads_df)
 
 
@@ -111,6 +137,35 @@ def test_should_include_questions_only_when_every_filter_is_all():
     assert coach_inbox.should_include_questions("Urgent", "All") is False
     assert coach_inbox.should_include_questions("All", "Housing") is False
     assert coach_inbox.should_include_questions("All", "All", "General") is False
+
+
+def test_filter_questions_by_status_shows_only_closed_when_filter_is_closed():
+    # R4: Status = closed -> only the closed member questions, nothing else.
+    questions = pd.DataFrame([
+        {"content_id": "pc:t1", "status": "waiting"},
+        {"content_id": "pc:t2", "status": "answered"},
+        {"content_id": "pc:t3", "status": "closed"},
+    ])
+    result = coach_inbox.filter_questions_by_status(questions, "closed")
+    assert result["content_id"].tolist() == ["pc:t3"]
+
+
+def test_filter_questions_by_status_hides_closed_under_every_other_status():
+    # R4: every Status other than "closed", including "All", hides the
+    # closed ones and keeps the rest.
+    questions = pd.DataFrame([
+        {"content_id": "pc:t1", "status": "waiting"},
+        {"content_id": "pc:t2", "status": "answered"},
+        {"content_id": "pc:t3", "status": "closed"},
+    ])
+    for filter_status in ("All", "open", "answered"):
+        result = coach_inbox.filter_questions_by_status(questions, filter_status)
+        assert result["content_id"].tolist() == ["pc:t1", "pc:t2"]
+
+
+def test_filter_questions_by_status_on_empty_questions_returns_empty():
+    empty = pd.DataFrame(columns=["content_id", "status"])
+    assert coach_inbox.filter_questions_by_status(empty, "closed").empty
 
 
 def test_merge_into_tickets_puts_waiting_questions_first_then_newest_activity():
@@ -304,6 +359,98 @@ def test_load_member_questions_builds_rows_from_threads_and_messages():
     th2 = by_id["pc:th2"]
     assert th2["member_name"] == "Member 222"  # not in core_members -> fallback
     assert th2["status"] == "waiting"
+
+
+# ── closed status, derived from private_thread_workflow (R3, R5, R6) ───────
+
+def _thread_row(thread_id, member_id, messages, full_name=""):
+    return {
+        "thread_id": thread_id,
+        "member_id": member_id,
+        "subject": "s",
+        "topic": "t",
+        "thread_created_at": messages[0]["created_at"],
+        "messages": messages,
+        "full_name": full_name,
+    }
+
+
+def test_load_member_questions_marks_a_thread_closed_from_the_workflow_table():
+    # R3: a closed_at in private_thread_workflow, with no member message
+    # newer than it, reads as status "closed".
+    threads_df = pd.DataFrame([
+        _thread_row("th1", 111, [
+            _msg("member", "Which form do I use?", "2026-10-01T08:00:00Z"),
+            _msg("coach", "Use form B", "2026-10-01T09:00:00Z"),
+        ]),
+    ])
+    workflow_df = pd.DataFrame([{"thread_id": "th1", "closed_at": "2026-10-01T10:00:00Z"}])
+    fake = _FakeBigQueryClient(threads_df, workflow_df=workflow_df)
+
+    result = coach_inbox.load_member_questions(client=fake)
+
+    assert result.iloc[0]["status"] == "closed"
+
+
+def test_load_member_questions_reopens_as_waiting_after_a_newer_member_message():
+    # R5: a member message after closed_at brings the thread back as
+    # "waiting", with nothing written back to the workflow table.
+    threads_df = pd.DataFrame([
+        _thread_row("th1", 111, [
+            _msg("member", "Which form do I use?", "2026-10-01T08:00:00Z"),
+            _msg("coach", "Use form B", "2026-10-01T09:00:00Z"),
+            _msg("member", "Actually, one more question", "2026-10-01T11:00:00Z"),
+        ]),
+    ])
+    workflow_df = pd.DataFrame([{"thread_id": "th1", "closed_at": "2026-10-01T10:00:00Z"}])
+    fake = _FakeBigQueryClient(threads_df, workflow_df=workflow_df)
+
+    result = coach_inbox.load_member_questions(client=fake)
+
+    assert result.iloc[0]["status"] == "waiting"
+
+
+def test_load_member_questions_other_threads_unaffected_by_an_unrelated_closed_row():
+    threads_df = pd.DataFrame([
+        _thread_row("th1", 111, [_msg("member", "hi", "2026-10-01T08:00:00Z")]),
+        _thread_row("th2", 222, [
+            _msg("member", "hi", "2026-10-01T08:00:00Z"),
+            _msg("coach", "hello", "2026-10-01T09:00:00Z"),
+        ]),
+    ])
+    workflow_df = pd.DataFrame([{"thread_id": "th2", "closed_at": "2026-10-01T10:00:00Z"}])
+    fake = _FakeBigQueryClient(threads_df, workflow_df=workflow_df)
+
+    result = coach_inbox.load_member_questions(client=fake)
+    by_id = {row["content_id"]: row["status"] for _, row in result.iterrows()}
+
+    assert by_id == {"pc:th1": "waiting", "pc:th2": "closed"}
+
+
+def test_load_member_questions_workflow_read_failure_returns_all_threads_none_closed(capsys):
+    # R6: only the workflow read raises -> every thread still comes back,
+    # none shown closed, with its own distinct alert line (not "read").
+    threads_df = pd.DataFrame([
+        _thread_row("th1", 111, [
+            _msg("member", "hi", "2026-10-01T08:00:00Z"),
+            _msg("coach", "hello", "2026-10-01T09:00:00Z"),
+        ]),
+    ])
+    fake = _WorkflowRaisingClient(threads_df)
+
+    result = coach_inbox.load_member_questions(client=fake)
+
+    assert len(result) == 1
+    assert result.iloc[0]["status"] != "closed"
+    assert coach_inbox.read_failed(result) is False  # the main read succeeded
+
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1
+    assert out[0] == (
+        '{"severity": "ERROR", "message": '
+        '"BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: '
+        'private_chat workflow read failed: RuntimeError"}'
+    )
 
 
 def test_load_member_questions_empty_tables_returns_empty_frame():

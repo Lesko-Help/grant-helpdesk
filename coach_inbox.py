@@ -113,10 +113,12 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
             return empty
 
         records = []
+        thread_ids = []
         for row in threads.itertuples():
             messages = list(row.messages)
             last_message = messages[-1]
             full_name = (row.full_name or "").strip()
+            thread_ids.append(row.thread_id)
             records.append({
                 "content_id": f"pc:{row.thread_id}",
                 "source": "member_question",
@@ -129,6 +131,21 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
                 "messages": messages,
                 "status": "waiting" if last_message["author_role"] == "member" else "answered",
             })
+
+        closed_at_by_thread = _read_workflow_closed_at(client)
+        for rec, thread_id in zip(records, thread_ids):
+            closed_at = closed_at_by_thread.get(thread_id)
+            if closed_at is None:
+                continue
+            newest_member_at = max(
+                (m["created_at"] for m in rec["messages"] if m["author_role"] == "member"),
+                default=None,
+            )
+            # R5: a member message after closed_at reopens the thread as
+            # waiting, nothing written; otherwise it stays closed (R3),
+            # overriding whatever waiting/answered the loop above set.
+            rec["status"] = "waiting" if newest_member_at and newest_member_at > closed_at else "closed"
+
         result = pd.DataFrame.from_records(records, columns=_QUESTION_COLUMNS)
         result.attrs["read_failed"] = False
         return result
@@ -137,6 +154,33 @@ def load_member_questions(client: "bigquery.Client | None" = None) -> pd.DataFra
         failed = pd.DataFrame(columns=_QUESTION_COLUMNS)
         failed.attrs["read_failed"] = True
         return failed
+
+
+def _read_workflow_closed_at(client: "bigquery.Client") -> dict:
+    """
+    Input: the BigQuery client load_member_questions is already using.
+    Output: a dict of thread_id -> closed_at for every row marked closed in
+    private_thread_workflow (config.PRIVATE_THREAD_WORKFLOW_TABLE).
+
+    R6: when this read fails — the table does not exist yet (migration 018
+    not yet run), a bad credential, an outage — it reports the failure as
+    "workflow read" (distinct from load_member_questions's own "read" alert,
+    so the BTB_ALERT line says which half of the data was lost) and returns
+    an empty dict, so the caller marks no thread closed rather than losing
+    the whole list. This is caught here, not by the caller's own try/except,
+    so a workflow outage can never be mistaken for the main read failing.
+    """
+    try:
+        sql = f"""
+            SELECT thread_id, closed_at
+            FROM `{config.PRIVATE_THREAD_WORKFLOW_TABLE}`
+            WHERE status = 'closed'
+        """
+        workflow = client.query(sql).to_dataframe()
+        return dict(zip(workflow["thread_id"], workflow["closed_at"]))
+    except Exception as err:
+        report_source_failure("workflow read", err)
+        return {}
 
 
 def read_failed(questions: pd.DataFrame) -> bool:
@@ -393,6 +437,26 @@ def should_include_questions(filter_urgency: str, filter_domain: str, filter_spa
     guessing afterwards which merged rows to drop.
     """
     return filter_urgency == "All" and filter_domain == "All" and filter_space == "All"
+
+
+def filter_questions_by_status(questions: pd.DataFrame, filter_status: str) -> pd.DataFrame:
+    """
+    Input: the frame from load_member_questions, and the sidebar's Status
+    filter value ("All", "open", "answered", "closed", ...). Output: which
+    of those questions merge_into_tickets should even see.
+
+    R4: a closed member question follows the sidebar Status filter the way
+    a closed ticket does — shown only when Status is exactly "closed", and
+    then only the closed ones; under every other Status, including "All",
+    only the non-closed ones show. Runs before merge_into_tickets, the same
+    way should_include_questions decides up front whether to pass any
+    questions in at all for the urgency/domain/space filters.
+    """
+    if questions.empty:
+        return questions
+    if filter_status == "closed":
+        return questions[questions["status"] == "closed"]
+    return questions[questions["status"] != "closed"]
 
 
 def merge_into_tickets(tickets: pd.DataFrame, questions: pd.DataFrame) -> pd.DataFrame:
