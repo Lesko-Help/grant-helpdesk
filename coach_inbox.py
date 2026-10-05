@@ -253,6 +253,85 @@ def add_coach_reply(
     return ReplyResult.OK if job.num_dml_affected_rows else ReplyResult.UNKNOWN_THREAD
 
 
+class WorkflowResult(enum.Enum):
+    """
+    What one set_thread_workflow call actually did — mirrors ReplyResult,
+    so app.py can tell a coach's own mistake (an empty updated_by, a status
+    this function does not yet accept) apart from a real BigQuery outage,
+    instead of collapsing both into one bool.
+    """
+    OK = "ok"                      # row landed in private_thread_workflow
+    REFUSED = "refused"            # no query sent: bad status or empty id/updated_by
+    WRITE_FAILED = "write_failed"  # query raised; reported via report_source_failure
+
+
+def set_thread_workflow(
+    thread_id: str,
+    *,
+    status: str,
+    updated_by: str,
+    client: "bigquery.Client | None" = None,
+) -> WorkflowResult:
+    """
+    Closes a member-question thread by writing one row into
+    private_thread_workflow, the helpdesk-owned table that carries
+    close/assign/lane state so the insert-only private_chat zone tables
+    never need a status column of their own.
+
+    Input: thread_id (which thread); status (only the literal "closed" is
+    accepted — assign/lane are a later task, so nothing else is handled
+    yet); updated_by (the acting coach's own email, recorded on the row —
+    any coach may close any thread, no reason asked); an optional BigQuery
+    client (tests pass a fake, same as add_coach_reply).
+
+    Output: a WorkflowResult — OK once the MERGE lands; REFUSED when status
+    is not exactly "closed" or thread_id/updated_by is empty, in which case
+    no query is ever sent; WRITE_FAILED when the query raises, reported the
+    same way a reply write failure is.
+
+    Why MERGE, not INSERT or UPDATE: this table is helpdesk-owned, unlike
+    the insert-only private_chat zone, so a second close of the same
+    thread must update its one existing row rather than add another — the
+    MERGE's matched/not-matched branches do both in one statement.
+    assignee and lane never appear in either branch (R2): NULL on a new
+    row, untouched on an existing one, since this task builds close only.
+    The statement never names private_threads or private_messages, so the
+    insert-only code rule (tests/test_private_chat_insert_only.py) keeps
+    holding — this table lives in a different dataset entirely.
+    """
+    if status != "closed" or not thread_id or not updated_by:
+        return WorkflowResult.REFUSED
+
+    if client is None:
+        from bq_base import client as _default_client
+        client = _default_client
+
+    sql = f"""
+        MERGE `{config.PRIVATE_THREAD_WORKFLOW_TABLE}` AS target
+        USING (SELECT @thread_id AS thread_id) AS source
+        ON target.thread_id = source.thread_id
+        WHEN MATCHED THEN
+            UPDATE SET status = 'closed',
+                       closed_at = CURRENT_TIMESTAMP(),
+                       updated_at = CURRENT_TIMESTAMP(),
+                       updated_by = @updated_by
+        WHEN NOT MATCHED THEN
+            INSERT (thread_id, status, closed_at, updated_at, updated_by)
+            VALUES (@thread_id, 'closed', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), @updated_by)
+    """
+    job_config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("thread_id", "STRING", thread_id),
+        bigquery.ScalarQueryParameter("updated_by", "STRING", updated_by),
+    ])
+    try:
+        job = client.query(sql, job_config=job_config)
+        job.result()
+    except Exception as err:
+        report_source_failure("workflow write", err)
+        return WorkflowResult.WRITE_FAILED
+    return WorkflowResult.OK
+
+
 def waiting_count(questions: pd.DataFrame) -> int:
     """
     Input: the frame from load_member_questions. Output: how many threads
