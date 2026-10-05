@@ -5,17 +5,38 @@ These run against real BigQuery — no mocks. They check that the most critical
 functions work correctly before a deploy goes live. If any test fails, the
 deploy script stops and nothing gets shipped.
 
-Run manually:  cd grant-helpdesk && python3 -m pytest tests/smoke_test.py -v
-Run via script: ./deploy.sh  (runs automatically before deploying)
+Skipped unless LIVE_SMOKE=1 is set — a plain `pytest tests/` must stay
+offline. deploy.sh sets the flag itself before every deploy.
+
+Run manually:   LIVE_SMOKE=1 python3 -m pytest tests/smoke_test.py -v
+Run via script: ./deploy.sh  (sets LIVE_SMOKE=1 and runs automatically before deploying)
 """
 
-import sys
 import os
+import sys
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pandas as pd
-import bq_client
-import config
+
+LIVE_SMOKE = os.environ.get("LIVE_SMOKE") == "1"
+
+# Every test below is marked skipped unless LIVE_SMOKE=1, and bq_client/config
+# are only imported in that same case — importing bq_client builds a real
+# BigQuery client as a side effect (see bq_base.py), so a module-level skip
+# guard (pytest.skip(allow_module_level=True)) is not enough: it would need
+# to run *before* that import, but then pytest reports the whole file as one
+# collection-level skip instead of the 17 individual ones the spec expects, so
+# the import itself has to be the thing that is conditional.
+pytestmark = pytest.mark.skipif(
+    not LIVE_SMOKE,
+    reason="live BigQuery smoke tests are opt-in — set LIVE_SMOKE=1 to run them",
+)
+
+if LIVE_SMOKE:
+    import bq_client
+    import config
 
 
 # ── Read functions ─────────────────────────────────────────────────────────────
