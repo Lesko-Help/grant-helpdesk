@@ -469,6 +469,22 @@ def filter_questions_by_status(questions: pd.DataFrame, filter_status: str) -> p
     return questions[questions["status"] != "closed"]
 
 
+def member_question_action_opts(status: str) -> list:
+    """
+    Input: a member-question row's derived status ("waiting"/"answered"/
+    "closed"). Output: the action dropdown's option list for that row.
+
+    Why: set_thread_workflow R5 offers Close on every open row regardless
+    of whether a coach has answered yet, but a thread already closed
+    offers only Answer, since there is nothing left to close. Lives here,
+    not in app.py, so it can be tested directly — app.py's own login gate
+    makes it impossible to import that module at all under pytest.
+    """
+    if status == "closed":
+        return ["— action —", "Answer"]
+    return ["— action —", "Answer", "Close"]
+
+
 def merge_into_tickets(tickets: pd.DataFrame, questions: pd.DataFrame) -> pd.DataFrame:
     """
     Puts member questions into the same list a coach already scrolls — the

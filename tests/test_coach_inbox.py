@@ -168,6 +168,22 @@ def test_filter_questions_by_status_on_empty_questions_returns_empty():
     assert coach_inbox.filter_questions_by_status(empty, "closed").empty
 
 
+# ── member_question_action_opts (R5) — moved from app.py so it can be tested;
+# app.py's own login gate makes it impossible to import under pytest at all.
+
+def test_member_question_action_opts_offers_close_when_waiting():
+    assert coach_inbox.member_question_action_opts("waiting") == ["— action —", "Answer", "Close"]
+
+
+def test_member_question_action_opts_offers_close_when_answered():
+    # R5: Close is offered on every open row, answered or not.
+    assert coach_inbox.member_question_action_opts("answered") == ["— action —", "Answer", "Close"]
+
+
+def test_member_question_action_opts_hides_close_when_already_closed():
+    assert coach_inbox.member_question_action_opts("closed") == ["— action —", "Answer"]
+
+
 def test_merge_into_tickets_puts_waiting_questions_first_then_newest_activity():
     # R1: waiting member questions on top, then everything else newest
     # last_activity_at first (tickets fall back to created_at).

@@ -1334,17 +1334,6 @@ _ACTION_OPTS = {
     config.LANE_QUESTION: ["— action —", "Answer", "Close", "Flag", "Not a question", "Assign", "Delete"],
     config.LANE_GENERAL:  ["— action —", "Answer", "Close", "Flag", "This is a question", "Assign", "Delete"],
 }
-def _member_question_opts(status):
-    """
-    Input: a member-question row's derived status ("waiting"/"answered"/"closed").
-    Output: the action dropdown's option list for that row.
-    Why: set_thread_workflow R5 offers Close on every open row regardless of
-    whether a coach has answered yet, but a thread already closed offers only
-    Answer, since there is nothing left to close.
-    """
-    if status == "closed":
-        return ["— action —", "Answer"]
-    return ["— action —", "Answer", "Close"]
 # action label → lane it moves the row to
 _LANE_MOVES = {
     "Not a question":     config.LANE_GENERAL,
@@ -1564,8 +1553,8 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             c1.markdown(f'<span class="{_body_class}" style="font-size:var(--font-base);color:var(--color-text)">{safe_text}</span>', unsafe_allow_html=True)
 
             # Member-question rows get the same dropdown as ticket rows, but
-            # only "Answer" and "Close" (_member_question_opts hides Close
-            # once the row is already closed) — Flag/Assign/Delete/lane-move
+            # only "Answer" and "Close" (coach_inbox.member_question_action_opts
+            # hides Close once the row is already closed) — Flag/Assign/Delete/lane-move
             # are out of scope for this close-only slice (coach-inbox-close).
             # "Answer" opens show_member_question_dialog (the reply box moved
             # there — see coach-inbox-answer-dialog) through the same
@@ -1584,7 +1573,7 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
 
             c3.selectbox(
                 "Action",
-                _member_question_opts(row.get("status")) if _is_question else _opts,
+                coach_inbox.member_question_action_opts(row.get("status")) if _is_question else _opts,
                 index=0,
                 key=_act_key,
                 on_change=_on_action_change,
