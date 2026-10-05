@@ -1249,6 +1249,8 @@ def show_member_question_dialog(content_id: str, row_dict: dict):
     row_dict["messages"] is already on the row from load_member_questions —
     no extra BigQuery read needed to open this. thread_id is content_id
     with the "pc:" prefix load_member_questions adds stripped back off.
+    A successful send closes the thread at once (R7) via the close_thread
+    lambda passed to render_thread_and_reply, wrapping set_thread_workflow.
     Output: none — draws the dialog; closes via reply_form's st.rerun()
     on a successful send."""
     mem = row_dict.get("member_name") or "Unknown"
@@ -1263,6 +1265,7 @@ def show_member_question_dialog(content_id: str, row_dict: dict):
         _lookup_coach_member_id,
         coach_inbox.add_coach_reply,
         load_member_questions.clear,
+        lambda tid, user: coach_inbox.set_thread_workflow(tid, status="closed", updated_by=user),
     )
 
     st.divider()
@@ -1331,8 +1334,17 @@ _ACTION_OPTS = {
     config.LANE_QUESTION: ["— action —", "Answer", "Close", "Flag", "Not a question", "Assign", "Delete"],
     config.LANE_GENERAL:  ["— action —", "Answer", "Close", "Flag", "This is a question", "Assign", "Delete"],
 }
-# Member-question rows: only Answer, until the workflow slice adds the rest.
-_MEMBER_QUESTION_OPTS = ["— action —", "Answer"]
+def _member_question_opts(status):
+    """
+    Input: a member-question row's derived status ("waiting"/"answered"/"closed").
+    Output: the action dropdown's option list for that row.
+    Why: set_thread_workflow R5 offers Close on every open row regardless of
+    whether a coach has answered yet, but a thread already closed offers only
+    Answer, since there is nothing left to close.
+    """
+    if status == "closed":
+        return ["— action —", "Answer"]
+    return ["— action —", "Answer", "Close"]
 # action label → lane it moves the row to
 _LANE_MOVES = {
     "Not a question":     config.LANE_GENERAL,
@@ -1415,7 +1427,18 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
                 st.session_state._pending_action = {"action": _t_act, "content_id": _t_cid, "row": _t_rdict}
                 st.rerun(scope="app")  # must reach top-level dialog trigger
         else:
-            if _t_act == "Close":
+            if _t_act == "Close" and _t_rdict.get("source") == "member_question":
+                # Close asks nothing (R5/R6): one MERGE, no dialog, no reason.
+                _wf_thread_id = _t_cid[len("pc:"):]
+                _wf_result = coach_inbox.set_thread_workflow(
+                    _wf_thread_id, status="closed", updated_by=current_user
+                )
+                if _wf_result is coach_inbox.WorkflowResult.OK:
+                    load_member_questions.clear()
+                    st.rerun()
+                else:
+                    st.error("Could not close this thread — please try again.")
+            elif _t_act == "Close":
                 bq_client.update_ticket_meta(_t_cid, "closed", _t_rdict.get("assigned_to",""), _t_rdict.get("domain",""), closed_by=current_user)
                 st.session_state._status_overrides[_t_cid] = "closed"
                 st.rerun()
@@ -1479,10 +1502,15 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             _row_domain_icon = ""
             _meta_parts = []
             _is_answered = (row.get("status") == "answered")
-            _status_html = (
-                '<span class="answered-badge">✓ Answered</span>' if _is_answered
-                else "⏳ waiting"
-            )
+            if row.get("status") == "closed":
+                _status_html = (
+                    '<span style="background:#6b7280;color:#fff;font-size:0.65rem;'
+                    'font-weight:600;padding:2px 6px;border-radius:4px">Closed</span>'
+                )
+            elif _is_answered:
+                _status_html = '<span class="answered-badge">✓ Answered</span>'
+            else:
+                _status_html = "⏳ waiting"
         else:
             _row_domain_icon = DOMAIN_ICON.get(row.get("domain") or "", "")
             _row_urg = (row.get("urgency") or "normal").lower()
@@ -1536,8 +1564,9 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
             c1.markdown(f'<span class="{_body_class}" style="font-size:var(--font-base);color:var(--color-text)">{safe_text}</span>', unsafe_allow_html=True)
 
             # Member-question rows get the same dropdown as ticket rows, but
-            # only "Answer" — Close/Flag/Assign/Delete/lane-move stay hidden
-            # until the workflow slice (coach-inbox-workflow) lands them.
+            # only "Answer" and "Close" (_member_question_opts hides Close
+            # once the row is already closed) — Flag/Assign/Delete/lane-move
+            # are out of scope for this close-only slice (coach-inbox-close).
             # "Answer" opens show_member_question_dialog (the reply box moved
             # there — see coach-inbox-answer-dialog) through the same
             # _act_triggered_*/_pending_action dispatch every other action uses.
@@ -1555,7 +1584,7 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
 
             c3.selectbox(
                 "Action",
-                _MEMBER_QUESTION_OPTS if _is_question else _opts,
+                _member_question_opts(row.get("status")) if _is_question else _opts,
                 index=0,
                 key=_act_key,
                 on_change=_on_action_change,
@@ -1751,6 +1780,11 @@ with tab_main:
     # list entirely rather than leaving a false positive in a filtered view.
     if not coach_inbox.should_include_questions(filter_urgency, filter_domain):
         _member_questions = _member_questions.iloc[0:0]
+    # R4: closed member questions show only under Status=closed, and are then
+    # the only ones shown; every other Status choice (including "All") shows
+    # the ones not closed — the rest of the Status filter has no meaning for
+    # a private-chat thread, so it's ignored here as-built.
+    _member_questions = coach_inbox.filter_questions_by_status(_member_questions, filter_status)
     tickets = coach_inbox.merge_into_tickets(tickets, _member_questions)
 
     # ── Ticket list ───────────────────────────────────────────────────────────
