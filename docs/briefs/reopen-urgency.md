@@ -54,26 +54,53 @@ rule numbers, examples and test line per query site.
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: `pass`
+
+Reviewed by the overseer by hand, not by a review subagent: every claim
+below was re-run in the overseer's own shell rather than taken from the
+worker's report.
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+- Red-first proof holds: the 5 original cases run against the pre-fix
+  `origin/main` give 4 failed, 1 passed. The tests describe a change in
+  behaviour, not the code agreeing with itself.
+- Green holds: 6 passed in the worktree; unrelated
+  `tests/test_app_followup_cache.py` still 3 passed.
+- Gap, now closed: `test_r7_clock_does_not_test_ticket_status` passed
+  trivially before the fix, so it had never been seen red. Re-proved by
+  mutation instead — a scratch copy with `tm.status = 'closed' AND`
+  spliced into the clock gives 1 failed, 5 passed, and the one failure is
+  that test. The guard goes red for the right reason and is specific.
+- The mutation never reached the repo: the SQL string
+  `_urgency_clock_expr()` returns contains no `tm.status` in any of the 7
+  commits in `57fc071..3433d4e`. (An earlier overseer grep said otherwise;
+  it was matching the helper's own docstring, which mentions `tm.status`
+  by name. Overseer error, not the worker's.)
+- Gap, now closed: the old-schema fallback had no test. It is the one path
+  that could put a BigQuery error on a coach's screen mid Dataform
+  rebuild. Its new test cannot have been red against `origin/main` and
+  says so in its own docstring — honest, and worth keeping on those terms.
+- Old-schema path resolves: `where` is built outside `_build()`, so the
+  `urgency_since` filter string exists before the schema is known. The
+  guard still aliases `gt.created_at AS urgency_since`, so the column
+  always exists and the outer `FROM live {where}` always resolves.
+- The extra `urgency_since` output column cannot leak to a coach: the app
+  calls `get_tickets` once, inside `@st.cache_data load_tickets`, and
+  never renders the frame wholesale — it draws cards field by field.
+- Brief carried the whole 47-line gate file inline, over the 120-line cap.
+  Replaced with a 6-line link to `docs/specs/modules/bq_reads.md`.
+- `docs/specs/` is the overseer's; the worker correctly did not edit it
+  and filed its 3-line change as a proposal instead.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
-
-This section is filled last, after the overseer runs its review subagent
-and sends the findings back — never by the worker reviewing its own
-diff. Record the verdict, fix what needs fixing, commit, then report
-again the normal way.
-
-wt-done.sh's check on this is literal: it greps this brief for a line
-starting with exactly `Verdict:` at the very start of the line (column 0)
-— no bold, no indent, no renamed label, no different case. Keep the
-`Verdict:` line reading exactly as it does above, or the guard cannot see
-it and treats the brief as not yet reviewed.
+- Old-schema fallback guard: `28a12ff`.
+- R7 red proof: no commit — proved by mutation in a scratch copy, recorded
+  as a note in `3433d4e`. Nothing in the repo changed to prove it, which is
+  the point.
+- Brief architecture block trimmed to a link: `bcc03b0`.
+- Spec marks left as a proposal, not an edit: `d669f11`. The overseer
+  applies it on `main` after this lands, never before — while the code is
+  unmerged the three `not built yet` marks are still true.
 
 
 ## Goal
