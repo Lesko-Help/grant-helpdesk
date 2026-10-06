@@ -69,6 +69,32 @@ def test_get_tickets_urgency_case_and_filter_both_read_urgency_since(monkeypatch
     assert sql.count("TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR)") == 0
 
 
+def test_get_tickets_falls_back_to_created_at_on_an_old_schema(monkeypatch):
+    """
+    Regression guard for the guard, not part of the red-first proof — this
+    path exists unchanged on origin/main too (get_tickets has always read
+    created_at when the reopen column is missing), so it does not go red
+    against origin/main. It pins down that when grant_tickets has no
+    last_member_activity_at column yet (mid-Dataform-rebuild), the fallback
+    in _urgency_clock_expr() is deliberate behaviour, not an accident: the
+    query must still be resolvable (urgency_since always exists, so the
+    outer WHERE always has something to filter on) rather than erroring in
+    front of a coach.
+    """
+    captured = []
+    monkeypatch.setattr(bq_reads, "_tickets_cols", lambda: set())
+    _stub_schema_retry(monkeypatch, captured)
+
+    bq_reads.get_tickets(urgency="Normal")
+
+    sql = captured[0]
+    assert "AS urgency_since" in sql
+    clock = sql.split("AS urgency_since", 1)[0].rsplit(",", 1)[-1]
+    assert clock.strip() == "gt.created_at"
+    assert "CASE" not in clock
+    assert "TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), urgency_since, HOUR) < 24" in sql
+
+
 def test_get_ticket_detail_urgency_derives_from_the_clock(monkeypatch):
     captured = []
     _stub_tickets_cols(monkeypatch)
