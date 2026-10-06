@@ -1,7 +1,16 @@
-# REPO-NAME
-Status: draft
+# grant-helpdesk
+Status: as-built 2026-10-06
 
-Three lines on what this app is.
+Lesko's coach helpdesk: a Streamlit app, deployed as the Cloud Run service
+`grant-helpdesk` in project `bigtribebuilders`, where coaches handle members'
+grant questions — tickets, replies, and members' private 1:1 questions — reading
+and writing BigQuery.
+Behind the app: Cloud Run jobs (`send_followups`, `sync_events`, `sync_spaces`,
+`poll_dataform_failures`) and a Dataform workflow in `bigtribebuilders.grant_helpdesk`
+(EU) that compiles from GitHub `main`, so a push reaches the scheduled runs within
+the hour.
+Everything that runs unattended logs `BTB_ALERT` lines through `raillog.py`, and its
+alert policies are deployed from this repo by `jobs/deploy-alerts.sh`.
 
 ## Goal
 See `docs/specs/goal.md`.
@@ -29,6 +38,10 @@ See `docs/specs/architecture.md`.
 
 ## Open questions
 
-One line each: something unresolved that a future session should pick up.
-
-<!-- spec:template -->
+- `docs/specs/goal.md` and `docs/specs/architecture.md` are still the unfilled
+  templates — they need agreeing with Martin, not deriving from the code.
+- Most modules have no spec yet: only `coach_inbox` and `tests` are written. A task
+  touching any other module needs its `docs/specs/modules/<module>.md` agreed first.
+- `coach_inbox`: the dropdown and answer-dialog click-through has no automated test
+  (the login gate and live BigQuery loaders keep it out of AppTest) — it is checked by
+  hand on the live app after a deploy.
