@@ -95,9 +95,10 @@ Count urgency for a reopened ticket from the member comment that reopened it, no
   `created_at` (R18).
 Shown red against `origin/main` before the fix, green after.
 
-Spec: unchanged because R5, R12, R18 are already written (marked "agreed
-2026-10-06, not built yet") — this task clears those three marks in its last
-commit, changing no rule text.
+Spec: `docs/specs/modules/bq_reads.md` needs a change — not made here (worker
+permissions deny writing under `docs/specs/`), proposed instead under
+`## Spec proposals` below: drop the trailing "not built yet" mark from R5,
+R12, R18, now that they are built. No rule text changes.
 
 ## May touch
 
@@ -146,6 +147,16 @@ Specs belong to the overseer (DECISION BY MARTIN 2026-09-24) — this worktree
 never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
+
+- File: `docs/specs/modules/bq_reads.md`. Three lines each carry the trailing
+  mark `` *(agreed 2026-10-06, not built yet)* `` — line 55 (end of R5), line
+  86 (end of R12), line 146 (end of R18). Now built and proven by
+  `tests/test_bq_reads_urgency.py` (commit `33f8a32`); drop just that trailing
+  mark from each of the three lines, no other text changes. The overseer's own
+  message asked this worktree to clear the marks itself in its last commit —
+  not done here, since worker permissions deny `Edit`/`Write` under
+  `docs/specs/` and the repo's own rule is that specs are the overseer's to
+  write, not a worker's, even on request.
 
 ## State
 
