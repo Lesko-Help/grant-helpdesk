@@ -187,12 +187,33 @@ Done:
 - Reporting to helpdesk-opzichter: branch reopen-urgency, commit range
   57fc071..6318b50, HEAD 6318b507d4c1eb54e9243c253ffb5ad3bc5c6e05.
 
-In flight (file:line): none — task reported, waiting on overseer's review
-verdict.
+- Review gap 1 closed: proved `test_r7_clock_does_not_test_ticket_status` can
+  go red, not just pass trivially. Temporarily edited
+  `_urgency_clock_expr()` to add `tm.status = 'closed' AND ` into its CASE
+  WHEN (copying the reopen clause's status guard into the clock — the exact
+  mistake R7 forbids), ran
+  `PATH=/opt/anaconda3/bin:$PATH python -m pytest tests/test_bq_reads_urgency.py -q`:
+  result `1 failed, 4 passed` — only `test_r7_clock_does_not_test_ticket_status`
+  failed, on `assert "tm.status" not in urgency_block` with `tm.status`
+  visibly present in the urgency CASE block; the other 4 were unaffected.
+  Then reverted the edit; `git diff HEAD -- bq_reads.py` came back empty, so
+  the mutation never touched a commit.
+- Review gap 2 closed: added
+  `test_get_tickets_falls_back_to_created_at_on_an_old_schema` — stubs
+  `_tickets_cols()` to a set without `last_member_activity_at` and asserts
+  `get_tickets(urgency="Normal")` still emits `AS urgency_since` with the
+  clock as plain `gt.created_at` (no CASE) and the outer WHERE still
+  filtering on `urgency_since`. Marked in its own docstring as a regression
+  guard for the guard, not part of the red-first proof — this fallback path
+  is unchanged from `origin/main`, so the test does not go red there.
+- All 6 tests in `tests/test_bq_reads_urgency.py` pass.
 
-Next: when the overseer's review message arrives, either (a) it says "land
-it" — stop, nothing further on this branch; or (b) it asks for changes —
-make them, commit, run the test suite again, report again the same way.
+In flight (file:line): none — both review gaps closed, about to commit and
+report back to the overseer.
+
+Next: when the overseer's verdict arrives, either (a) "land it" — stop,
+nothing further on this branch; or (b) more changes requested — make them,
+commit, run the test suite again, report again the same way.
 
 Traps (with dates):
 - 2026-10-06: R5/R7 trap — the urgency clock must NOT test tm.status, unlike
