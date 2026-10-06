@@ -165,6 +165,46 @@ About 60 lines max. Old traps stay (they are short and worth keeping); everythin
 overwritten with the current picture.
 
 Done:
-In flight (file:line):
-Next:
+- Brief filled in and committed (bcc03b0), architecture gate swapped for a
+  link to docs/specs/modules/bq_reads.md per overseer's message.
+- Added `_urgency_clock_expr()` to bq_reads.py (R5-R8) and wired it into the
+  five sites: get_tickets' urgency filter map + its `live` CTE/outer CASE
+  (via a new `urgency_since` column, R12), get_ticket_detail's CASE (R14),
+  get_member_thread_tickets' CASE (R15), get_open_stats' three COUNTIFs
+  (R18). Commit 33f8a32.
+- Wrote tests/test_bq_reads_urgency.py (bq_reads.py's first test, 5 cases),
+  proved red against the prior created_at-only queries, green after the fix.
+  Run: `PATH=/opt/anaconda3/bin:$PATH python -m pytest
+  tests/test_bq_reads_urgency.py -q`.
+- Spec change needed (drop "not built yet" from R5/R12/R18 in
+  docs/specs/modules/bq_reads.md lines 55/86/146) written under this brief's
+  Spec proposals instead of edited directly — worker permissions deny
+  Edit/Write under docs/specs/, and specs are the overseer's to write even
+  on direct request (commit d669f11).
+- origin/main (57fc071) already an ancestor of this branch — no merge
+  needed. `wt-done.sh --check reopen-urgency` passes (clean tree, origin/main
+  merged).
+- Reported to helpdesk-opzichter: branch reopen-urgency, commit range
+  57fc071..d669f11, HEAD d669f115ca642962e033027ee8645d41c263750d.
+
+In flight (file:line): none — task reported, waiting on overseer's review
+verdict.
+
+Next: when the overseer's review message arrives, either (a) it says "land
+it" — stop, nothing further on this branch; or (b) it asks for changes —
+make them, commit, run the test suite again, report again the same way.
+
 Traps (with dates):
+- 2026-10-06: R5/R7 trap — the urgency clock must NOT test tm.status, unlike
+  the reopen clause in `_live_status_cte()` which does test
+  `tm.status = 'closed'`. Copying that status guard into the clock would snap
+  a reopened-then-answered (non-terminal, still listed) ticket's badge back
+  to `critical` on one coach click. `_urgency_clock_expr()` deliberately has
+  no status test — keep it that way in any future edit here.
+- 2026-10-06: never run `pytest tests/` in this repo — it collects
+  `smoke_test.py`, which writes to the live `ticket_metadata` table. Always
+  name the test file explicitly.
+- 2026-10-06: BigQuery cannot filter (WHERE) on a SELECT alias defined at the
+  same query level — that's why `urgency_since` has to be a real column
+  selected inside the `live` CTE in get_tickets, not an outer-SELECT alias,
+  for the urgency filter to be able to read it.
