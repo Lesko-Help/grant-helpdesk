@@ -32,6 +32,7 @@ See `docs/specs/architecture.md`.
 
 | Module | What it does | Deploy | Spec |
 |---|---|---|---|
+| `bq_reads` | every SELECT the app runs — the ticket list, one ticket's detail, the KPI cards and the report tables — each joined live to `ticket_metadata` so a coach's last click is already in the answer | `deploy.sh` (ships inside the app image) | `docs/specs/modules/bq_reads.md` |
 | `tests` | the test suite — a plain `pytest tests/` stays offline; the live BigQuery smoke test runs only with `LIVE_SMOKE=1`, which `deploy.sh` sets | none (never shipped; `deploy.sh` runs it before shipping) | `docs/specs/modules/tests.md` |
 
 <!-- spec:modules end -->
