@@ -184,8 +184,8 @@ Done:
 - origin/main (57fc071) already an ancestor of this branch — no merge
   needed. `wt-done.sh --check reopen-urgency` passes (clean tree, origin/main
   merged).
-- Reported to helpdesk-opzichter: branch reopen-urgency, commit range
-  57fc071..d669f11, HEAD d669f115ca642962e033027ee8645d41c263750d.
+- Reporting to helpdesk-opzichter: branch reopen-urgency, commit range
+  57fc071..6318b50, HEAD 6318b507d4c1eb54e9243c253ffb5ad3bc5c6e05.
 
 In flight (file:line): none — task reported, waiting on overseer's review
 verdict.
