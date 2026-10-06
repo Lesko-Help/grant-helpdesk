@@ -34,6 +34,32 @@ def _live_status_cte() -> str:
     ) if "last_member_activity_at" in _gt_cols else ""
 
 
+def _urgency_clock_expr(gt_cols=None) -> str:
+    """
+    Returns the SQL expression for urgency_since: the one timestamp a
+    ticket's waiting time is counted from (R5-R8 in bq_reads.md). When the
+    ticket was closed and the member's last activity came later than the
+    close, the clock is that activity — the comment that reopened it (R5).
+    Otherwise the clock is created_at, as it has always been (R6).
+
+    Deliberately does not test tm.status, unlike _live_status_cte()'s reopen
+    clause (R7): a coach marking a reopened ticket "answered" must not snap
+    the clock (and so the badge) back to created_at.
+
+    Guarded the same way as _live_status_cte(): when grant_tickets has no
+    last_member_activity_at column yet (an old Dataform compilation), this
+    returns plain gt.created_at everywhere, matching today's behaviour.
+    """
+    gt_cols = _tickets_cols() if gt_cols is None else gt_cols
+    if "last_member_activity_at" not in gt_cols:
+        return "gt.created_at"
+    return (
+        "CASE WHEN tm.closed_at IS NOT NULL AND gt.last_member_activity_at IS NOT NULL "
+        "AND gt.last_member_activity_at > tm.closed_at "
+        "THEN gt.last_member_activity_at ELSE gt.created_at END"
+    )
+
+
 def _live_lane_expr(gt_cols=None) -> str:
     """
     The lane a row is in RIGHT NOW, reading ticket_metadata live rather than
@@ -122,11 +148,15 @@ def get_tickets(
     if date_to:
         filters.append(f"DATE(created_at) <= '{date_to}'")
 
-    # Urgency maps directly to age conditions
+    # Urgency maps to age conditions on urgency_since (R12) — a column
+    # selected inside the `live` CTE below, not created_at: this filter and
+    # the badge CASE both run outside that CTE, where tm (and so the R5/R6
+    # clock) is no longer visible, and BigQuery cannot filter on a SELECT
+    # alias from the same query level.
     urgency_conditions = {
-        "Normal":   "TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24",
-        "Urgent":   "TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) BETWEEN 24 AND 47",
-        "Critical": "TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) >= 48",
+        "Normal":   "TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), urgency_since, HOUR) < 24",
+        "Urgent":   "TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), urgency_since, HOUR) BETWEEN 24 AND 47",
+        "Critical": "TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), urgency_since, HOUR) >= 48",
     }
     if urgency and urgency != "All" and urgency in urgency_conditions:
         filters.append(urgency_conditions[urgency])
@@ -146,6 +176,7 @@ def get_tickets(
             "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
         ) if "last_member_activity_at" in _gt_cols else ""
         _lane_expr = _live_lane_expr(_gt_cols)
+        _urgency_expr = _urgency_clock_expr(_gt_cols)
         return f"""
             WITH live AS (
                 SELECT
@@ -158,7 +189,8 @@ def get_tickets(
                         {_reopen_clause}
                         WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                         ELSE gt.ticket_status
-                    END                                                     AS ticket_status
+                    END                                                     AS ticket_status,
+                    {_urgency_expr}                                         AS urgency_since
                 FROM `{config.TICKETS_TABLE}` gt
                 LEFT JOIN (
                     SELECT * FROM `{config.META_TABLE}`
@@ -170,8 +202,8 @@ def get_tickets(
                 *,
                 LEFT(body, 600) AS body_preview,
                 CASE
-                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24 THEN 'normal'
-                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 48 THEN 'urgent'
+                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), urgency_since, HOUR) < 24 THEN 'normal'
+                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), urgency_since, HOUR) < 48 THEN 'urgent'
                     ELSE 'critical'
                 END AS urgency
             FROM live
@@ -195,6 +227,7 @@ def get_ticket_detail(content_id: str) -> dict:
             "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
         ) if "last_member_activity_at" in _gt_cols else ""
         _lane_expr = _live_lane_expr(_gt_cols)
+        _urgency_expr = _urgency_clock_expr(_gt_cols)
         return f"""
             SELECT
                 gt.* EXCEPT({_except_cols}),
@@ -208,8 +241,8 @@ def get_ticket_detail(content_id: str) -> dict:
                     ELSE gt.ticket_status
                 END                                                     AS ticket_status,
                 CASE
-                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
-                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 48 THEN 'urgent'
+                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), {_urgency_expr}, HOUR) < 24 THEN 'normal'
+                    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), {_urgency_expr}, HOUR) < 48 THEN 'urgent'
                     ELSE 'critical'
                 END AS urgency
             FROM `{config.TICKETS_TABLE}` gt
@@ -238,6 +271,7 @@ def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
             "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
         ) if "last_member_activity_at" in _gt_cols else ""
         _lane_expr = _live_lane_expr(_gt_cols)
+        _urgency_expr = _urgency_clock_expr(_gt_cols)
         return f"""
             WITH live AS (
                 SELECT
@@ -252,8 +286,8 @@ def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
                         ELSE gt.ticket_status
                     END                                                    AS ticket_status,
                     CASE
-                        WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 24 THEN 'normal'
-                        WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), gt.created_at, HOUR) < 48 THEN 'urgent'
+                        WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), {_urgency_expr}, HOUR) < 24 THEN 'normal'
+                        WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), {_urgency_expr}, HOUR) < 48 THEN 'urgent'
                         ELSE 'critical'
                     END AS urgency
                 FROM `{config.TICKETS_TABLE}` gt
@@ -477,6 +511,7 @@ def get_open_stats() -> dict:
     def _build():
         _reopen_clause = _live_status_cte()
         _lane_expr     = _live_lane_expr()
+        _urgency_expr  = _urgency_clock_expr()
         return f"""
             WITH live AS (
                 SELECT
@@ -486,7 +521,8 @@ def get_open_stats() -> dict:
                         {_reopen_clause}
                         WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                         ELSE gt.ticket_status
-                    END AS ticket_status
+                    END AS ticket_status,
+                    {_urgency_expr} AS urgency_since
                 FROM `{config.TICKETS_TABLE}` gt
                 LEFT JOIN (
                     SELECT * FROM `{config.META_TABLE}`
@@ -501,11 +537,11 @@ def get_open_stats() -> dict:
             SELECT
                 COUNTIF(ticket_status NOT IN {_TERMINAL_IN})                                       AS open,
                 COUNTIF(ticket_status NOT IN {_TERMINAL_IN}
-                    AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) < 24)                         AS normal,
+                    AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), urgency_since, HOUR) < 24)                      AS normal,
                 COUNTIF(ticket_status NOT IN {_TERMINAL_IN}
-                    AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) BETWEEN 24 AND 47)            AS urgent,
+                    AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), urgency_since, HOUR) BETWEEN 24 AND 47)         AS urgent,
                 COUNTIF(ticket_status NOT IN {_TERMINAL_IN}
-                    AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, HOUR) >= 48)                        AS critical
+                    AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), urgency_since, HOUR) >= 48)                     AS critical
             FROM live
             -- The KPI cards are about grant questions. Conversations have their
             -- own tab and deliberately do not count towards these four numbers.
