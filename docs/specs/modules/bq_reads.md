@@ -52,7 +52,7 @@ One timestamp per ticket: the moment its waiting time is counted from.
 
 - R5: when `tm.closed_at` is set and `gt.last_member_activity_at` is later than
   it, the clock is `gt.last_member_activity_at` — the member's comment that
-  reopened the ticket. *(agreed 2026-10-06, not built yet)*
+  reopened the ticket.
 - R6: otherwise the clock is `gt.created_at`, as it has always been.
 - R7: R5 does not test the current status, unlike R1. A reopened ticket a coach
   has marked `answered` but not closed is still on the reopen clock; were the
@@ -83,7 +83,7 @@ closed -> clock 2026-09-20 -> `critical`. Reopened today, coach marks
   the `urgency` column is derived from, so a ticket badged `normal` is the one
   the Normal pill finds. The clock is selected in the `live` CTE as
   `urgency_since`, because the filter and the badge both sit outside that CTE and
-  BigQuery cannot filter on a SELECT alias. *(agreed 2026-10-06, not built yet)*
+  BigQuery cannot filter on a SELECT alias.
 - R13: one row per `content_id`, newest `created_at` wins, ordered newest first.
 
 *Examples:* `urgency='Normal'` -> only tickets whose clock is under 24 hours old.
@@ -99,13 +99,13 @@ closed -> clock 2026-09-20 -> `critical`. Reopened today, coach marks
 which is watched by a person. No `BTB_ALERT` — this is not unattended code.
 
 *Test:* `PATH=/opt/anaconda3/bin:$PATH python -m pytest
-tests/test_bq_reads_urgency.py -q` in the worktree, with
+tests/test_bq_reads_urgency.py -q` from the repo root, with
 `_query_with_schema_retry` stubbed to return the built SQL and `_tickets_cols()`
 stubbed to include `last_member_activity_at`; observes that the `urgency` CASE
 and the `urgency='Normal'` filter both read `urgency_since` and that
-`urgency_since` is the R5/R6 expression — proves R12, red first against
-`origin/main`. Never `pytest tests/`: that runs `smoke_test.py`, which writes to
-the live `ticket_metadata`.
+`urgency_since` is the R5/R6 expression — proves R12, red first against the
+commit before the fix, `57fc071`. Never `pytest tests/`: that runs
+`smoke_test.py`, which writes to the live `ticket_metadata`.
 
 ### get_ticket_detail(content_id) · get_member_thread_tickets(thread_id, member_id)
 
@@ -131,7 +131,7 @@ DataFrame of that member's tickets in that thread, plus `body_preview`.
 
 *Test:* same command and stubs as `get_tickets`; observes that both built queries
 derive `urgency` from the R5/R6 expression — proves R14 and R15, red first
-against `origin/main`.
+against the commit before the fix, `57fc071`.
 
 ### get_open_stats()
 
@@ -143,7 +143,7 @@ against `origin/main`.
 - R17: counts only the `question` lane and only non-empty bodies, the same two
   narrowings `get_tickets` applies (R9-R10).
 - R18: the three urgency counts bucket on the clock of R5-R6, so the cards add up
-  to what the pills show. *(agreed 2026-10-06, not built yet)*
+  to what the pills show.
 
 *Examples:* one ticket reopened today and nothing else open -> `open` 1,
 `normal` 1, `urgent` 0, `critical` 0.
@@ -155,8 +155,8 @@ against `origin/main`.
 *Errors:* as `get_tickets`.
 
 *Test:* same command and stubs; observes the three `COUNTIF`s bucket on the
-R5/R6 expression and not on `created_at` — proves R18, red first against
-`origin/main`.
+R5/R6 expression and not on `created_at` — proves R18, red first against the
+commit before the fix, `57fc071`.
 
 ## Decisions
 
