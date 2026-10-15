@@ -3,14 +3,14 @@ Status: agreed 2026-09-25 (approved by Martin)
 Kind: app
 Summary: coaches see members' private questions from the questions zone inside the Tickets tab, answer them there and close them
 
-Part of: `docs/specs/INDEX.md` · Deploy: `deploy.sh` (app), `jobs/deploy-alerts.sh` (alert) · Updated: 2026-10-05
+Part of: `docs/specs/INDEX.md` · Deploy: `deploy.sh` (app), `jobs/deploy-alerts.sh` (alert) · Updated: 2026-10-15
 
 ## Overview
 
 Coaches see members' private questions (from the questions zone) inside the Tickets tab, answer them there and close them.
-Owns: `coach_inbox.py`, the root `raillog.py` copy, the Cloud Run service's BTB_ALERT policies, and `grant_helpdesk.private_thread_workflow`.
+Owns: `coach_inbox.py`, the Cloud Run service's BTB_ALERT policies, and `grant_helpdesk.private_thread_workflow`. Both `raillog.py` copies are owned by `docs/specs/modules/raillog.md`.
 Reads `lesko-486515.private_chat.private_threads` / `private_messages` (EU, owned by the zone) and `bigtribebuilders.dataform.core_members` for names.
-Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `report_source_failure`, `raillog.alert`, `add_coach_reply`, `set_thread_workflow`.
+Entry points: `load_member_questions`, `waiting_count`, `merge_into_tickets`, `report_source_failure`, `add_coach_reply`, `set_thread_workflow`.
 *Not in scope:* assigning a thread to a coach or moving it to a lane (the table has the columns; a later task), telling members of a reply (the zone shows it on next load), emailing coaches, any change to `private_chat`'s schema or grants, a heartbeat (the app is not scheduled).
 
 Who: coaches and the admin · Where: Streamlit, the Tickets tab of the grant-helpdesk app
@@ -119,23 +119,6 @@ Who: coaches and the admin · Where: Streamlit, the Tickets tab of the grant-hel
 
 *Test:* same command and file, capsys -> exact line (R1), a body string absent from it (R2); red first against `origin/main`.
 
-### raillog.alert(runnable, code, message)
-
-`def alert(runnable, code, message)` in root `raillog.py`, a copy of `jobs/raillog.py` so the Streamlit container imports it from the app path.
-
-*What it does:*
-- R1: it behaves exactly like `jobs/raillog.py`: same `REPO = "grant-helpdesk"`, same `CODES` set, same one-line JSON shape.
-- R2: an unknown code falls back to `UNEXPECTED`.
-- R3: it is a separate file, not an import: each job's Dockerfile copies only its own script plus `jobs/raillog.py`, and the app's Dockerfile builds from the repo root, so only a root copy makes `import raillog` work from `app.py`.
-
-*Examples:* `("coach-inbox", "SOURCE_FAILED", "private_chat read failed: Forbidden")` -> stdout `{"severity": "ERROR", "message": "BTB_ALERT grant-helpdesk/coach-inbox SOURCE_FAILED: private_chat read failed: Forbidden"}`.
-
-*Inputs / Outputs:* runnable, code, message -> one JSON line on stdout.
-
-*Errors:* none; it is the failure path and never raises.
-
-*Test:* `tests/test_raillog_app.py`, capsys -> the exact line for a known code (R1) and the `UNEXPECTED` fallback (R2); red first.
-
 ### deploy-alerts.sh (service policies)
 
 `jobs/deploy-alerts.sh` gains a log-match policy and a metric + threshold policy scoped to `resource.type="cloud_run_revision" AND resource.labels.service_name="grant-helpdesk"`, titles starting `BTB-ALERT bigtribebuilders`, the threshold one re-notifying every 24h.
@@ -230,3 +213,4 @@ No source file in the repo may contain SQL that runs UPDATE, DELETE, MERGE, TRUN
 - 2026-10-05: this task builds close only; assign and lane for threads stay a later task, so `set_thread_workflow` accepts only `status="closed"` for now and returns a `WorkflowResult` instead of the `None` first sketched, for the same reason `add_coach_reply` returns a `ReplyResult`.
 - 2026-10-05: an unreadable workflow table shows every thread as not closed rather than hiding the list. Why: a wrongly reopened thread costs a click, a hidden question costs a member an answer.
 - 2026-10-05: the close time is the moment of the click (or of the sent answer), not the newest message the coach had on screen. A member message that arrives in the gap before the click — the list is up to 2 minutes old — is filed as closed, unseen; Martin accepted that gap after the review raised it.
+- 2026-10-15: the `### raillog.alert` section and the ownership of the root `raillog.py` copy move to `docs/specs/modules/raillog.md`. Why: `jobs/raillog.py` was owned by no spec at all, so the pair of copies had no one place to be described and no owner (the global rule 7, owned or gone). This spec keeps `report_source_failure`, which is what decides when a `private_chat` failure is alerted; the line's shape is the helper's.
