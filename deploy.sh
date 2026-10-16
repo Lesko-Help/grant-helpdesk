@@ -69,6 +69,7 @@ gcloud run deploy "$SERVICE" \
     --source . \
     --region "$REGION" \
     --project "$PROJECT" \
+    --session-affinity \
     --quiet
 
 echo ""

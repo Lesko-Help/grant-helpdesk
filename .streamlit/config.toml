@@ -1,6 +1,16 @@
 [server]
 port = 8501
 
+# How long a coach's session survives after her browser's websocket dies.
+# Streamlit's default is 120s, and a drop longer than that deletes the
+# session: her filters, her open ticket dialog and any half-typed reply are
+# gone, and the app comes back at the start. Measured 2026-10-16, that was
+# happening 37-44 times a working day to one coach (the server closes a
+# socket 30s after a pong goes missing, and her network path drops them).
+# 15 minutes covers stepping away from the desk. Needs session affinity on
+# Cloud Run to mean anything across instances - see deploy.sh.
+disconnectedSessionTTL = 900
+
 # Keep these in sync with lesko-ui/tokens.css — this styles Streamlit's own
 # chrome before the injected CSS loads, so mismatches cause a flash of off-brand.
 [theme]

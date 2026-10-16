@@ -1,4 +1,9 @@
-streamlit
+# Pinned 2026-10-16: the image built 2026-10-06 resolved this to 1.65.0
+# (1.66.0 landed 10-14), so the pin freezes what is already live rather
+# than changing it. It matters because .streamlit/config.toml now tunes
+# server.disconnectedSessionTTL, and the websocket/session machinery
+# behind it moved between versions (Tornado -> Starlette).
+streamlit==1.65.0
 google-cloud-bigquery
 google-cloud-dataform
 pandas
