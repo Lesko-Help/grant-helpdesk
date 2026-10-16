@@ -7,9 +7,14 @@ port = 8501
 # gone, and the app comes back at the start. Measured 2026-10-16, that was
 # happening 37-44 times a working day to one coach (the server closes a
 # socket 30s after a pong goes missing, and her network path drops them).
-# 15 minutes covers stepping away from the desk. Needs session affinity on
-# Cloud Run to mean anything across instances - see deploy.sh.
-disconnectedSessionTTL = 900
+# Why 30 minutes and not 15: her reconnect gaps cluster at 15-17 minutes
+# (90th percentile 17), so a 15-minute TTL sits right on the cliff. Measured
+# over the same three days, lost sessions go 128 (at the 120s default) -> 76
+# at 900s -> 9 at 1800s -> 1 at 3600s. 1800 is the knee of that curve; past
+# it we would be holding a coach's memory for someone who has gone home.
+# Needs session affinity on Cloud Run to mean anything across instances -
+# see deploy.sh.
+disconnectedSessionTTL = 1800
 
 # Keep these in sync with lesko-ui/tokens.css — this styles Streamlit's own
 # chrome before the injected CSS loads, so mismatches cause a flash of off-brand.

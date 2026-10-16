@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+WORKDIR /app
+# A second belt behind raillog's own flush=True: a BTB_ALERT line that never
+# leaves the container's buffer is an alert nobody gets.
+ENV PYTHONUNBUFFERED=1
+RUN pip install --no-cache-dir google-cloud-logging
+COPY watch_disconnects.py raillog.py ./
+CMD ["python", "watch_disconnects.py"]

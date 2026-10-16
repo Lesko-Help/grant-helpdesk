@@ -149,6 +149,17 @@ def test_resets_per_day_divides_by_days_actually_seen():
 
 # ── telling a flaky line from a closed tab ───────────────────────────────
 
+def test_the_ping_clock_window_is_tight_enough_to_mean_something():
+    """Cloud Run logs a grid death as 60.006s, so the window cannot be zero -
+    but it has to stay narrow. A 1.5s-wide window (0.05 of a tick, which is
+    what this started as) swept in 167 of the real week's sockets where an
+    exact reading finds 140, which would have made "her line is flaky" look
+    worse than it is."""
+    rows = [row(0, 60.006), row(300, 61.4), row(600, 58.5)]
+    summary = watcher.summarise(sessions_from(rows), ttl_seconds=1800)
+    assert summary["clients"]["10.0.0.1"]["ping_clock_drops"] == 1
+
+
 def test_a_socket_dying_on_the_30s_ping_clock_is_counted_apart():
     """Streamlit closes a socket 30s after a missing pong, so a life that is
     an exact multiple of 30s means the network went quiet under it. A coach

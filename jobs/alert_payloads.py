@@ -594,7 +594,7 @@ def _main(argv):
             "usage: alert_payloads.py metric-filter JOB\n"
             "       alert_payloads.py log-match-policy TITLE JOB PROJECT CHANNEL\n"
             "       alert_payloads.py threshold-policy TITLE JOB PROJECT CHANNEL METRIC_NAME\n"
-            "       alert_payloads.py absence-policy TITLE JOB PROJECT CHANNEL\n"
+            "       alert_payloads.py absence-policy TITLE JOB PROJECT CHANNEL [WINDOW_SECONDS]\n"
             "       alert_payloads.py service-metric-filter SERVICE\n"
             "       alert_payloads.py service-log-match-policy TITLE SERVICE PROJECT CHANNEL\n"
             "       alert_payloads.py service-threshold-policy TITLE SERVICE PROJECT CHANNEL METRIC_NAME\n"
@@ -612,9 +612,13 @@ def _main(argv):
     elif kind == "threshold-policy" and len(argv) == 7:
         title, job, project, channel, metric_name = argv[2:7]
         print(json.dumps(threshold_policy(title, job, project, channel, metric_name)))
-    elif kind == "absence-policy" and len(argv) == 6:
+    elif kind == "absence-policy" and len(argv) in (6, 7):
         title, job, project, channel = argv[2:6]
-        print(json.dumps(absence_policy(title, job, project, channel)))
+        # The window is optional so the hourly poller's call keeps working
+        # unchanged. watch-disconnects passes one because it runs weekly, and
+        # a 90-minute silence window on a weekly job would page every Monday.
+        window = int(argv[6]) if len(argv) == 7 else SILENCE_WINDOW_SECONDS
+        print(json.dumps(absence_policy(title, job, project, channel, window)))
     elif kind == "service-metric-filter" and len(argv) == 3:
         print(service_metric_log_filter(argv[2]))
     elif kind == "service-log-match-policy" and len(argv) == 6:

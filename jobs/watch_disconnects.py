@@ -46,13 +46,16 @@ SERVICE = os.environ.get("SERVICE", "grant-helpdesk")
 # coach navigating away. Counting them separates "her line is flaky" from
 # "she closed the tab", which are different problems with different owners.
 PING_GRID_SECONDS = 30
-PING_GRID_TOLERANCE = 0.05
+# Cloud Run logs a grid death as 60.006s, not 60.000s, so the window has to
+# be a shade over zero - but in SECONDS. As a fraction of a tick, 0.05 is
+# 1.5s wide and counts sockets that died nowhere near the clock.
+PING_GRID_TOLERANCE_SECONDS = 0.1
 
 # What the app is deployed with (.streamlit/config.toml). Passed in rather
 # than read from the config file: this job runs in its own container and
 # never ships the app's config, and the number that matters is the one the
 # live service is using.
-DEFAULT_TTL_SECONDS = 900
+DEFAULT_TTL_SECONDS = 1800
 
 # Above this, the fix is not holding and Martin should hear about it. One
 # reset a day per coach is a bad afternoon; five a day, every day, is the
@@ -94,8 +97,9 @@ class Session(tuple):
         fingerprint of a connection the network dropped."""
         if self.seconds < PING_GRID_SECONDS:
             return False
-        ticks = self.seconds / PING_GRID_SECONDS
-        return abs(ticks - round(ticks)) < PING_GRID_TOLERANCE
+        off_grid = self.seconds % PING_GRID_SECONDS
+        distance = min(off_grid, PING_GRID_SECONDS - off_grid)
+        return distance < PING_GRID_TOLERANCE_SECONDS
 
 
 def parse_latency(raw):

@@ -360,6 +360,55 @@ PAYLOAD_DATAFORM_SILENCE=$(python3 "$SCRIPT_DIR/alert_payloads.py" dataform-sile
   "$TITLE_DATAFORM_SILENCE" "$PROJECT" "$CHANNEL" "$DATAFORM_METRIC_NAME")
 apply_policy "$TITLE_DATAFORM_SILENCE" "$PAYLOAD_DATAFORM_SILENCE"
 
+# ── WATCH-DISCONNECTS: the weekly watch on lost coach sessions ──────────────
+# docs/briefs/disconnect-resilience.md. jobs/watch_disconnects.py runs weekly
+# and raises SESSION_LOST when coaches are losing whole sessions to dropped
+# websockets faster than the agreed rate. Two policies, not the three the
+# poller has: the renotifying metric one below, and a silence one. No
+# log-match twin — that pair exists on poll-dataform-failures only because
+# the log-match policy came first and is kept until the metric one is proven
+# (docs/briefs/alert-renotify-metric.md). A new job starts with the proven
+# shape instead of inheriting the transition.
+WATCH_JOB="${WATCH_JOB:-watch-disconnects}"
+# 8 days: its Scheduler trigger is weekly, so the window is one schedule plus
+# a day of margin. SILENCE_WINDOW_SECONDS (90 min) is sized for the hourly
+# poller and would page every single week if it were reused here.
+WATCH_SILENCE_WINDOW_SECONDS="${WATCH_SILENCE_WINDOW_SECONDS:-691200}"
+
+WATCH_METRIC_NAME="${WATCH_JOB//-/_}_btb_alert_count"
+WATCH_METRIC_FILTER=$(python3 "$SCRIPT_DIR/alert_payloads.py" metric-filter "$WATCH_JOB")
+WATCH_METRIC_DESCRIBE_ERR="$(mktemp)"
+if gcloud logging metrics describe "$WATCH_METRIC_NAME" --project "$PROJECT" >/dev/null 2>"$WATCH_METRIC_DESCRIBE_ERR"; then
+  EXISTING_WATCH_METRIC_FILTER=$(gcloud logging metrics describe "$WATCH_METRIC_NAME" --project "$PROJECT" --format='value(filter)')
+  if [ "$EXISTING_WATCH_METRIC_FILTER" = "$WATCH_METRIC_FILTER" ]; then
+    echo "==> metric '$WATCH_METRIC_NAME' exists and matches — leaving it"
+  else
+    echo "==> metric '$WATCH_METRIC_NAME' filter has drifted from this file — updating"
+    gcloud logging metrics update "$WATCH_METRIC_NAME" --project "$PROJECT" --log-filter="$WATCH_METRIC_FILTER" >/dev/null
+  fi
+elif grep -q "NOT_FOUND" "$WATCH_METRIC_DESCRIBE_ERR"; then
+  echo "==> creating metric '$WATCH_METRIC_NAME'"
+  gcloud logging metrics create "$WATCH_METRIC_NAME" --project "$PROJECT" \
+    --description="One count per BTB_ALERT line from ${WATCH_JOB}, the weekly watch on coach sessions lost to dropped websockets. See docs/briefs/disconnect-resilience.md." \
+    --log-filter="$WATCH_METRIC_FILTER" >/dev/null
+else
+  echo "ERROR: could not look up metric '$WATCH_METRIC_NAME' (not a NOT_FOUND) — stopping, nothing changed:"
+  cat "$WATCH_METRIC_DESCRIBE_ERR"
+  rm -f "$WATCH_METRIC_DESCRIBE_ERR"
+  exit 1
+fi
+rm -f "$WATCH_METRIC_DESCRIBE_ERR"
+
+TITLE_WATCH="BTB-ALERT ${PROJECT} — ${WATCH_JOB} reported a BTB_ALERT (renotifies every 24h)"
+PAYLOAD_WATCH=$(python3 "$SCRIPT_DIR/alert_payloads.py" threshold-policy \
+  "$TITLE_WATCH" "$WATCH_JOB" "$PROJECT" "$CHANNEL" "$WATCH_METRIC_NAME")
+apply_policy "$TITLE_WATCH" "$PAYLOAD_WATCH"
+
+TITLE_WATCH_SILENCE="BTB-ALERT ${PROJECT} — ${WATCH_JOB} went silent (no successful run in 8 days)"
+PAYLOAD_WATCH_SILENCE=$(python3 "$SCRIPT_DIR/alert_payloads.py" absence-policy \
+  "$TITLE_WATCH_SILENCE" "$WATCH_JOB" "$PROJECT" "$CHANNEL" "$WATCH_SILENCE_WINDOW_SECONDS")
+apply_policy "$TITLE_WATCH_SILENCE" "$PAYLOAD_WATCH_SILENCE"
+
 echo
 echo "Policies in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"
 curl -s -H "Authorization: Bearer $TOKEN" "${API}/alertPolicies" | python3 -c "
