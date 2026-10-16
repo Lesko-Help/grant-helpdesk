@@ -20,7 +20,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(REPO_ROOT, "jobs"))
 
 from alert_payloads import (  # noqa: E402
-    absence_policy, log_match_policy, metric_log_filter, same_policy,
+    DATAFORM_COMPLETION_LOG_FILTER, absence_policy, dataform_silence_policy,
+    log_match_policy, metric_log_filter, same_policy,
     service_log_match_policy, service_metric_log_filter,
     service_threshold_policy, threshold_policy)
 
@@ -482,3 +483,118 @@ def test_service_metric_name_matches_deploy_alerts_naming():
         source = f.read()
     assert 'SERVICE_METRIC_NAME="${SERVICE//-/_}_btb_alert_count"' in source
     assert SERVICE_METRIC_NAME == SERVICE.replace("-", "_") + "_btb_alert_count"
+
+
+# ── Dataform silence policy (docs/specs/modules/alert_payloads.md, R1-R10) ───
+# Pages when grant-helpdesk-5min stops completing runs. Expected values are
+# typed here, not read back from the builder, so a change has to change a test.
+DATAFORM_METRIC = "grant_helpdesk_dataform_succeeded"
+DATAFORM_TITLE = "BTB-ALERT bigtribebuilders — grant-helpdesk Dataform pipeline went silent"
+
+
+def _dataform_policy():
+    return dataform_silence_policy(
+        DATAFORM_TITLE, "bigtribebuilders", CHANNEL, DATAFORM_METRIC)
+
+
+def test_dataform_filter_pins_config_and_succeeded_state():
+    # R2, R3: the config id keeps the Monday weekly-prompt run from resetting
+    # the clock; SUCCEEDED keeps a failed run from counting as a heartbeat.
+    assert 'jsonPayload.workflowConfigId="grant-helpdesk-5min"' in DATAFORM_COMPLETION_LOG_FILTER
+    assert 'jsonPayload.terminalState="SUCCEEDED"' in DATAFORM_COMPLETION_LOG_FILTER
+    assert 'resource.labels.repository_id="grant-helpdesk"' in DATAFORM_COMPLETION_LOG_FILTER
+    assert ("dataform.googleapis.com%2Fworkflow_invocation_completion"
+            in DATAFORM_COMPLETION_LOG_FILTER)
+
+
+def test_dataform_silence_policy_is_condition_absent_for_an_hour():
+    # R4, R5: the "3600s" is typed here, and must not be the 5400s of the job.
+    cond = _dataform_policy()["conditions"][0]
+    assert "conditionThreshold" not in cond
+    assert "conditionMatchedLog" not in cond
+    absent = cond["conditionAbsent"]
+    assert absent["duration"] == "3600s"
+    assert absent["duration"] != "5400s"
+    assert "evaluationMissingData" not in absent
+    assert absent["aggregations"] == [{
+        "alignmentPeriod": "300s",
+        "perSeriesAligner": "ALIGN_SUM",
+        "crossSeriesReducer": "REDUCE_SUM",
+    }]
+    assert f'metric.type="logging.googleapis.com/user/{DATAFORM_METRIC}"' in absent["filter"]
+    assert 'resource.type="dataform.googleapis.com/Repository"' in absent["filter"]
+
+
+def test_dataform_silence_policy_window_argument_reaches_the_duration():
+    policy = dataform_silence_policy(
+        DATAFORM_TITLE, "bigtribebuilders", CHANNEL, DATAFORM_METRIC, window_seconds=1800)
+    assert policy["conditions"][0]["conditionAbsent"]["duration"] == "1800s"
+
+
+def test_dataform_silence_policy_renotifies_every_24h_and_has_no_rate_limit():
+    # R6, R9
+    policy = _dataform_policy()
+    strategy = policy["alertStrategy"]
+    assert strategy["autoClose"] == "604800s"
+    assert "notificationRateLimit" not in strategy
+    assert strategy["notificationChannelStrategy"] == [{
+        "notificationChannelNames": [CHANNEL],
+        "renotifyInterval": "86400s",
+    }]
+    assert policy["notificationChannels"] == [CHANNEL]
+    assert policy["enabled"] is True
+    assert policy["combiner"] == "OR"
+
+
+def test_dataform_silence_policy_subject_is_the_title():
+    # R7
+    policy = _dataform_policy()
+    assert policy["displayName"] == DATAFORM_TITLE
+    assert policy["documentation"]["subject"] == DATAFORM_TITLE
+    assert DATAFORM_TITLE.startswith("BTB-ALERT bigtribebuilders")
+    assert policy["documentation"]["mimeType"] == "text/markdown"
+
+
+def test_dataform_silence_policy_documentation_is_a_runbook():
+    # R8: the call to list invocations, the three usual causes, the close note.
+    content = _dataform_policy()["documentation"]["content"]
+    assert "dataform.googleapis.com/v1beta1" in content
+    assert "workflowInvocations" in content
+    assert "gcloud auth print-access-token" in content
+    assert "disabled" in content
+    assert "compil" in content
+    assert "FAILED" in content
+    assert "next successful run" in content
+
+
+def test_cli_dataform_verbs_match_direct_calls():
+    script = os.path.join(REPO_ROOT, "jobs", "alert_payloads.py")
+    policy = subprocess.run(
+        [sys.executable, script, "dataform-silence-policy", DATAFORM_TITLE,
+         "bigtribebuilders", CHANNEL, DATAFORM_METRIC],
+        capture_output=True, text=True, check=True)
+    assert json.loads(policy.stdout) == _dataform_policy()
+    filt = subprocess.run(
+        [sys.executable, script, "dataform-metric-filter"],
+        capture_output=True, text=True, check=True)
+    assert filt.stdout.strip() == DATAFORM_COMPLETION_LOG_FILTER
+
+
+def test_cli_dataform_silence_policy_wrong_arity_exits_1():
+    result = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "jobs", "alert_payloads.py"),
+         "dataform-silence-policy", "TITLE"],
+        capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "bad arguments for kind 'dataform-silence-policy'" in result.stderr
+
+
+def test_same_policy_dataform_silence_round_trip():
+    want = _dataform_policy()
+    existing = json.loads(json.dumps(want))
+    existing["conditions"][0]["name"] = (
+        "projects/bigtribebuilders/alertPolicies/1/conditions/2")
+    assert same_policy(existing, want) is True
+    drifted = json.loads(json.dumps(want))
+    drifted["conditions"][0]["conditionAbsent"]["duration"] = "5400s"
+    assert same_policy(drifted, want) is False

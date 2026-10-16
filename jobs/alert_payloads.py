@@ -461,6 +461,95 @@ def absence_policy(title, job, project, channel, window_seconds=SILENCE_WINDOW_S
     }
 
 
+DATAFORM_SILENCE_WINDOW_SECONDS = 3600  # two missed 30-minute ticks
+# Its own constant, not SILENCE_WINDOW_SECONDS above: that 5400s is sized for
+# an hourly Cloud Run job, and sharing it would tie two schedules together.
+# See docs/specs/modules/alert_payloads.md, R5.
+
+# The one Cloud Logging filter that counts a successful grant-helpdesk-5min
+# run. Both the log metric (deploy-alerts.sh, via the dataform-metric-filter
+# verb) and the policy's meaning rest on it, so they cannot differ. The config
+# is pinned, not just the repository, so the Monday grant-helpdesk-weekly-prompt
+# run cannot reset the silence clock (spec R2); SUCCEEDED only, so a failed run
+# is not a heartbeat (spec R3).
+DATAFORM_COMPLETION_LOG_FILTER = (
+    'logName="projects/bigtribebuilders/logs/'
+    'dataform.googleapis.com%2Fworkflow_invocation_completion"\n'
+    'AND resource.type="dataform.googleapis.com/Repository"\n'
+    'AND resource.labels.repository_id="grant-helpdesk"\n'
+    'AND jsonPayload.workflowConfigId="grant-helpdesk-5min"\n'
+    'AND jsonPayload.terminalState="SUCCEEDED"'
+)
+
+
+def dataform_silence_policy(title, project, channel, metric_name,
+                            window_seconds=DATAFORM_SILENCE_WINDOW_SECONDS):
+    """Input: display title, GCP project, a notification channel's resource
+    name, the log metric's name, and the silence window in seconds (defaults
+    to DATAFORM_SILENCE_WINDOW_SECONDS). Output: the AlertPolicy dict for a
+    conditionAbsent policy that fires when the counter metric over
+    DATAFORM_COMPLETION_LOG_FILTER has no point for that long, ready to
+    json.dumps into the Monitoring API's create/patch body. Why:
+    poll_dataform_failures.py only pages when a run FAILS; a run that never
+    starts writes no log line, so nothing paged (global rule 4, "silence is a
+    failure"). SQL analogy: an alert on "SELECT COUNT(*) FROM completions
+    WHERE state = 'SUCCEEDED' AND ts > now() - window" returning no rows.
+    """
+    content = (
+        f"No successful grant-helpdesk-5min Dataform run in the last "
+        f"{window_seconds // 60} minutes (it runs at :05 and :35, so that is "
+        "two missed ticks). The coaches' ticket list is going stale.\n\n"
+        "List the recent invocations:\n"
+        '  curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" '
+        f'"https://dataform.googleapis.com/v1beta1/projects/{project}/locations/'
+        'europe-west1/repositories/grant-helpdesk/workflowInvocations'
+        '?pageSize=5&orderBy=create_time%20desc"\n'
+        "(gcloud has no dataform command in this SDK, hence the REST call.)\n\n"
+        "Usual causes:\n"
+        "  - The workflow config grant-helpdesk-5min is disabled or deleted.\n"
+        "  - The release config is not compiling, so no invocation can start.\n"
+        "  - Every run ends FAILED — poll_dataform_failures should be paging "
+        "too, see its own alert.\n\n"
+        "The incident closes by itself on the next successful run."
+    )
+    return {
+        "displayName": title,
+        "documentation": {
+            "subject": title,
+            "content": content,
+            "mimeType": "text/markdown",
+        },
+        "conditions": [{
+            "displayName": "no successful grant-helpdesk-5min run in the window",
+            "conditionAbsent": {
+                "filter": (
+                    f'metric.type="logging.googleapis.com/user/{metric_name}" '
+                    'AND resource.type="dataform.googleapis.com/Repository"'
+                ),
+                "duration": f"{window_seconds}s",
+                "aggregations": [{
+                    "alignmentPeriod": "300s",
+                    "perSeriesAligner": "ALIGN_SUM",
+                    "crossSeriesReducer": "REDUCE_SUM",
+                }],
+            },
+        }],
+        "combiner": "OR",
+        "enabled": True,
+        "alertStrategy": {
+            "autoClose": "604800s",
+            # A full 24h, as absence_policy: conditionAbsent has no rolling
+            # window that could clear the incident first. No
+            # notificationRateLimit — Monitoring rejects it outside log-match.
+            "notificationChannelStrategy": [{
+                "notificationChannelNames": [channel],
+                "renotifyInterval": "86400s",
+            }],
+        },
+        "notificationChannels": [channel],
+    }
+
+
 def same_policy(existing, want):
     """Input: two AlertPolicy dicts — `existing` as Monitoring's API returns
     it for a live policy, `want` as this script's own payload builders
@@ -509,6 +598,8 @@ def _main(argv):
             "       alert_payloads.py service-metric-filter SERVICE\n"
             "       alert_payloads.py service-log-match-policy TITLE SERVICE PROJECT CHANNEL\n"
             "       alert_payloads.py service-threshold-policy TITLE SERVICE PROJECT CHANNEL METRIC_NAME\n"
+            "       alert_payloads.py dataform-metric-filter\n"
+            "       alert_payloads.py dataform-silence-policy TITLE PROJECT CHANNEL METRIC_NAME\n"
             "       alert_payloads.py same-policy EXISTING_JSON WANT_JSON\n"
         )
         return 1
@@ -532,6 +623,11 @@ def _main(argv):
     elif kind == "service-threshold-policy" and len(argv) == 7:
         title, service, project, channel, metric_name = argv[2:7]
         print(json.dumps(service_threshold_policy(title, service, project, channel, metric_name)))
+    elif kind == "dataform-metric-filter" and len(argv) == 2:
+        print(DATAFORM_COMPLETION_LOG_FILTER)
+    elif kind == "dataform-silence-policy" and len(argv) == 6:
+        title, project, channel, metric_name = argv[2:6]
+        print(json.dumps(dataform_silence_policy(title, project, channel, metric_name)))
     elif kind == "same-policy" and len(argv) == 4:
         existing, want = json.loads(argv[2]), json.loads(argv[3])
         print("True" if same_policy(existing, want) else "False")
