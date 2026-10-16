@@ -131,6 +131,10 @@ Trap: pausing `grant-helpdesk-5min` for a drill fails unless the PATCH body also
 
 The Goal names no `werk.queue row <id>`, so no exit state is written on a queue row.
 
+Slice 2 red-then-green: the 4 script cases were red before the Dataform block existed; moving the `apply_policy` call ahead of the metric block turned the ordering test red, restored.
+
+Slice 3 (overseer review, two guards that could not go red). Guard 1: replacing the `else ... exit 1` branch of the Dataform metric block with a warn-and-continue turned `test_deploy_script_dataform_metric_reconciles_like_the_others` red (1 failed, 51 passed, "an unexpected describe error must stop the script, not carry on"), restored. The test now checks `exit 1` inside that branch only. Guard 2: renaming the script's metric to `totally_wrong_metric_name` turned `test_deploy_script_dataform_title_keeps_btb_alert_prefix_and_metric_name_agrees` red (1 failed, 51 passed, the literal `grant_helpdesk_dataform_succeeded` no longer matches), restored. The file is 52 passed again, and `jobs/` is unchanged by this slice.
+
 ## Spec proposals
 
 Specs belong to the overseer (DECISION BY MARTIN 2026-09-24) — this worktree

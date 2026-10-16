@@ -618,12 +618,19 @@ def test_deploy_script_creates_dataform_metric_before_the_policy_naming_it():
 
 
 def test_deploy_script_dataform_metric_reconciles_like_the_others():
-    # describe -> match: leave; drift: update; NOT_FOUND: create; else stop.
+    # describe -> match: leave; drift: update; NOT_FOUND: create; any other
+    # error: stop. The last one is the failure mode that matters, so it is
+    # checked inside its own branch, not as a substring anywhere in the file.
     source = _deploy_script_source()
     assert 'gcloud logging metrics update "$DATAFORM_METRIC_NAME"' in source
-    assert 'grep -q "NOT_FOUND" "$DATAFORM_METRIC_DESCRIBE_ERR"' in source
     assert "dataform-metric-filter" in source
     assert "dataform-silence-policy" in source
+    not_found = source.index('elif grep -q "NOT_FOUND" "$DATAFORM_METRIC_DESCRIBE_ERR"')
+    else_start = source.index("\nelse\n", not_found)
+    else_branch = source[else_start:source.index("\nfi\n", else_start)]
+    assert "could not look up metric" in else_branch
+    assert re.search(r"^\s*exit 1\s*$", else_branch, re.M), (
+        "an unexpected describe error must stop the script, not carry on")
 
 
 def test_deploy_script_dataform_title_keeps_btb_alert_prefix_and_metric_name_agrees():
@@ -635,6 +642,9 @@ def test_deploy_script_dataform_title_keeps_btb_alert_prefix_and_metric_name_agr
     title = template.replace("${PROJECT}", project)
     metric = re.search(r'DATAFORM_METRIC_NAME="([^"]+)"', source).group(1)
     assert title.startswith("BTB-ALERT bigtribebuilders")
+    # The literal is typed here: the builder interpolates any string, so only
+    # this line stops the script's name drifting from the one the spec names.
+    assert metric == "grant_helpdesk_dataform_succeeded"
     policy = dataform_silence_policy(title, project, CHANNEL, metric)
     assert policy["documentation"]["subject"] == title
     assert f"logging.googleapis.com/user/{metric}" in (
