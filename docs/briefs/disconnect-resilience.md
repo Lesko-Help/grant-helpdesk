@@ -23,9 +23,11 @@ without anybody reporting it.
    `deploy.sh` passes `--session-affinity`, and `requirements.txt` pins
    `streamlit==1.65.0`. Guarded by `tests/test_disconnect_resilience.py`.
 2. `jobs/watch_disconnects.py` turns Cloud Run request logs into a count of
-   lost sessions per coach per day, and says so in one BTB_ALERT line when the
-   count is above threshold. Guarded by `tests/test_watch_disconnects.py` over
-   the pure core, with synthetic rows — no network.
+   lost sessions per coach per day, and says so in one BTB_ALERT
+   SESSION_LOST line when the count is above threshold. Guarded by
+   `tests/test_watch_disconnects.py` over the pure core, with synthetic rows —
+   no network. SESSION_LOST is this repo's own code, added to both raillog
+   copies, which the suite now holds identical.
 3. The job, its weekly Scheduler trigger and its three alert policies deploy
    from re-runnable scripts in the repo.
 
@@ -73,12 +75,16 @@ persist.
 
 Three settings and one job.
 
-`server.disconnectedSessionTTL = 900` keeps the session object alive for 15
-minutes after the socket dies, so the reconnect re-attaches to the session she
-already had. Cost: a disconnected session holds its state in memory for 15
-minutes instead of 2. At 40% of 1 GiB with a handful of coaches there is room,
-and `watch_disconnects` reports the container's own memory alongside the resets
-so the trade is watched rather than assumed.
+`server.disconnectedSessionTTL = 1800` keeps the session object alive for half
+an hour after the socket dies, so the reconnect re-attaches to the session she
+already had. 1800 and not the 900 this brief first proposed: her reconnect gaps
+cluster at 15-17 minutes (90th percentile 17), so 15 minutes sits on the cliff.
+Over the same three real days the lost sessions go 128 at the 120s default ->
+76 at 900s -> 9 at 1800s -> 1 at 3600s. 1800 is the knee; past it we would hold
+a coach's memory for someone who has gone home. Cost: a disconnected session
+holds its state for half an hour instead of two minutes. At a 39.9% peak of
+1 GiB with a handful of coaches there is room, and the service's existing
+BTB_ALERT policies cover the container if that stops being true.
 
 `--session-affinity` is not optional once the TTL is long: Streamlit's own
 1.65.0 config docs say "if you are using load balancing or replication in your
@@ -137,9 +143,13 @@ to switch off.
 2. `jobs/watch_disconnects.py` pure core + `tests/test_watch_disconnects.py`.
    Red first: the module does not exist on `origin/main`, so the import fails.
 3. Deploy wiring: `jobs/Dockerfile.watch_disconnects`,
-   `jobs/deploy-watch-disconnects.sh` (job, Scheduler trigger, log-reader IAM),
-   and the metric plus three policies in `jobs/deploy-alerts.sh`. Guards in
-   `tests/test_disconnect_resilience.py` walk both scripts' source.
+   `jobs/deploy-watch-disconnects.sh` (job + weekly Friday trigger; no IAM
+   grant needed, the job's account already holds roles/editor, checked
+   2026-10-16), and the metric plus two policies in `jobs/deploy-alerts.sh`.
+   Guards in `tests/test_disconnect_resilience.py` walk both scripts' source,
+   and hold the job's TTL equal to the app's. This slice also adds the `ast`
+   flush guard global rule 2 asks for over both raillog copies — the suite
+   had none, for either copy.
 
 ## May touch
 
@@ -171,3 +181,39 @@ Global rule 5 ("no alert, no landing — break it on purpose once and show the
 email arrived") is not met by this branch: the drill is the overseer's, after
 deploy. `jobs/deploy-watch-disconnects.sh --drill` prints the one command that
 forces a BTB_ALERT line from a real run.
+
+## Proved
+
+Slice 1, red first: all three guards failed on a tree without the settings
+(`disconnectedSessionTTL is unset`, `deploy.sh does not pass
+--session-affinity`, `found 'streamlit'`), green after.
+
+Slice 2, four mutations, each reverted: hard-coding the old 120s in
+`summarise` reddened `test_the_ttl_is_the_whole_difference`; making every
+socket a ping-clock drop reddened the grid test; `>` to `>=` on the threshold
+reddened `test_at_the_agreed_rate_it_stays_quiet`; dropping the service pin
+from the log filter reddened the filter test.
+
+Slice 2, cross-check against reality: fed the 1000 real log rows this branch
+was written from, `summarise` reproduces the independent ad-hoc analysis —
+263 websockets, 222 for the one heavy client, 128 lost sessions at the 120s
+TTL. The first ping-grid tolerance (0.05 of a tick, 1.5s wide) counted 167
+grid drops against the ad-hoc 140; tightened to 0.1 *seconds* it counts 143,
+and the looseness is now its own guard.
+
+Slice 3, six mutations, each reverted: dropping `flush=True`, drifting the
+job's TTL from the app's, dropping raillog.py from the image's COPY, removing
+SESSION_LOST from one raillog copy only, shrinking the silence window to 90
+minutes, and putting the app's TTL back to 120s each reddened exactly one
+guard and nothing else.
+
+End to end, live and read-only, 2026-10-16: `fetch_entries` over the real
+project returned 285 entries and the full pipeline rendered its report, so
+the filter, the client call and the arithmetic work together, not only the
+arithmetic. At the 1800s TTL that report is 12 lost sessions across 14
+clients, worst 2.5/day — under the 5/day threshold, so the weekly mail would
+stay quiet. The same window at the 120s still deployed is about 130.
+
+Not proved, and the overseer's to do after deploy: that the alert mail
+actually arrives (global rule 5). `jobs/deploy-watch-disconnects.sh --drill`
+prints the one command.
