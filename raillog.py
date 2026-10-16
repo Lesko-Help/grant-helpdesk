@@ -20,8 +20,8 @@ import json
 
 REPO = "grant-helpdesk"
 
-# The fixed list from the global CLAUDE.md rule. This repo hasn't needed to
-# add its own code yet.
+# The fixed list from the global CLAUDE.md rule, plus this repo's own
+# SESSION_LOST (the rule allows a repo to add codes in its alert helper).
 CODES = {
     "AUTH_FAILED",
     "SOURCE_FAILED",
@@ -30,6 +30,12 @@ CODES = {
     "QUOTA",
     "STALE",
     "UNEXPECTED",
+    # Raised by jobs/watch_disconnects.py: coaches are losing whole
+    # sessions to dropped websockets faster than the agreed rate. Not
+    # STALE (the data is current) and not UNEXPECTED (this is the exact
+    # thing that runnable watches for), so it gets its own word to group
+    # on in a Gmail search.
+    "SESSION_LOST",
 }
 
 
