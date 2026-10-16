@@ -319,6 +319,47 @@ PAYLOAD_SERVICE_METRIC=$(python3 "$SCRIPT_DIR/alert_payloads.py" service-thresho
   "$TITLE_SERVICE_METRIC" "$SERVICE" "$PROJECT" "$CHANNEL" "$SERVICE_METRIC_NAME")
 apply_policy "$TITLE_SERVICE_METRIC" "$PAYLOAD_SERVICE_METRIC"
 
+# ── DATAFORM SILENCE POLICY: the grant-helpdesk pipeline itself ─────────────
+# docs/specs/modules/alert_payloads.md, R10. Everything above pages when
+# something runs and logs a failure; a Dataform run that never starts writes
+# nothing, so this pages on the SUCCEEDED completion line going absent for an
+# hour. ORDER MATTERS: a log metric only counts entries written after it is
+# created, and conditionAbsent only fires for a series Monitoring has already
+# seen, so the metric is created first and the policy that names it second.
+# On a cold deploy the policy may sit without a series until the first
+# SUCCEEDED run lands — expected, do not seed anything.
+echo
+echo "==> now applying the Dataform silence policy"
+
+DATAFORM_METRIC_NAME="grant_helpdesk_dataform_succeeded"
+DATAFORM_METRIC_FILTER=$(python3 "$SCRIPT_DIR/alert_payloads.py" dataform-metric-filter)
+DATAFORM_METRIC_DESCRIBE_ERR="$(mktemp)"
+# Replaces the earlier EXIT trap (bash keeps only the last), so it lists all three.
+trap 'rm -f "$METRIC_DESCRIBE_ERR" "$SERVICE_METRIC_DESCRIBE_ERR" "$DATAFORM_METRIC_DESCRIBE_ERR"' EXIT
+if gcloud logging metrics describe "$DATAFORM_METRIC_NAME" --project "$PROJECT" >/dev/null 2>"$DATAFORM_METRIC_DESCRIBE_ERR"; then
+  EXISTING_DATAFORM_METRIC_FILTER=$(gcloud logging metrics describe "$DATAFORM_METRIC_NAME" --project "$PROJECT" --format='value(filter)')
+  if [ "$EXISTING_DATAFORM_METRIC_FILTER" = "$DATAFORM_METRIC_FILTER" ]; then
+    echo "==> metric '$DATAFORM_METRIC_NAME' exists and matches — leaving it"
+  else
+    echo "==> metric '$DATAFORM_METRIC_NAME' filter has drifted from this file — updating"
+    gcloud logging metrics update "$DATAFORM_METRIC_NAME" --project "$PROJECT" --log-filter="$DATAFORM_METRIC_FILTER" >/dev/null
+  fi
+elif grep -q "NOT_FOUND" "$DATAFORM_METRIC_DESCRIBE_ERR"; then
+  echo "==> creating metric '$DATAFORM_METRIC_NAME'"
+  gcloud logging metrics create "$DATAFORM_METRIC_NAME" --project "$PROJECT" \
+    --description="One count per SUCCEEDED grant-helpdesk-5min Dataform run. Backs the silence policy below — see docs/specs/modules/alert_payloads.md." \
+    --log-filter="$DATAFORM_METRIC_FILTER" >/dev/null
+else
+  echo "ERROR: could not look up metric '$DATAFORM_METRIC_NAME' (not a NOT_FOUND) — stopping, nothing changed:"
+  cat "$DATAFORM_METRIC_DESCRIBE_ERR"
+  exit 1
+fi
+
+TITLE_DATAFORM_SILENCE="BTB-ALERT ${PROJECT} — grant-helpdesk Dataform pipeline went silent (no successful run in 60 min)"
+PAYLOAD_DATAFORM_SILENCE=$(python3 "$SCRIPT_DIR/alert_payloads.py" dataform-silence-policy \
+  "$TITLE_DATAFORM_SILENCE" "$PROJECT" "$CHANNEL" "$DATAFORM_METRIC_NAME")
+apply_policy "$TITLE_DATAFORM_SILENCE" "$PAYLOAD_DATAFORM_SILENCE"
+
 echo
 echo "Policies in ${PROJECT} (page 1 only — cosmetic, not a completeness check):"
 curl -s -H "Authorization: Bearer $TOKEN" "${API}/alertPolicies" | python3 -c "

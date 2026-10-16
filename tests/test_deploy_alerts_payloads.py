@@ -598,3 +598,53 @@ def test_same_policy_dataform_silence_round_trip():
     drifted = json.loads(json.dumps(want))
     drifted["conditions"][0]["conditionAbsent"]["duration"] = "5400s"
     assert same_policy(drifted, want) is False
+
+
+# ── deploy-alerts.sh wiring for the Dataform silence policy (R10) ───────────
+def _deploy_script_source():
+    with open(os.path.join(REPO_ROOT, "jobs", "deploy-alerts.sh")) as f:
+        return f.read()
+
+
+def test_deploy_script_creates_dataform_metric_before_the_policy_naming_it():
+    # A log metric only counts entries written after it exists, and
+    # conditionAbsent only fires for a series already seen, so the metric
+    # must come first. Read from the script's source, not from the builder.
+    source = _deploy_script_source()
+    metric_create = source.index('gcloud logging metrics create "$DATAFORM_METRIC_NAME"')
+    metric_describe = source.index('gcloud logging metrics describe "$DATAFORM_METRIC_NAME"')
+    apply_call = source.index('apply_policy "$TITLE_DATAFORM_SILENCE"')
+    assert metric_describe < metric_create < apply_call
+
+
+def test_deploy_script_dataform_metric_reconciles_like_the_others():
+    # describe -> match: leave; drift: update; NOT_FOUND: create; else stop.
+    source = _deploy_script_source()
+    assert 'gcloud logging metrics update "$DATAFORM_METRIC_NAME"' in source
+    assert 'grep -q "NOT_FOUND" "$DATAFORM_METRIC_DESCRIBE_ERR"' in source
+    assert "dataform-metric-filter" in source
+    assert "dataform-silence-policy" in source
+
+
+def test_deploy_script_dataform_title_keeps_btb_alert_prefix_and_metric_name_agrees():
+    # The title and metric name are regexed out of the script, so the test
+    # cannot check its own input.
+    source = _deploy_script_source()
+    project = re.search(r'PROJECT="\$\{PROJECT:-([^}]+)\}"', source).group(1)
+    template = re.search(r'TITLE_DATAFORM_SILENCE="([^"]+)"', source).group(1)
+    title = template.replace("${PROJECT}", project)
+    metric = re.search(r'DATAFORM_METRIC_NAME="([^"]+)"', source).group(1)
+    assert title.startswith("BTB-ALERT bigtribebuilders")
+    policy = dataform_silence_policy(title, project, CHANNEL, metric)
+    assert policy["documentation"]["subject"] == title
+    assert f"logging.googleapis.com/user/{metric}" in (
+        policy["conditions"][0]["conditionAbsent"]["filter"])
+
+
+def test_deploy_script_cleans_up_all_three_temp_files():
+    # bash keeps one EXIT trap; the newest must remove every temp file.
+    source = _deploy_script_source()
+    last_trap = re.findall(r"^trap '([^']+)' EXIT", source, re.M)[-1]
+    for name in ("METRIC_DESCRIBE_ERR", "SERVICE_METRIC_DESCRIBE_ERR",
+                 "DATAFORM_METRIC_DESCRIBE_ERR"):
+        assert f'"${name}"' in last_trap
