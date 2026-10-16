@@ -111,7 +111,19 @@ Module: `alert_payloads`. Files: `jobs/alert_payloads.py`, `jobs/deploy-alerts.s
 
 ## Context
 
-2026-10-16: the overseer's memory message had not arrived when this brief was committed; add its content here once it comes.
+2026-10-16, overseer's memory message (arrived after the first commit):
+
+Superseded: "conditionThreshold sum<1 with evaluationMissingData, not conditionAbsent" is wrong. A log-based counter metric is sparse (12 points in 6h for `btbr_core_30min_succeeded`, not 36), and three live Dataform silence policies use conditionAbsent. Closest analogue is `elin-crm-all`: 3600s, 300s, ALIGN_SUM/REDUCE_SUM. The `evaluationMissingData` trap does not apply.
+
+Trap, confirmed: a log metric counts only entries written after it exists, and conditionAbsent fires only for a series already seen. So the metric is created before the policy (R10). A cold deploy may sit without a series until the first SUCCEEDED run; that is expected, do not seed anything.
+
+Live evidence, 2026-10-16: the 16:35:29Z scheduled run carries `workflowConfigId="grant-helpdesk-5min"`; manual runs at 16:21 and 16:08 carry no `workflowConfigId`. So the pin also keeps hand-run invocations from resetting the silence clock. Do not loosen the filter. The config now runs `5,35 * * * *` Europe/Amsterdam; some repo docs still say `*/30` and are stale.
+
+Known weak spot, deliberately left alone: `find_policy` treats a failed GET as absent, and the `same_policy` round-trip is self-derived, so only a second live run really proves it.
+
+Constants: project `bigtribebuilders`, region `europe-west1`, channel `4324299381952164741`, autoClose `604800s`.
+
+Slice 1 red-then-green: the import failed before the builder existed; flipping `SUCCEEDED` to `FAILED` in the filter turned `test_dataform_filter_pins_config_and_succeeded_state` red (1 failed, 47 passed), reverted, 48 passed.
 
 Spec: `docs/specs/modules/alert_payloads.md` (agreed 2026-10-16), R1-R10 and the Decisions section. Martin waived the break-it-on-purpose drill (2026-10-16), a deliberate exception to global rule 5.
 
