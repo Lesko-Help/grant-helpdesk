@@ -76,29 +76,22 @@ Design: docs/specs/modules/alert_payloads.md (agreed 2026-10-16) — the payload
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass. Reviewed 2026-10-16 by the overseer over `git diff origin/main...HEAD`, then re-verified after slice 3. The spec's R1-R10 all hold in code, the two guards that could not go red now can, and `jobs/` is byte-identical between `fa27891` and `e2779b1`, so tightening the tests moved nothing that ships.
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+1. `test_deploy_script_dataform_metric_reconciles_like_the_others` did not constrain the error path — replacing the `else ... exit 1` branch with a warn-and-continue left all 52 tests green. The one failure shape this repo's rules single out was unguarded.
+2. The `metric_name_agrees` half of `test_deploy_script_dataform_title_keeps_btb_alert_prefix_and_metric_name_agrees` was a tautology — it regexed the name out of the script and asserted the builder interpolated it, true for any string. Renaming the metric to `totally_wrong_metric_name` left all 52 green.
+3. `DATAFORM_COMPLETION_LOG_FILTER` is the first multi-line filter in `deploy-alerts.sh`. If gcloud normalises the newlines, the "exists and matches — leaving it" branch never hits and every deploy re-issues an update. Harmless, but it is exactly what slice 2's own "run it twice, the second run changes nothing" was meant to prove, and that was never run.
+4. `test_cli_dataform_verbs_match_direct_calls` compares the CLI output to the builder — a fair round-trip, and the spec asks for it, but it pins no value. Noted so it is not counted as value coverage.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. Fixed in `e2779b1`. The test now slices the source from the `elif ... NOT_FOUND` line to the branch's closing `fi` and asserts that branch carries an `exit 1`. Re-verified independently: warn-and-continue gives 1 failed / 51 passed, "an unexpected describe error must stop the script, not carry on".
+2. Fixed in `e2779b1`. The literal `grant_helpdesk_dataform_succeeded` is now typed in the test file (`tests/test_deploy_alerts_payloads.py:647`, and as a module constant at `:491`) and the script's value compared against it. Re-verified: the rename gives 1 failed / 51 passed, `assert 'totally_wrong_metric_name' == 'grant_helpdesk_dataform_succeeded'`.
+3. Not fixed — only a live run can tell. It is the overseer's check at deploy: run `jobs/deploy-alerts.sh` twice and read the second run's output.
+4. Not fixed — left deliberately, as a round-trip is what it is for.
 
-This section is filled last, after the overseer runs its review subagent
-and sends the findings back — never by the worker reviewing its own
-diff. Record the findings under Findings (word for word) and the
-fixes under Fixed in (one line per finding, naming its commit), fix
-what needs fixing, commit, then report again the normal way. Also
-leave the `Verdict:` line exactly as it stands: the overseer fills
-it at review.
-
-wt-done.sh's check on this is literal: it greps this brief for a line
-starting with exactly `Verdict:` at the very start of the line (column 0)
-— no bold, no indent, no renamed label, no different case. Keep the
-`Verdict:` line reading exactly as it does above, or the guard cannot see
-it and treats the brief as not yet reviewed.
+### Known limit of guard 1
+The tightened error-path test proves the text `exit 1` sits inside the right branch, not that the branch exits. The slice is tight — moving the `exit 1` into the neighbouring `NOT_FOUND` branch reddens it, and deleting it outright reddens it — but wrapping it in a nested `if false; then ... fi` inside the same branch keeps the suite at 52 while the error path no longer stops. The nested `fi` is indented, so the test's end-marker steps over it. Accepted: it catches the regression someone would actually write (dropping or softening the exit), and closing the rest means running the branch under `bash` with a stubbed `gcloud` and reading its exit status. That is a worthwhile follow-up, not a condition of landing.
 
 
 ## May touch
