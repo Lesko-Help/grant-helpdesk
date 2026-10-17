@@ -368,6 +368,25 @@ SILENCE_WINDOW_SECONDS = 5400  # 1.5x the hourly Scheduler trigger: 3600s
 # See docs/briefs/poller-heartbeat.md, Architecture, "Margin".
 
 
+def human_window(window_seconds):
+    """Input: a silence window in seconds. Output: that window in the largest
+    unit it divides into cleanly — "90 minutes", "8 days". Why: this string
+    goes into an alert email a human reads at 7am. The old phrasing divided
+    by 60 unconditionally, which turned the weekly watcher's 8-day window
+    into "11520 minutes", and said "its hourly schedule" about a job that
+    runs once a week.
+    """
+    day = 86400
+    hour = 3600
+    if window_seconds % day == 0:
+        count = window_seconds // day
+        return f"{count} day{'s' if count != 1 else ''}"
+    if window_seconds % hour == 0:
+        count = window_seconds // hour
+        return f"{count} hour{'s' if count != 1 else ''}"
+    return f"{window_seconds // 60} minutes"
+
+
 def absence_policy(title, job, project, channel, window_seconds=SILENCE_WINDOW_SECONDS):
     """Input: display title, job name, GCP project, a notification channel's
     resource name, and the silence window in seconds (defaults to
@@ -384,8 +403,8 @@ def absence_policy(title, job, project, channel, window_seconds=SILENCE_WINDOW_S
     Architecture, "Rejected alternative").
     """
     content = (
-        f"No successful run of {job} in the last {window_seconds // 60} "
-        "minutes (its hourly schedule plus a margin).\n\n"
+        f"No successful run of {job} in the last "
+        f"{human_window(window_seconds)} (its schedule plus a margin).\n\n"
         "Check the last run:\n"
         f"  gcloud run jobs executions list --job {job} --region "
         f"europe-west1 --project {project} --limit 5\n\n"

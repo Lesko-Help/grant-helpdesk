@@ -53,12 +53,17 @@ if [ "${1:-}" = "--drill" ]; then
 Break it on purpose (global CLAUDE.md rule 5), then check the mail arrived:
 
   gcloud run jobs execute $JOB --region $REGION --project $PROJECT --wait \\
-      --args="--max-resets-per-day,0"
+      --update-env-vars MAX_RESETS_PER_DAY=0
 
   A threshold of 0 makes any lost session at all cross the line, so a real run
   over real data raises a real BTB_ALERT SESSION_LOST line. Nothing is faked
-  and nothing is left behind: the job's own env still says
+  and nothing is left behind: --update-env-vars is an override for this one
+  execution, so the job's own env still says
   MAX_RESETS_PER_DAY=$MAX_RESETS_PER_DAY on the next scheduled run.
+
+  Not --args: that REPLACES the container's args, and the image sets its
+  command through CMD, so the override would try to exec
+  "--max-resets-per-day" instead of python and fail before the code runs.
 
   Expect mail with subject:
     [ALERT - No severity] BTB-ALERT $PROJECT — $JOB reported a BTB_ALERT (renotifies every 24h)

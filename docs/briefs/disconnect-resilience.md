@@ -217,3 +217,79 @@ stay quiet. The same window at the 120s still deployed is about 130.
 Not proved, and the overseer's to do after deploy: that the alert mail
 actually arrives (global rule 5). `jobs/deploy-watch-disconnects.sh --drill`
 prints the one command.
+
+## Agentic review
+
+### Verdict
+Verdict: pass, with the limit named below. Reviewed 2026-10-17 over
+`git diff origin/main...HEAD`. Two findings were real and are fixed; both were
+in the parts no test could reach, which is where a review earns its keep.
+
+Known limit of this verdict: the same session wrote the code and reviewed it,
+because Martin asked for the whole chain in one go. A self-review catches a
+wrong flag and a wrong sentence (it did, twice) and is weak on wrong ideas. The
+one idea worth a second pair of eyes: exiting 0 on a bad finding, argued under
+Design.
+
+### Findings
+1. The `--drill` command would have failed before reaching the code.
+   `gcloud run jobs execute --args` REPLACES the container's args, and
+   `Dockerfile.watch_disconnects` sets its command through `CMD` with no
+   `ENTRYPOINT`, so the override would have tried to exec
+   `--max-resets-per-day` as a program. The drill is the one thing rule 5
+   asks for, and it would have failed in a way that looks like the job being
+   broken rather than the drill being wrong.
+2. The silence email read "No successful run of watch-disconnects in the last
+   11520 minutes (its hourly schedule plus a margin)". `absence_policy` divided
+   its window by 60 unconditionally and claimed an hourly schedule, both fine
+   for the poller it was written for and wrong for a weekly job. The email IS
+   the product of this rail, so an unreadable one is a defect, not a cosmetic.
+3. `fetch_entries` sets no upper bound on how many entries it will walk. At
+   today's volume a 7-day window is a few hundred rows, so this is a cost
+   question and not a correctness one. Left alone deliberately: a cap would
+   silently truncate the window and quietly understate lost sessions, which is
+   worse than a slow run. If volume grows, narrow the window, not the cap.
+4. `test_the_watcher_measures_against_the_ttl_the_app_deploys` reads the TTL
+   out of the deploy script with a regex. It pins the two numbers equal, which
+   is the invariant that matters, but it would not notice someone passing
+   `TTL_SECONDS` into the job from somewhere else. Noted, not fixed.
+
+### Fixed in
+1. Fixed in this branch: the drill now uses `--update-env-vars
+   MAX_RESETS_PER_DAY=0`, an override scoped to one execution, with a comment
+   saying why not `--args`. Verified the flag exists on this gcloud (565.0.0).
+2. Fixed in this branch: `human_window()` in `jobs/alert_payloads.py` renders a
+   window in the largest unit it divides into cleanly, and the sentence no
+   longer claims a schedule it does not know. Both sibling emails re-read
+   correctly ("90 minutes", "8 days"), and the 52 existing alert tests still
+   pass.
+3. Not fixed — argued above.
+4. Not fixed — argued above.
+
+## State
+
+Done: all three slices, landed verdict above. Settings (TTL 1800, session
+affinity, streamlit==1.65.0), `jobs/watch_disconnects.py` + its image, deploy
+script and weekly trigger, metric + renotifying policy + 8-day silence policy.
+80 tests pass across the four touched files; 10 deliberate mutations each
+reddened exactly one guard; the live read-only end-to-end ran against the real
+project.
+
+In flight: nothing — the branch is complete and clean.
+
+Next: the overseer's three deploys in order (`deploy.sh`,
+`jobs/deploy-watch-disconnects.sh`, `jobs/deploy-alerts.sh`), then
+`jobs/deploy-watch-disconnects.sh --drill` and check the mail arrived.
+
+Traps (with dates):
+- 2026-10-17: `gcloud run jobs execute --args` replaces the container's args;
+  with a `CMD`-only image that breaks the container start. Use
+  `--update-env-vars` for a one-off override.
+- 2026-10-17: `absence_policy`'s email text was written for an hourly job.
+  Any new window has to be read back in words before it ships.
+- 2026-10-16: a mutation test is worthless on an uncommitted file —
+  `git checkout` silently does nothing to an untracked path, so four
+  mutations stacked up unnoticed. Commit before mutating.
+- 2026-10-16: Streamlit's disconnected-session TTL needs Cloud Run session
+  affinity to mean anything across instances; the TTL alone is half a fix.
+
