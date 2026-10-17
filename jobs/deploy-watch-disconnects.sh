@@ -31,9 +31,15 @@ IMAGE="${IMAGE:-${REGION}-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/${JO
 # roles/logging.viewer and will say SOURCE_FAILED until it gets it.
 SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-170880920649-compute@developer.gserviceaccount.com}"
 
-# Fridays at 08:17. Not 08:00: every scheduler in every project fires on the
-# hour. Europe/Brussels to match the sibling triggers in this project.
-SCHEDULE="${SCHEDULE:-17 8 * * 5}"
+# Twice a day, 08:17 and 20:17. Not weekly, although weekly is all the review
+# needs: a conditionAbsent heartbeat has to have a window longer than the gap
+# between runs AND under Monitoring's 23h30m ceiling, so a job that runs less
+# often than about once a day cannot be watched for silence at all (learned
+# live 2026-10-17 - see docs/briefs/watch-silence-window.md). Each run is one
+# Cloud Logging read, so the cost of running 14x more often is nil, and a
+# regression now reaches Martin within 12 hours instead of a week.
+# Not :00: every scheduler in every project fires on the hour.
+SCHEDULE="${SCHEDULE:-17 8,20 * * *}"
 TIMEZONE="${TIMEZONE:-Europe/Brussels}"
 SCHEDULER_JOB="${SCHEDULER_JOB:-${JOB}-weekly}"
 
@@ -42,10 +48,12 @@ WINDOW_DAYS="${WINDOW_DAYS:-7}"
 # the line between "she saw a flicker" and "she lost her screen".
 TTL_SECONDS="${TTL_SECONDS:-1800}"
 MAX_RESETS_PER_DAY="${MAX_RESETS_PER_DAY:-5}"
-# One guaranteed review mail: the first scheduled run (2026-10-23) reports
-# whatever the numbers say, then the job falls back to threshold-only on its
-# own. A date, not a flag, so nobody has to remember to switch it off.
-REPORT_ALWAYS_UNTIL="${REPORT_ALWAYS_UNTIL:-2026-10-24}"
+# One guaranteed review mail, on one named day: both of that day's runs raise
+# a line, and the threshold policy aligns over 24h and renotifies every 24h,
+# so Monitoring opens one incident and sends one mail. A date, not a flag, so
+# nobody has to remember to switch it off - and ON one date rather than UNTIL
+# one, because UNTIL plus a 12-hourly schedule would mail every day for a week.
+REPORT_ALWAYS_ON="${REPORT_ALWAYS_ON:-2026-10-23}"
 
 if [ "${1:-}" = "--drill" ]; then
   cat <<DRILL
@@ -96,7 +104,7 @@ gcloud run jobs deploy "$JOB" \
   --service-account "$SERVICE_ACCOUNT" \
   --max-retries 1 \
   --task-timeout 600s \
-  --set-env-vars "PROJECT=${PROJECT},SERVICE=${SERVICE},WINDOW_DAYS=${WINDOW_DAYS},TTL_SECONDS=${TTL_SECONDS},MAX_RESETS_PER_DAY=${MAX_RESETS_PER_DAY},REPORT_ALWAYS_UNTIL=${REPORT_ALWAYS_UNTIL}" \
+  --set-env-vars "PROJECT=${PROJECT},SERVICE=${SERVICE},WINDOW_DAYS=${WINDOW_DAYS},TTL_SECONDS=${TTL_SECONDS},MAX_RESETS_PER_DAY=${MAX_RESETS_PER_DAY},REPORT_ALWAYS_ON=${REPORT_ALWAYS_ON}" \
   --quiet
 
 RUN_URI="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT}/jobs/${JOB}:run"

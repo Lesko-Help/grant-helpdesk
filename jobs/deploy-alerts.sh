@@ -370,10 +370,13 @@ apply_policy "$TITLE_DATAFORM_SILENCE" "$PAYLOAD_DATAFORM_SILENCE"
 # (docs/briefs/alert-renotify-metric.md). A new job starts with the proven
 # shape instead of inheriting the transition.
 WATCH_JOB="${WATCH_JOB:-watch-disconnects}"
-# 8 days: its Scheduler trigger is weekly, so the window is one schedule plus
-# a day of margin. SILENCE_WINDOW_SECONDS (90 min) is sized for the hourly
-# poller and would page every single week if it were reused here.
-WATCH_SILENCE_WINDOW_SECONDS="${WATCH_SILENCE_WINDOW_SECONDS:-691200}"
+# 18 hours: 1.5x its 12-hourly trigger, the same ratio the poller uses. It has
+# to sit above the gap between runs (or it pages every normal cycle) and under
+# Monitoring's 23h30m ceiling on a conditionAbsent duration (or it cannot be
+# created at all - an 8-day window was refused live on 2026-10-17, which left
+# the job with no heartbeat). tests/test_disconnect_resilience.py holds both
+# edges.
+WATCH_SILENCE_WINDOW_SECONDS="${WATCH_SILENCE_WINDOW_SECONDS:-64800}"
 
 WATCH_METRIC_NAME="${WATCH_JOB//-/_}_btb_alert_count"
 WATCH_METRIC_FILTER=$(python3 "$SCRIPT_DIR/alert_payloads.py" metric-filter "$WATCH_JOB")
@@ -404,7 +407,7 @@ PAYLOAD_WATCH=$(python3 "$SCRIPT_DIR/alert_payloads.py" threshold-policy \
   "$TITLE_WATCH" "$WATCH_JOB" "$PROJECT" "$CHANNEL" "$WATCH_METRIC_NAME")
 apply_policy "$TITLE_WATCH" "$PAYLOAD_WATCH"
 
-TITLE_WATCH_SILENCE="BTB-ALERT ${PROJECT} — ${WATCH_JOB} went silent (no successful run in 8 days)"
+TITLE_WATCH_SILENCE="BTB-ALERT ${PROJECT} — ${WATCH_JOB} went silent (no successful run in 18 hours)"
 PAYLOAD_WATCH_SILENCE=$(python3 "$SCRIPT_DIR/alert_payloads.py" absence-policy \
   "$TITLE_WATCH_SILENCE" "$WATCH_JOB" "$PROJECT" "$CHANNEL" "$WATCH_SILENCE_WINDOW_SECONDS")
 apply_policy "$TITLE_WATCH_SILENCE" "$PAYLOAD_WATCH_SILENCE"

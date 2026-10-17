@@ -139,18 +139,61 @@ def test_the_watcher_image_carries_its_alert_helper():
     )
 
 
-def test_the_weekly_jobs_silence_window_outlives_its_schedule():
-    """Rule 4 says silence is a failure — but a silence window shorter than
-    the schedule turns the heartbeat itself into the noise. This job runs
-    weekly, so the window has to be more than seven days."""
+# Cloud Monitoring's hard ceiling on a conditionAbsent duration, learned the
+# expensive way on 2026-10-17: an 8-day window was refused live with "Field
+# alert_policy.conditions[0].condition_absent.duration had an invalid value of
+# \"192h\": Durations longer than 23h30m are not supported."
+MONITORING_ABSENCE_CEILING_SECONDS = 23 * 3600 + 30 * 60
+
+
+def cron_gap_seconds(expression):
+    """In: a 5-field cron expression. Out: the longest gap between two fires,
+    in seconds. Why: a silence window has to be longer than that gap or the
+    heartbeat pages on every normal cycle, and shorter than Monitoring's
+    ceiling or it cannot be created at all. Only the shapes this repo uses
+    are handled — fixed minute and hour lists — and a day-of-week or
+    day-of-month restriction is reported as its whole period, which is all
+    the test needs to reject it."""
+    minute, hour, day_of_month, month, day_of_week = expression.split()
+    if day_of_week != "*" or day_of_month != "*" or month != "*":
+        return 7 * 24 * 3600
+    minutes = [int(value) for value in minute.split(",")]
+    hours = range(24) if hour == "*" else [int(v) for v in hour.split(",")]
+    fires = sorted(h * 60 + m for h in hours for m in minutes)
+    gaps = [later - earlier for earlier, later in zip(fires, fires[1:])]
+    gaps.append(fires[0] + 24 * 60 - fires[-1])  # wrap around midnight
+    return max(gaps) * 60
+
+
+def test_the_silence_window_fits_between_the_schedule_and_the_ceiling():
+    """The two edges that make a heartbeat work at all.
+
+    Below the schedule gap, the policy fires on every normal cycle and gets
+    muted. Above 23h30m, Monitoring refuses to create it and the job has no
+    heartbeat — which is how watch-disconnects shipped on 2026-10-17 with an
+    8-day window and no silence alert at all. Together these also say what
+    the error message does not: conditionAbsent cannot watch a job that runs
+    less often than about once a day.
+    """
     alerts = (REPO / "jobs" / "deploy-alerts.sh").read_text()
     match = re.search(
         r'WATCH_SILENCE_WINDOW_SECONDS="\$\{WATCH_SILENCE_WINDOW_SECONDS:-(\d+)\}"',
         alerts)
     assert match, "WATCH_SILENCE_WINDOW_SECONDS not found in deploy-alerts.sh"
     window = int(match.group(1))
-    assert window > 7 * 24 * 3600, (
-        f"a {window}s silence window on a weekly job pages every week"
+
+    schedule = re.search(r'SCHEDULE="\$\{SCHEDULE:-([^}]+)\}"', _deploy_script())
+    assert schedule, "SCHEDULE not found in the deploy script"
+    gap = cron_gap_seconds(schedule.group(1))
+
+    assert window > gap, (
+        f"a {window}s window on a schedule that leaves {gap}s between runs "
+        f"pages on every normal cycle"
+    )
+    assert window <= MONITORING_ABSENCE_CEILING_SECONDS, (
+        f"Cloud Monitoring refuses a conditionAbsent duration over "
+        f"{MONITORING_ABSENCE_CEILING_SECONDS}s; {window}s cannot be created, "
+        f"so the job would have no heartbeat at all"
     )
 
 

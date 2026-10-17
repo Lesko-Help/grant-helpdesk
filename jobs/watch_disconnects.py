@@ -225,18 +225,25 @@ def summarise(sessions, ttl_seconds=DEFAULT_TTL_SECONDS):
     }
 
 
-def reporting_always(today, until_raw):
-    """In: today's date and the REPORT_ALWAYS_UNTIL value (an ISO date or
-    empty). Out: True while today is before that date. Why: Martin wants one
-    guaranteed review mail a week after landing, whatever the numbers say,
-    and then wants the job to go back to speaking only when something is
-    wrong. A date does that by itself — nobody has to remember to switch a
-    flag off. An unreadable value reports (loud beats silent).
+def reporting_on(today, on_raw):
+    """In: today's date and the REPORT_ALWAYS_ON value (an ISO date or empty).
+    Out: True when today IS that date. Why: Martin wants one guaranteed review
+    mail, whatever the numbers say, and then wants the job to go back to
+    speaking only when something is wrong. A date does that by itself — nobody
+    has to remember to switch a flag off.
+
+    ON one date rather than UNTIL one: the job runs twice a day (it has to, for
+    its own heartbeat to be expressible — see
+    docs/briefs/watch-silence-window.md), and "until" would then mail every day
+    until the date arrived. Both of the named day's runs raise a line, and the
+    threshold policy's 24h alignment folds them into one incident, so one mail.
+
+    An unreadable value reports (loud beats silent).
     """
-    if not until_raw:
+    if not on_raw:
         return False
     try:
-        return today < dt.date.fromisoformat(str(until_raw).strip())
+        return today == dt.date.fromisoformat(str(on_raw).strip())
     except ValueError:
         return True
 
@@ -378,8 +385,8 @@ def main(argv=None):
     should_alert, message = verdict(
         summary,
         max_resets_per_day=args.max_resets_per_day,
-        report_always=reporting_always(dt.date.today(),
-                                       os.environ.get("REPORT_ALWAYS_UNTIL")),
+        report_always=reporting_on(dt.date.today(),
+                                   os.environ.get("REPORT_ALWAYS_ON")),
         days=args.days,
     )
     if should_alert:

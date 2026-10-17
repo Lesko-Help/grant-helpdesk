@@ -210,19 +210,21 @@ def test_the_review_window_reports_even_when_all_is_well():
     assert "weekly review" in message
 
 
-def test_the_review_window_closes_by_itself():
-    """REPORT_ALWAYS_UNTIL is a date, not a flag, so nobody has to remember
-    to switch the weekly mail off again."""
-    until = "2026-10-24"
-    assert watcher.reporting_always(dt.date(2026, 10, 23), until)
-    assert not watcher.reporting_always(dt.date(2026, 10, 24), until)
-    assert not watcher.reporting_always(dt.date(2026, 11, 1), until)
+def test_the_review_mail_lands_on_its_one_day_and_no_other():
+    """REPORT_ALWAYS_ON is a date, not a flag, so nobody has to remember to
+    switch the review mail off again. ON that date and not UNTIL it: the job
+    runs twice a day, and "until" would mail every day for a week."""
+    on = "2026-10-23"
+    assert watcher.reporting_on(dt.date(2026, 10, 23), on)
+    assert not watcher.reporting_on(dt.date(2026, 10, 22), on)
+    assert not watcher.reporting_on(dt.date(2026, 10, 24), on)
+    assert not watcher.reporting_on(dt.date(2026, 11, 1), on)
 
 
 def test_an_unreadable_review_date_reports_rather_than_goes_quiet():
     """A typo in the env var must not be the reason a rail goes silent."""
-    assert watcher.reporting_always(dt.date(2026, 10, 23), "next thursday")
-    assert not watcher.reporting_always(dt.date(2026, 10, 23), "")
+    assert watcher.reporting_on(dt.date(2026, 10, 23), "next thursday")
+    assert not watcher.reporting_on(dt.date(2026, 10, 23), "")
 
 
 # ── the one thing the job cannot notice about itself ─────────────────────
