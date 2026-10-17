@@ -96,3 +96,46 @@ overseer after landing. No `deploy.sh` — the app is untouched.
 The watcher, its metric and its BTB_ALERT threshold policy are already live
 (2026-10-17). Only the silence policy is missing. The Scheduler trigger
 currently says `17 8 * * 5`.
+
+## Agentic review
+
+### Verdict
+Verdict: pass, with the same self-review limit as disconnect-resilience named
+there. Reviewed 2026-10-17 over `git diff origin/main...HEAD`. No new findings;
+the change is small and the guard that would have prevented the original defect
+now exists and goes red three ways.
+
+### Findings
+1. Changing the policy's displayName from "in 8 days" to "in 18 hours" means
+   `apply_policy` sees a new title and creates a second policy rather than
+   patching the first. Harmless here only because the 8-day one was never
+   created - the API refused it. Worth knowing before renaming a policy that
+   does exist: it orphans the old one instead of updating it.
+2. `cron_gap_seconds` reports any day-of-week or day-of-month restricted cron
+   as a 7-day gap rather than computing it. That is right for the only thing
+   the test does with it - rejecting a schedule too sparse to be watched - and
+   wrong as a general cron library. Named so nobody reuses it as one.
+
+### Fixed in
+1. Not fixed, nothing to fix - recorded as a trap.
+2. Not fixed, deliberate; the docstring says so.
+
+## State
+
+Done: both slices. 78 tests pass across the three touched files; the new guard
+was red on main's weekly/8-day pair and goes red on a window over the ceiling,
+a window under the schedule gap, and a return to the weekly schedule.
+
+In flight: nothing.
+
+Next: `jobs/deploy-watch-disconnects.sh` then `jobs/deploy-alerts.sh`, then
+`--drill` and check the mail.
+
+Traps (with dates):
+- 2026-10-17: Cloud Monitoring caps conditionAbsent.duration at 23h30m, and
+  the window must also exceed the gap between runs. So conditionAbsent cannot
+  watch any job running less often than about daily - a weekly job needs a
+  different heartbeat or a denser schedule.
+- 2026-10-17: renaming a policy's displayName creates a new policy and
+  orphans the old one; apply_policy matches on title.
+
