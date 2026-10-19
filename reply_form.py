@@ -37,8 +37,8 @@ def on_reply_submit(thread_id, body_key, result_key, current_user, lookup_author
     Input: the thread's id; the text_area widget's own session_state key;
     a session_state key to stash the outcome message in for the main script
     body to show; the logged-in coach's email; and three callables (author
-    lookup, the actual write, the cache to clear on success) so app.py can pass the real bq_client/coach_inbox functions and a
-    test can pass fakes.
+    lookup, the actual write, the cache to clear on success) so app.py can
+    pass the real bq_client/coach_inbox functions and a test can pass fakes.
     Output: none — writes the outcome into session_state[result_key], and on
     success also clears session_state[body_key].
     Why this runs as an on_click callback rather than inline code after the
@@ -70,7 +70,10 @@ def on_reply_submit(thread_id, body_key, result_key, current_user, lookup_author
         clear_cache()
 
 
-def render_thread_and_reply(thread_id, messages, body_key, result_key, current_user, lookup_author, add_reply, clear_cache):
+def render_thread_and_reply(
+    thread_id, messages, body_key, result_key, current_user,
+    lookup_author, add_reply, clear_cache,
+):
     """
     Input: the private thread's id; its messages so far, oldest first, each
     a dict with author_role/body/created_at — the same shape

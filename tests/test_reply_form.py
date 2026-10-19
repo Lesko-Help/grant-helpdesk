@@ -20,9 +20,21 @@ instead of going through app.py.
 
 import pathlib
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 import coach_inbox
+
+
+@pytest.fixture(autouse=True)
+def _restore_set_thread_workflow():
+    """Input: nothing. Output: nothing — puts coach_inbox.set_thread_workflow
+    back after every test. Why: the AppTest scripts below replace it with a
+    recorder, and AppTest runs in this process, so without the restore the
+    real function stays gone for every test file that runs afterwards."""
+    original = coach_inbox.set_thread_workflow
+    yield
+    coach_inbox.set_thread_workflow = original
 
 
 def _old_buggy_script(add_reply_result):
