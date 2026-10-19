@@ -11,7 +11,10 @@ Never `pytest tests/` — that also collects smoke_test.py, which writes to the
 live ticket_metadata table.
 """
 
+import json
+import pathlib
 import re
+from collections import Counter
 
 import pytest
 
@@ -141,3 +144,63 @@ def test_r9_preview_and_execute_both_embed_the_helpers_selection(sent_sql, filte
     selection = bq_reads.bulk_close_rows_sql(*filters)
     assert selection in sent_sql("execute", *filters)
     assert selection in sent_sql("preview", *filters)
+
+
+# Slice 1 fixture -------------------------------------------------------------
+# tests/fixtures/bulk_close_sql_before.json is the SQL both functions built on
+# origin/main before the extraction, for four filter sets. These tests are the
+# only readers of it. They compare LINES (a multiset: each distinct line with
+# how often it occurs), not the whole string, so whitespace and the nesting do
+# not matter but any other added or removed line does: an extra WHERE clause
+# in one caller, a changed pending-follow-up join, a changed MERGE value.
+
+_FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "bulk_close_sql_before.json"
+
+# The ONLY lines allowed to differ from the fixture (after 'archived' is
+# stripped from the exclusion list, which R4 tests separately). Each is
+# either nesting (the helper wrapped in a subselect or CTE) or the two extra
+# helper columns preview now carries.
+_ALLOWED_EXECUTE = {
+    "added": [") r", "FROM (", "SELECT r.content_id, r.assigned_to, r.domain",
+              "WHERE r.content_id NOT IN ("],
+    "removed": ["AND t.content_id NOT IN ("],
+}
+_ALLOWED_PREVIEW = {
+    "added": [")", "COALESCE(tm.assigned_to, gt.assigned_to) AS assigned_to,",
+              "COALESCE(tm.domain, gt.domain)           AS domain,",
+              "SELECT t.content_id, t.assigned_to, t.domain", "WITH filtered AS ("],
+    "removed": ["),", "SELECT t.content_id", "filtered AS ("],
+}
+
+
+def _lines(sql: str) -> Counter:
+    """
+    In: SQL text. Out: each stripped non-blank line with its count, with the
+    clock value and the 'archived' addition normalised away. Why: what is left
+    is exactly what must not change.
+    """
+    sql = sql.replace(", 'archived'", "")
+    return Counter(re.sub(r"TIMESTAMP '[^']*'", "TIMESTAMP 'T'", line.strip())
+                   for line in sql.splitlines() if line.strip())
+
+
+def _fixture_cases():
+    return json.loads(_FIXTURE.read_text())
+
+
+@pytest.mark.parametrize("case", _fixture_cases(), ids=lambda c: "|".join(c["filters"][:3]))
+@pytest.mark.parametrize("which,allowed", [("execute", _ALLOWED_EXECUTE),
+                                          ("preview", _ALLOWED_PREVIEW)])
+def test_r9_sql_differs_from_the_before_fixture_only_where_allowed(
+        sent_sql, case, which, allowed):
+    """
+    Same filters as the fixture -> the same lines, except the pinned nesting
+    lines. A condition added or dropped in either caller makes this red, which
+    is what the substring check in test_r9_preview_and_execute_both_embed_...
+    cannot see.
+    """
+    status, assigned, before, _closed_by = case["filters"]
+    old = _lines(case[which])
+    new = _lines(sent_sql(which, status, assigned, before))
+    assert sorted((new - old).elements()) == sorted(allowed["added"])
+    assert sorted((old - new).elements()) == sorted(allowed["removed"])
