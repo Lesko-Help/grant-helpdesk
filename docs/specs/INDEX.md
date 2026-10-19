@@ -36,6 +36,7 @@ See `docs/specs/architecture.md`.
 |---|---|---|---|
 | `alert_payloads` | the Dataform silence alert — a counter metric over the pipeline's own completion log line, and the absence policy that pages when that line stops arriving for an hour | `jobs/deploy-alerts.sh`, run by hand (this file ships in no image) | `docs/specs/modules/alert_payloads.md` |
 | `bq_reads` | every SELECT the app runs — the ticket list, one ticket's detail, the KPI cards and the report tables — each joined live to `ticket_metadata` so a coach's last click is already in the answer | `deploy.sh` (ships inside the app image) | `docs/specs/modules/bq_reads.md` |
+| `bq_writes` | every INSERT, UPDATE and MERGE the app runs — what a coach's click records, and the one sweep that closes many tickets at once | `deploy.sh` (ships inside the app image) | `docs/specs/modules/bq_writes.md` |
 | `raillog` | the one function that turns a failure into a line Cloud Monitoring can see — `BTB_ALERT grant-helpdesk/<runnable> <CODE>: <message>`, printed as JSON at severity ERROR | `deploy.sh` (the root copy, inside the app image), `jobs/Dockerfile.poll_dataform` (the `jobs/` copy, inside the job image) | `docs/specs/modules/raillog.md` |
 | `tests` | the test suite — a plain `pytest tests/` stays offline; the live BigQuery smoke test runs only with `LIVE_SMOKE=1`, which `deploy.sh` sets | none (never shipped; `deploy.sh` runs it before shipping) | `docs/specs/modules/tests.md` |
 
@@ -45,9 +46,11 @@ See `docs/specs/architecture.md`.
 
 - `docs/specs/goal.md` and `docs/specs/architecture.md` are still the unfilled
   templates — they need agreeing with Martin, not deriving from the code.
-- Most modules have no spec yet: `coach_inbox`, `bq_reads`, `raillog` and `tests` are
-  written, and `raillog` is still `draft`. A task touching any other module needs its
-  `docs/specs/modules/<module>.md` agreed first.
+- Most modules have no spec yet. Written: `alert_payloads`, `bq_reads`, `bq_writes`,
+  `coach_inbox`, `raillog`, `tests` — of these `bq_writes` and `raillog` are still
+  `draft`. A task touching any other module needs its
+  `docs/specs/modules/<module>.md` agreed first. `app.py` is the largest module
+  still unowned.
 - `coach_inbox`: the dropdown and answer-dialog click-through has no automated test
   (the login gate and live BigQuery loaders keep it out of AppTest) — it is checked by
   hand on the live app after a deploy.
