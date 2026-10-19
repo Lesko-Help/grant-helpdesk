@@ -18,6 +18,8 @@ test_coach_inbox_reply.py exercises add_coach_reply with a fake client
 instead of going through app.py.
 """
 
+import pathlib
+
 from streamlit.testing.v1 import AppTest
 
 import coach_inbox
@@ -38,17 +40,23 @@ def _old_buggy_script(add_reply_result):
             st.session_state["reply_body"] = ""
 
 
-def _fixed_script(add_reply_result, lookup_result, close_thread_result=None):
+def _fixed_script(add_reply_result, lookup_result):
     import streamlit as st
 
     import coach_inbox
     import reply_form
 
-    if close_thread_result is None:
-        close_thread_result = coach_inbox.WorkflowResult.OK
-
     st.session_state.setdefault("calls", [])
     st.session_state.setdefault("close_calls", [])
+
+    def _workflow_recorder(*args, **kwargs):
+        """Stands in for coach_inbox.set_thread_workflow: records any call
+        (so a test can prove the reply path never writes
+        private_thread_workflow) and never touches BigQuery."""
+        st.session_state["close_calls"].append((args, kwargs))
+        return coach_inbox.WorkflowResult.OK
+
+    coach_inbox.set_thread_workflow = _workflow_recorder
 
     def _add_reply(thread_id, author_id, body):
         st.session_state["calls"].append((thread_id, author_id, body))
@@ -60,13 +68,6 @@ def _fixed_script(add_reply_result, lookup_result, close_thread_result=None):
     def _clear_cache():
         st.session_state["cache_cleared"] = True
 
-    def _close_thread(thread_id, current_user):
-        """Fakes coach_inbox.set_thread_workflow: records the call (so a
-        test can assert it happened, and with what args) and returns the
-        WorkflowResult the test wants, without ever touching BigQuery."""
-        st.session_state["close_calls"].append((thread_id, current_user))
-        return close_thread_result
-
     with st.form("reply_form", clear_on_submit=False):
         st.text_area("Reply", key="reply_body", label_visibility="collapsed")
         st.form_submit_button(
@@ -74,7 +75,7 @@ def _fixed_script(add_reply_result, lookup_result, close_thread_result=None):
             on_click=reply_form.on_reply_submit,
             args=(
                 "th1", "reply_body", "reply_result", "coach@example.com",
-                _lookup, _add_reply, _clear_cache, _close_thread,
+                _lookup, _add_reply, _clear_cache,
             ),
         )
     msg = st.session_state.pop("reply_result", None)
@@ -167,20 +168,22 @@ def test_on_reply_submit_unknown_coach_never_calls_add_reply():
     ]
 
 
-# ── R7: a successful reply closes the thread ────────────────────────────────
+# ── add_coach_reply R7: a reply never closes the thread ─────────────────────
 
-def test_on_reply_submit_success_closes_the_thread_once():
+def test_on_reply_submit_success_writes_no_workflow_row_and_shows_no_error():
     at = AppTest.from_function(_fixed_script, args=(coach_inbox.ReplyResult.OK, 42))
     at.run()
     at.text_area[0].set_value("hello there").run()
     at.button[0].click().run()
 
     assert list(at.exception) == []
-    assert at.session_state["close_calls"] == [("th1", "coach@example.com")]
+    assert at.session_state["close_calls"] == []
+    assert at.session_state["cache_cleared"] is True
+    assert at.text_area[0].value == ""
     assert list(at.error) == []
 
 
-def test_on_reply_submit_non_ok_never_calls_close_thread():
+def test_on_reply_submit_non_ok_writes_no_workflow_row():
     at = AppTest.from_function(_fixed_script, args=(coach_inbox.ReplyResult.WRITE_FAILED, 42))
     at.run()
     at.text_area[0].set_value("x").run()
@@ -189,20 +192,10 @@ def test_on_reply_submit_non_ok_never_calls_close_thread():
     assert at.session_state["close_calls"] == []
 
 
-def test_on_reply_submit_success_with_failed_close_still_clears_but_warns():
-    at = AppTest.from_function(
-        _fixed_script,
-        args=(coach_inbox.ReplyResult.OK, 42, coach_inbox.WorkflowResult.WRITE_FAILED),
-    )
-    at.run()
-    at.text_area[0].set_value("hello there").run()
-    at.button[0].click().run()
-
-    assert list(at.exception) == []
-    assert at.session_state["close_calls"] == [("th1", "coach@example.com")]
-    assert at.session_state["cache_cleared"] is True
-    assert at.text_area[0].value == ""
-    assert [e.value for e in at.error] == ["Answer sent, but the thread could not be closed"]
+def test_reply_form_source_has_no_close_wording_or_close_parameter():
+    source = (pathlib.Path(__file__).resolve().parent.parent / "reply_form.py").read_text()
+    assert "could not be closed" not in source
+    assert "close_thread" not in source
 
 
 # ── render_thread_and_reply: the answer-dialog's body ───────────────────────
@@ -224,14 +217,11 @@ _MESSAGES = [
 ]
 
 
-def _dialog_script(add_reply_result, lookup_result, messages, close_thread_result=None):
+def _dialog_script(add_reply_result, lookup_result, messages):
     import streamlit as st
 
     import coach_inbox
     import reply_form
-
-    if close_thread_result is None:
-        close_thread_result = coach_inbox.WorkflowResult.OK
 
     # Counts every script execution, including ones triggered by a
     # st.rerun() inside render_thread_and_reply itself — a plain "box got
@@ -251,14 +241,16 @@ def _dialog_script(add_reply_result, lookup_result, messages, close_thread_resul
     def _clear_cache():
         st.session_state["cache_cleared"] = True
 
-    def _close_thread(thread_id, current_user):
-        """Same fake as _fixed_script's own _close_thread above — see there."""
-        st.session_state["close_calls"].append((thread_id, current_user))
-        return close_thread_result
+    def _workflow_recorder(*args, **kwargs):
+        """Same recorder as _fixed_script's — see there."""
+        st.session_state["close_calls"].append((args, kwargs))
+        return coach_inbox.WorkflowResult.OK
+
+    coach_inbox.set_thread_workflow = _workflow_recorder
 
     reply_form.render_thread_and_reply(
         "th1", messages, "reply_body", "reply_result", "coach@example.com",
-        _lookup, _add_reply, _clear_cache, _close_thread,
+        _lookup, _add_reply, _clear_cache,
     )
 
 
