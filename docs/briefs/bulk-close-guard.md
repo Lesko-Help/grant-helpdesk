@@ -59,6 +59,8 @@ shared row-selection helper, guarded, has to exist first.
    BigQuery client. R9 is one assertion that both callers use the helper.
 5. Update `bq_writes.md` R4 and R9, which today say "not yet in the code".
 
+Slice replies (overseer, relaying Martin, 2026-10-19): slice 1 accepted, no red/green for a capture. Slice 2 "Continue as proposed": helper in `bq_reads.py`, `bq_writes` imports it (new dependency edge, chosen over `bq_base.py`); R3 stays per caller, so the R3 test asserts both strings and says so. Slices 3-5: carry on without checking in.
+
 ## Done when
 
 - One pure helper builds the row selection; neither function inlines it.

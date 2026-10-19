@@ -487,14 +487,21 @@ def get_followup_statuses(content_ids: list) -> dict:
         return {}
 
 
-def preview_bulk_close(
+def bulk_close_rows_sql(
     status_filter: str = "answered",
     assigned_to: str = "",
     before_date: str = "",
-) -> dict:
+) -> str:
     """
-    Returns {"will_close": N, "skipped_followup": M} for the given filters.
-    Excludes already-closed/cancelled tickets and those with pending follow-ups.
+    In: the three bulk-close filters ("" = no constraint on that field, R2).
+    Out: SQL text (no query is run) of one SELECT, with its own WITH base CTE,
+    returning content_id, assigned_to, domain for every community ticket the
+    filters match whose effective status is not closed/cancelled.
+    Why: execute_bulk_close and preview_bulk_close must pick the same rows
+    (bq_writes.md R9); both call this, so the selection exists once.
+    SQL analogy: a view over grant_tickets LEFT JOIN ticket_metadata, with the
+    filters as its WHERE. The pending-follow-up exclusion (R3) is not here:
+    each caller applies it in its own way (NOT IN vs. LEFT JOIN count).
     """
     conditions = ["t.effective_status NOT IN ('closed', 'cancelled')"]
     if status_filter:
@@ -509,11 +516,13 @@ def preview_bulk_close(
 
     where = "WHERE " + " AND ".join(conditions)
 
-    sql = f"""
+    return f"""
         WITH base AS (
             SELECT
                 gt.content_id,
                 gt.created_at,
+                COALESCE(tm.assigned_to, gt.assigned_to) AS assigned_to,
+                COALESCE(tm.domain, gt.domain)           AS domain,
                 CASE
                     WHEN tm.status IS NOT NULL AND tm.status != '' THEN tm.status
                     ELSE gt.ticket_status
@@ -525,12 +534,27 @@ def preview_bulk_close(
                 QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
             ) tm ON gt.content_id = tm.content_id
             QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
-        ),
-        filtered AS (
-            SELECT t.content_id
-            FROM base t
-            {where}
         )
+        SELECT t.content_id, t.assigned_to, t.domain
+        FROM base t
+        {where}
+    """
+
+
+def preview_bulk_close(
+    status_filter: str = "answered",
+    assigned_to: str = "",
+    before_date: str = "",
+) -> dict:
+    """
+    In: the three bulk-close filters. Out: {"will_close": N, "skipped_followup": M}.
+    Why: the number the coach consents to before pressing the button. Rows come
+    from bulk_close_rows_sql, the same selection execute_bulk_close uses (R9);
+    those with a pending follow-up are counted as skipped, not as will_close.
+    SQL analogy: SELECT COUNT(*), COUNTIF(pending) over the helper's view.
+    """
+    sql = f"""
+        WITH filtered AS ({bulk_close_rows_sql(status_filter, assigned_to, before_date)})
         SELECT
             COUNT(*) AS total,
             COUNTIF(fq.ticket_id IS NOT NULL) AS skipped_followup

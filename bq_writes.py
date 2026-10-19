@@ -13,6 +13,7 @@ from google.cloud import bigquery
 
 import config
 from bq_base import client, log_event
+from bq_reads import bulk_close_rows_sql
 
 
 TEAM_FEEDBACK_TABLE = f"{config.PROJECT_ID}.{config.DATASET}.team_feedback"
@@ -149,50 +150,23 @@ def execute_bulk_close(
     closed_by: str = "",
 ) -> int:
     """
-    Closes all matching tickets, skipping those with pending follow-ups.
-    Returns the number of tickets closed.
+    In: the three bulk-close filters and the closing coach's email.
+    Out: the number of tickets closed (rows the MERGE affected, R6).
+    Why: the coach's "close these" button. The rows come from
+    bq_reads.bulk_close_rows_sql, the same selection preview_bulk_close counts
+    (R9); tickets with a pending follow-up are left out (R3).
+    SQL analogy: one MERGE into ticket_metadata USING that view, setting
+    status='closed' on match and inserting a metadata row otherwise.
     """
     now = datetime.datetime.utcnow().isoformat()
     closed_by_val = (closed_by or "").replace("'", "\\'")
 
-    conditions = ["t.effective_status NOT IN ('closed', 'cancelled')"]
-    if status_filter:
-        safe_status = status_filter.replace("'", "")
-        conditions.append(f"t.effective_status = '{safe_status}'")
-    if assigned_to:
-        safe_assigned = assigned_to.replace("'", "\\'")
-        conditions.append(f"t.effective_assigned_to = '{safe_assigned}'")
-    if before_date:
-        safe_date = before_date.replace("'", "")
-        conditions.append(f"DATE(t.created_at) < '{safe_date}'")
-
-    where = "WHERE " + " AND ".join(conditions)
-
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
-            WITH base AS (
-                SELECT
-                    gt.content_id,
-                    gt.created_at,
-                    COALESCE(tm.assigned_to, gt.assigned_to) AS assigned_to,
-                    COALESCE(tm.domain, gt.domain)           AS domain,
-                    CASE
-                        WHEN tm.status IS NOT NULL AND tm.status != '' THEN tm.status
-                        ELSE gt.ticket_status
-                    END AS effective_status,
-                    COALESCE(tm.assigned_to, gt.assigned_to) AS effective_assigned_to
-                FROM `{config.TICKETS_TABLE}` gt
-                LEFT JOIN (
-                    SELECT * FROM `{config.META_TABLE}`
-                    QUALIFY ROW_NUMBER() OVER (PARTITION BY content_id ORDER BY updated_at DESC) = 1
-                ) tm ON gt.content_id = tm.content_id
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY gt.content_id ORDER BY gt.created_at DESC) = 1
-            )
-            SELECT t.content_id, t.assigned_to, t.domain
-            FROM base t
-            {where}
-            AND t.content_id NOT IN (
+            SELECT r.content_id, r.assigned_to, r.domain
+            FROM ({bulk_close_rows_sql(status_filter, assigned_to, before_date)}) r
+            WHERE r.content_id NOT IN (
                 SELECT DISTINCT ticket_id
                 FROM `{config.FOLLOWUP_QUEUE_TABLE}`
                 WHERE status = 'pending'
