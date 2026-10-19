@@ -115,6 +115,10 @@ Module `bq_writes`. Files: `bq_writes.py`, `bq_reads.py`, `tests/test_bulk_close
 
 2026-10-19, from the overseer's memory message: this is an extraction, not a new feature (`execute_bulk_close` `bq_writes.py:145`, `preview_bulk_close` `bq_reads.py:490`, UI `app.py:1751-1797`). Leave alone: R7 (`closed_by` defaults to empty), R10 (interpolation; the dormant `bq-writes-params` worktree owns it), deprecated `utcnow()`, community tickets only. R8 is deliberate: the sweep skips reopened tickets. The auto-reopen lives in `definitions/marts/grant_tickets.sqlx:105-107`, so any member message reopens a closed ticket. Martin, 2026-10-19: exclude `archived` because sweeping it silently edits history in status reports. Test command always names the file; never bare `pytest tests/`. Next worktree `bulk-close-convo` will reuse the helper, so keep it clean.
 
+Red-first proof (2026-10-19), `tests/test_bulk_close.py`, 10 tests: against `origin/main` (no helper) 8 fail, namely R2 x3, R4 x2, R9 x3, and the 2 R3 tests pass because that code already obeys R3. Against slice 2 (helper, `archived` not yet excluded) only the 2 R4 tests fail: live behaviour, an archived ticket is swept. On the branch all 10 pass. R3 red comes from breaking the code on a scratch copy: dropping `NOT IN` in execute fails the execute test, replacing `COUNTIF` in preview fails the preview test. Also red on purpose: R2 with OR instead of AND (2 fail), R2 with empty status matching (2 fail), R9 with preview altering the helper text (3 fail). R3 is guarded in two places by decision (Martin, 2026-10-19).
+
+Fixture diff: against `tests/fixtures/bulk_close_sql_before.json`, after normalising whitespace, the SQL differs only in nesting (execute wraps the helper in a subselect; preview's CTE moves into the helper) and in `'archived'` added to the exclusion list. Filters, pending-follow-up clauses, MERGE and its values are line-identical. The text is not byte-identical, and the helper's base CTE carries two extra columns for preview that it ignores.
+
 Design choice: the helper `bulk_close_rows_sql(status_filter, assigned_to, before_date)` lives in `bq_reads.py` (next to `preview_bulk_close`, `bq_writes` imports it). It returns the `base` CTE plus the filtered SELECT; the pending-follow-up handling (R3) stays with each caller. R10 stays as is (interpolation), as the brief says.
 
 ## Spec proposals
@@ -123,6 +127,11 @@ Specs belong to the overseer (DECISION BY MARTIN 2026-09-24) — this worktree
 never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
+
+1. File `docs/specs/modules/bq_writes.md`, rule R4. Now: "The code excludes only the first two today, so an archived ticket inside the filters is swept and comes back `closed`." Propose: "`bq_reads.bulk_close_rows_sql` excludes all three, so neither the preview number nor the sweep touches an archived ticket; `tests/test_bulk_close.py::test_r4_*` guards it." Also drop "Carried by R4; not yet in the code." from the later section (about line 170).
+2. Same file, rule R9. Now: "They are two copies of that logic today, so a change to one is a change to both in the same commit." Propose: "Both call `bq_reads.bulk_close_rows_sql`, which builds the `base` CTE and the filtered SELECT once; the pending-follow-up predicate (R3) stays per caller (execute: `NOT IN`; preview: LEFT JOIN with `COUNTIF`). `test_r9_*` asserts the helper's text sits inside what both callers send."
+3. Same file, `*Test:*` paragraph. Now: "none exists ... A worktree taking this on adds `tests/test_bulk_close.py`". Propose: "`tests/test_bulk_close.py` guards R2, R3 (in both callers), R4 and R9, on SQL strings with no BigQuery client; R7, R8 and R10 are not tested." Keep the never-bare-pytest warning.
+4. Same file, Overview or dependency note if one exists: `bq_writes` now imports `bq_reads` (new edge, chosen by Martin over `bq_base.py`).
 
 ## State
 
