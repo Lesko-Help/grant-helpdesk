@@ -92,7 +92,8 @@ SELECT
   --   (2) anything from before go-live is archived, not inbox
   --   (3) otherwise it is a live conversation
   -- Question lane, unchanged from before the split:
-  --   (4) closed but member replied since → auto-reopen
+  --   (4) closed but member replied since → auto-reopen (ticket_status stays 'open';
+  --       the separate is_reopened column below carries the mark)
   --   (5) closed and no new member activity → closed
   --   (6) any other manual status → use it
   --   (7) default → open
@@ -110,6 +111,12 @@ SELECT
     WHEN t.status IS NOT NULL                       THEN t.status
     ELSE                                                 'open'
   END                                               AS ticket_status,
+
+  -- True when the member spoke after the last close. Deliberately tests no
+  -- t.status, unlike rule (4): it must stay true after a coach marks the
+  -- ticket 'answered', and it clears on the next close. The app computes the
+  -- same thing live (bq_reads.py, R1a); this copy serves SQL readers of the table.
+  COALESCE(ma.last_member_activity_at > t.closed_at, FALSE) AS is_reopened,
 
   t.status                                          AS manual_status,
   t.closed_at,

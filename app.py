@@ -617,6 +617,27 @@ def _mark_answer_posted(content_id: str, body: str) -> None:
     st.session_state.setdefault("_posted_answer_sigs", set()).add((content_id, body))
 
 
+def _reopened_chip(row) -> str:
+    """
+    In: one ticket row (a dict or a pandas Series) from the bq_reads readers.
+    Out: a small "↩ REOPENED" HTML chip when row["is_reopened"] is true,
+    otherwise an empty string.
+    Why: a member commented after a coach closed the ticket (R1a). The chip is
+    drawn BESIDE the status badge, never instead of it — the status can read
+    "answered" while the mark is still true. A missing column (a row cached
+    before this change) or a pandas NA/NaN counts as "not reopened": NaN is
+    truthy in Python, so it is checked explicitly.
+    SQL analogy: a computed display column, CASE WHEN is_reopened THEN chip END.
+    """
+    flag = row.get("is_reopened")
+    if flag is None or pd.isna(flag) or not bool(flag):
+        return ""
+    return (
+        '<span style="background:#fdf3d4;color:#7a5f00;font-size:0.65rem;'
+        'font-weight:600;padding:2px 6px;border-radius:4px">↩ REOPENED</span>'
+    )
+
+
 @st.dialog("Ticket Detail", width="large")
 def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
     """Detail for a community-ticket row: the ticket itself, its thread of
@@ -680,6 +701,7 @@ def show_ticket_dialog(content_id: str, thread_id_hint: str = None):
   <div class="ticket-dialog-badge-row">
     <span class="ticket-dialog-name">{ticket.get('member_name','Unknown')}</span>
     <span class="badge badge-{_status}">{_status.replace('_',' ').capitalize()}</span>
+    {_reopened_chip(ticket)}
     <span class="urg-pill urg-{_urg}">{_urg.capitalize()}</span>
     <span class="ticket-meta-item">{content_type}</span>
     <span class="ticket-meta-item">{_space_icon} {_space_txt}</span>
@@ -1076,6 +1098,7 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
 <div class="comment-card">
   <div class="comment-card-meta">
     <span class="badge badge-open">open</span>
+    {_reopened_chip(t)}
     <span class="urg-pill urg-{urg}">{urg.capitalize()}</span>
     <span class="comment-date">{str(t['created_at'])[:16]}</span>
     {f'<a href="{t["permalink"]}" target="_blank" class="ticket-meta-link" style="margin-left:auto">↗</a>' if t.get("permalink") else ""}
@@ -1161,6 +1184,7 @@ def show_group_dialog(thread_id: str, member_id: str, member_name: str):
 <div class="done-comment-card">
   <div class="comment-card-meta">
     <span class="badge badge-{_s}">{_s.replace("_"," ").capitalize()}</span>
+    {_reopened_chip(t)}
     <span class="comment-date">{str(t['created_at'])[:16]}</span>
   </div>
   <div class="done-comment-body">{t.get("body_preview") or "<em>(empty)</em>"}</div>
@@ -1552,6 +1576,8 @@ def render_ticket_table(tickets, team_members, filter_status="All", lane=config.
                 _status_html = '<span class="answered-badge">✓ Answered</span>'
             else:
                 _status_html = _urg_labels.get(_row_urg, "🟢") + " " + _row_urg
+            # R1a: the mark trails the row beside the status, never replaces it
+            _status_html += "  " + _reopened_chip(row)
         _marker = '<div class="answered-row-marker"></div>' if _is_answered else ""
         _badge = (
             '<span style="background:var(--color-primary,#4a52a3);color:#fff;'
