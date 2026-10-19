@@ -152,7 +152,84 @@ def test_r7_clock_does_not_test_ticket_status(monkeypatch):
     bq_reads.get_ticket_detail("content_1")
 
     sql = captured[0]
-    # Isolate the urgency CASE: it is the block between the ticket_status
-    # CASE that precedes it and the "AS urgency" that follows it.
-    urgency_block = sql.split("AS ticket_status,", 1)[1].split("AS urgency", 1)[0]
+    # Isolate the urgency CASE: it is the block between the is_reopened column
+    # (which legitimately tests tm.status, R1a) and the "AS urgency" after it.
+    urgency_block = sql.split("AS is_reopened,", 1)[1].split("AS urgency", 1)[0]
     assert "tm.status" not in urgency_block
+
+
+# ---------------------------------------------------------------------------
+# is_reopened — bq_reads.md R1a, R4a, R13a, R15a. Red first against 3ecd4d6,
+# where "is_reopened" appears in no query.
+# ---------------------------------------------------------------------------
+
+# The four built queries: name -> how to call it. get_open_stats and
+# get_daily_stats are the two readers of _live_status_cte(); one of them
+# stands for that CTE here, the other is checked separately below.
+_FOUR_QUERIES = {
+    "get_tickets": lambda: bq_reads.get_tickets(),
+    "get_ticket_detail": lambda: bq_reads.get_ticket_detail("content_1"),
+    "get_member_thread_tickets": lambda: bq_reads.get_member_thread_tickets("t", "m"),
+    "get_open_stats": lambda: bq_reads.get_open_stats(),
+}
+
+
+def _predicate_before_alias(sql):
+    """The SQL text that is selected AS is_reopened: everything after the
+    last line break before the alias, up to the alias."""
+    head = sql.split("AS is_reopened", 1)[0]
+    return head.rsplit("\n", 1)[1].strip()
+
+
+def test_all_four_queries_select_is_reopened_from_the_reopen_branch_predicate(monkeypatch):
+    """R1a/R13a/R15a: the boolean is the very condition the status branch
+    tests, so the mark and the 'open' it explains cannot disagree."""
+    _stub_tickets_cols(monkeypatch)
+    for name, call in _FOUR_QUERIES.items():
+        captured = []
+        _stub_schema_retry(monkeypatch, captured)
+        call()
+        sql = captured[0]
+        assert "AS is_reopened" in sql, name
+        predicate = _predicate_before_alias(sql)
+        assert "tm.status = 'closed'" in predicate, name
+        assert "gt.last_member_activity_at > tm.closed_at" in predicate, name
+        assert f"WHEN {predicate} THEN 'open'" in sql, name
+
+
+def test_get_daily_stats_live_cte_selects_is_reopened_too(monkeypatch):
+    captured = []
+    _stub_tickets_cols(monkeypatch)
+    _stub_schema_retry(monkeypatch, captured)
+
+    bq_reads.get_daily_stats()
+
+    assert "AS is_reopened" in captured[0]
+
+
+def test_r4a_old_schema_still_selects_is_reopened_as_constant_false(monkeypatch):
+    """R4a: grant_tickets without last_member_activity_at -> nothing reopens,
+    but the column is still there so the app needs no branch for it."""
+    monkeypatch.setattr(bq_reads, "_tickets_cols", lambda: set())
+    for name, call in _FOUR_QUERIES.items():
+        captured = []
+        _stub_schema_retry(monkeypatch, captured)
+        call()
+        sql = captured[0]
+        assert _predicate_before_alias(sql) == "FALSE", name
+        assert "last_member_activity_at > tm.closed_at" not in sql, name
+
+
+def test_is_reopened_already_in_the_table_is_excepted_not_duplicated(monkeypatch):
+    """Slice 3 adds is_reopened to grant_tickets. gt.* would then carry it
+    beside the live one and BigQuery rejects the duplicate name, so the live
+    queries must list it in EXCEPT as soon as the table has it."""
+    monkeypatch.setattr(
+        bq_reads, "_tickets_cols", lambda: {"last_member_activity_at", "is_reopened"}
+    )
+    for name in ("get_tickets", "get_ticket_detail", "get_member_thread_tickets"):
+        captured = []
+        _stub_schema_retry(monkeypatch, captured)
+        _FOUR_QUERIES[name]()
+        except_list = captured[0].split("EXCEPT(", 1)[1].split(")", 1)[0]
+        assert "is_reopened" in except_list, name

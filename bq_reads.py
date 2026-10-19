@@ -21,17 +21,40 @@ from bq_base import (
 _TERMINAL_IN = "(" + ", ".join(f"'{s}'" for s in config.TERMINAL_STATUSES) + ")"
 
 
-def _live_status_cte() -> str:
+def _reopen_predicate(gt_cols=None) -> str:
     """
-    Returns the reopen_clause string for building the live-join CTE status CASE.
-    Used by both get_open_stats() and get_daily_stats() so their KPI numbers
-    always match the ticket list (which also uses a live join).
+    Returns the one SQL condition that means "this ticket was closed and the
+    member has spoken since" (R1 in bq_reads.md), or the literal FALSE when
+    grant_tickets has no last_member_activity_at column yet (R4/R4a).
+
+    In: the grant_tickets column names (read from the table when not given).
+    Out: a SQL boolean expression over the aliases gt and tm.
+    Why: the condition used to be written out at four sites; now it is written
+    once, so the status branch and the is_reopened column cannot drift apart.
+    SQL analogy: a named view of one WHERE condition, reused by four queries.
     """
-    _gt_cols = _tickets_cols()
+    gt_cols = _tickets_cols() if gt_cols is None else gt_cols
+    if "last_member_activity_at" not in gt_cols:
+        return "FALSE"
     return (
-        "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
-        "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
-    ) if "last_member_activity_at" in _gt_cols else ""
+        "tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
+        "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at"
+    )
+
+
+def _live_status_cte(gt_cols=None) -> str:
+    """
+    Returns the reopen_clause string for building the live-join CTE status CASE:
+    `WHEN <reopen predicate> THEN 'open'`, or "" on an old schema (R4).
+    Used by get_open_stats(), get_daily_stats() and the three ticket readers so
+    their numbers always match the ticket list (which also uses a live join).
+
+    In: optionally the grant_tickets column names. Out: one CASE branch or "".
+    """
+    gt_cols = _tickets_cols() if gt_cols is None else gt_cols
+    if "last_member_activity_at" not in gt_cols:
+        return ""
+    return f"WHEN {_reopen_predicate(gt_cols)} THEN 'open'"
 
 
 def _urgency_clock_expr(gt_cols=None) -> str:
@@ -117,6 +140,11 @@ def get_tickets(
     """
     One lane at a time. lane='question' feeds the Tickets tab, lane='general'
     feeds Conversations; pass lane=None only if you genuinely want both.
+
+    In: the sidebar filters, all optional. Out: one DataFrame row per ticket,
+    now with an is_reopened True/False column beside ticket_status (R13a) —
+    True when a member spoke after the ticket was closed. Nothing filters on it.
+    SQL analogy: SELECT ... FROM the live view, with one extra computed column.
     """
     filters = ["body IS NOT NULL AND TRIM(body) != ''"]
 
@@ -169,12 +197,10 @@ def get_tickets(
         # rebuild schema mismatch refreshes _tickets_cols() and tries again.
         _gt_cols = _tickets_cols()
         _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
-        _optional_except = ["difficulty", "team_comment_replied", "lane"]
+        _optional_except = ["difficulty", "team_comment_replied", "lane", "is_reopened"]
         _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
-        _reopen_clause = (
-            "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
-            "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
-        ) if "last_member_activity_at" in _gt_cols else ""
+        _reopen_clause = _live_status_cte(_gt_cols)
+        _reopen_expr = _reopen_predicate(_gt_cols)
         _lane_expr = _live_lane_expr(_gt_cols)
         _urgency_expr = _urgency_clock_expr(_gt_cols)
         return f"""
@@ -190,6 +216,7 @@ def get_tickets(
                         WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                         ELSE gt.ticket_status
                     END                                                     AS ticket_status,
+                    {_reopen_expr} AS is_reopened,
                     {_urgency_expr}                                         AS urgency_since
                 FROM `{config.TICKETS_TABLE}` gt
                 LEFT JOIN (
@@ -217,15 +244,19 @@ def get_tickets(
 
 
 def get_ticket_detail(content_id: str) -> dict:
+    """
+    In: a content_id. Out: that ticket's columns as a dict ({} if none),
+    including is_reopened (R15a) so the detail header can show the mark.
+    Why: reads the same live status and clock as the list, so row and dialog agree.
+    SQL analogy: SELECT * FROM the live view WHERE content_id = ... LIMIT 1.
+    """
     def _build():
         _gt_cols = _tickets_cols()
         _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
-        _optional_except = ["difficulty", "team_comment_replied", "lane"]
+        _optional_except = ["difficulty", "team_comment_replied", "lane", "is_reopened"]
         _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
-        _reopen_clause = (
-            "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
-            "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
-        ) if "last_member_activity_at" in _gt_cols else ""
+        _reopen_clause = _live_status_cte(_gt_cols)
+        _reopen_expr = _reopen_predicate(_gt_cols)
         _lane_expr = _live_lane_expr(_gt_cols)
         _urgency_expr = _urgency_clock_expr(_gt_cols)
         return f"""
@@ -240,6 +271,7 @@ def get_ticket_detail(content_id: str) -> dict:
                     WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                     ELSE gt.ticket_status
                 END                                                     AS ticket_status,
+                {_reopen_expr} AS is_reopened,
                 CASE
                     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), {_urgency_expr}, HOUR) < 24 THEN 'normal'
                     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), {_urgency_expr}, HOUR) < 48 THEN 'urgent'
@@ -260,16 +292,18 @@ def get_ticket_detail(content_id: str) -> dict:
 
 
 def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
-    """All tickets from one member in one thread (all statuses), used by the group dialog."""
+    """
+    All tickets from one member in one thread (all statuses), used by the group dialog.
+    In: thread_id, member_id. Out: a DataFrame, oldest first, each row carrying
+    its own is_reopened (R15a) so the dialog marks the same rows the list does.
+    """
     def _build():
         _gt_cols = _tickets_cols()
         _always_except = ["assigned_to", "manual_status", "domain", "ticket_status"]
-        _optional_except = ["difficulty", "team_comment_replied", "lane"]
+        _optional_except = ["difficulty", "team_comment_replied", "lane", "is_reopened"]
         _except_cols = ", ".join(_always_except + [c for c in _optional_except if c in _gt_cols])
-        _reopen_clause = (
-            "WHEN tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
-            "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at THEN 'open'"
-        ) if "last_member_activity_at" in _gt_cols else ""
+        _reopen_clause = _live_status_cte(_gt_cols)
+        _reopen_expr = _reopen_predicate(_gt_cols)
         _lane_expr = _live_lane_expr(_gt_cols)
         _urgency_expr = _urgency_clock_expr(_gt_cols)
         return f"""
@@ -285,6 +319,7 @@ def get_member_thread_tickets(thread_id: str, member_id) -> pd.DataFrame:
                         WHEN tm.status IS NOT NULL AND tm.status != ''     THEN tm.status
                         ELSE gt.ticket_status
                     END                                                    AS ticket_status,
+                    {_reopen_expr} AS is_reopened,
                     CASE
                         WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), {_urgency_expr}, HOUR) < 24 THEN 'normal'
                         WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), {_urgency_expr}, HOUR) < 48 THEN 'urgent'
@@ -508,8 +543,14 @@ def preview_bulk_close(
 
 
 def get_open_stats() -> dict:
+    """
+    In: nothing. Out: the four KPI numbers (open, normal, urgent, critical).
+    The live CTE selects is_reopened too, but no card counts it (R18a): a
+    reopened ticket is counted in open and in its urgency bucket like any other.
+    """
     def _build():
         _reopen_clause = _live_status_cte()
+        _reopen_expr   = _reopen_predicate()
         _lane_expr     = _live_lane_expr()
         _urgency_expr  = _urgency_clock_expr()
         return f"""
@@ -522,6 +563,7 @@ def get_open_stats() -> dict:
                         WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                         ELSE gt.ticket_status
                     END AS ticket_status,
+                    {_reopen_expr} AS is_reopened,
                     {_urgency_expr} AS urgency_since
                 FROM `{config.TICKETS_TABLE}` gt
                 LEFT JOIN (
@@ -552,8 +594,14 @@ def get_open_stats() -> dict:
 
 
 def get_daily_stats() -> dict:
+    """
+    In: nothing. Out: today's counters (in today, answered today, ...).
+    Reads the same live status CASE as the list; its live CTE selects
+    is_reopened for parity (R1a), unused by the counters.
+    """
     def _build():
         _reopen_clause = _live_status_cte()
+        _reopen_expr   = _reopen_predicate()
         _lane_expr     = _live_lane_expr()
         return f"""
             WITH live AS (
@@ -566,7 +614,8 @@ def get_daily_stats() -> dict:
                         {_reopen_clause}
                         WHEN tm.status IS NOT NULL AND tm.status != ''      THEN tm.status
                         ELSE gt.ticket_status
-                    END AS ticket_status
+                    END AS ticket_status,
+                    {_reopen_expr} AS is_reopened
                 FROM `{config.TICKETS_TABLE}` gt
                 LEFT JOIN (
                     SELECT * FROM `{config.META_TABLE}`
