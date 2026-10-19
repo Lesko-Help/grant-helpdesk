@@ -76,7 +76,56 @@ Design: docs/specs/modules/coach_inbox.md — Overview entry points, Screens (An
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass — reviewed by helpdesk-opzichter 2026-10-19 (overseer, not the worker).
+
+Checked, by reading and re-running rather than by trusting the report:
+
+- The picker is drawn before `with st.form`. That placement is the feature: a
+  selectbox inside an `st.form` never fires its `on_change`, so inside the form
+  the dropdown would be dead. The reason is written in `reply_form.py`'s own
+  docstring, where the next reader will find it.
+- One shared picker in all three answer dialogs (`app.py:789` ticket,
+  `:1122` group comment, `:1307` member 1:1), and `reply_form.py` never names
+  `_std_reply_picker` — it takes the picker as an argument, so the module stays
+  importable under AppTest, which cannot import `app`.
+- No session_state key collides: `stdreply_<content_id>` (ticket),
+  `grp_stdreply_<content_id>` (group), `stdreply_reply_body_<content_id>` (1:1).
+- The per-dialog help sentence (coach_inbox.md R5) is honest in both forms. The
+  1:1 box sits in an `st.form`, which keeps typing out of session_state until
+  Send, so appending there would silently drop what was typed — hence "pick it
+  first, then edit" rather than the other two dialogs' "appends below what
+  you've already typed".
+- `_picker_source_from_app` lifts the picker's real source out of `app.py` with
+  `ast` and executes it in the AppTest script, so these tests run app.py's own
+  code, not a copy that can drift away from it.
+- No test patches a module attribute, so nothing is left patched for the next
+  test file in the process — the fault that came back on `reply-no-close`.
+
+Red then green, three breaks, each alone and reverted (run by the worker,
+mechanism verified here by reading the assertions):
+
+1. `std_reply_picker(...)` call deleted from `reply_form.py` → 5 failed, 16
+   passed.
+2. `_STD_REPLY_HELP_IN_FORM` third argument dropped at the 1:1 call site → 1
+   failed, 20 passed. Only the `ast` wiring test catches this; the AppTest
+   tests build their own dialog lambda and so never see the real call site.
+   That makes the `ast` test the single guard for the wiring, and it asserts
+   exactly two 2-argument calls, exactly one 3-argument call, and that the
+   third argument is `_STD_REPLY_HELP_IN_FORM` — specific enough to go red.
+3. `_insert_std_reply` made to overwrite instead of append → 1 failed, 20
+   passed.
+
+Green: 21 alone; 82 across all six touched test files in one process, in both
+orders, after merging `main` at `0408fa0` — re-run by the overseer, because a
+file-by-file green hides a cross-file leak and one did hide here this morning.
+
+Not findings, recorded so they are not re-litigated: two added lines run past
+100 characters (the default help sentence at 111, the lambda keyword argument
+at 117). This repo's specs set no line limit and `app.py` already reaches 236.
+The worker merged `main` twice rather than rebasing; the end state is identical
+and history is only rewritten here for secrets.
+
+Landing: awaiting Martin. The overseer does not land on its own verdict.
 
 ### Findings
 What the overseer's review subagent flagged — style, bugs, security —
