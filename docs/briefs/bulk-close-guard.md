@@ -84,9 +84,18 @@ Verdict: `<fill in — pass, or changes requested>`
 What the overseer's review subagent flagged — style, bugs, security —
 one line each. A trimmer before Martin's read, not a replacement for it.
 
+Round 1, from the overseer, word for word:
+
+FINDING 1 (blocker). `tests/fixtures/bulk_close_sql_before.json` is never read. `grep -rn bulk_close_sql_before tests/ *.py` returns nothing; the test file imports only `re`, `pytest`, `bq_reads`, `bq_writes`. Slice 1's whole purpose — proving the extraction preserved behaviour — is therefore unguarded, and 42 lines of data sit there that any reader will assume is asserted. Either assert against it or delete it; a captured-but-unread fixture is worse than none, because it reads as proof.
+
+FINDING 2 (blocker, and I am promoting it from the nit it was reported as). R9 is guarded only by substring containment at `tests/test_bulk_close.py:142-143`. Appending `WHERE f.domain != 'excluded-domain'` after `bq_reads.py:566` makes preview and execute select different rows **and all ten tests still pass**. That was demonstrated by mutation, not theorised. R9 — preview and execute select the same rows — is the single invariant this whole worktree exists to make provable, and the number a coach consents to is the thing it protects, so a guard that green-lights a real divergence is not a nit. It is made worse by the helper's base now exposing `assigned_to` and `domain` to preview, which previously saw only `content_id`: there is more to narrow on than before.
+
 ### Fixed in
 Which commit fixed each finding, or "not fixed — see report" — one line
 each.
+
+Finding 1: fixed in e88b0b0, `test_r9_sql_differs_from_the_before_fixture_only_where_allowed` reads the fixture and compares lines (multiset) for all four filter sets, with the nesting lines pinned.
+Finding 2: fixed in e88b0b0, same test; the reviewer's mutation (WHERE on `f.domain` in preview) now fails 4 tests. Also red: the same on execute (4), a narrowed COUNTIF (5), a changed MERGE SET value (4). Unmutated: 18 pass. No extra assertion was needed.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
