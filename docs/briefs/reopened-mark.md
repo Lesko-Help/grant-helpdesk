@@ -126,7 +126,7 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done:
-In flight (file:line):
-Next:
-Traps (with dates):
+Done: brief (f51d3d6); slice 1 (1c9b3a4): `_reopen_predicate()` in `bq_reads.py`, `is_reopened` in all five live CTEs, 4 new tests red-then-green, 10 pass.
+In flight: waiting for the overseer's reply to "slice 1 done" and on the R1a question.
+Next: slice 2 (`app.py` chip at the three render sites), then slice 3 (`.sqlx`, last).
+Traps (with dates): 2026-10-19: the R7 test sliced the SQL from `AS ticket_status,` to `AS urgency`; `is_reopened` legitimately reads `tm.status`, so the slice now starts after `AS is_reopened,`. 2026-10-19: once slice 3 adds `is_reopened` to `grant_tickets`, `gt.* EXCEPT(...)` would duplicate the name; slice 1 already EXCEPTs it when the table has it, so slice 3 is safe to land after the app deploy.
