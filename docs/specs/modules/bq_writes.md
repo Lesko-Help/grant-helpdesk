@@ -13,8 +13,12 @@ Writes: `grant_helpdesk.ticket_metadata`, `followup_queue`, `standard_replies`, 
 only, one function per action.
 *What it owns:* the write side of `ticket_metadata`, `closed_at` and
 `closed_by` included, and the bulk close sweep.
-*What it depends on:* `config.py` for every table name, and `followup_queue`
-for the one row class a sweep must never touch.
+*What it depends on:* `config.py` for every table name, `followup_queue` for
+the one row class a sweep must never touch, and — since 2026-10-19 —
+`bq_reads.bulk_close_rows_sql` (`bq_reads.py:490`) for the shared row
+selection. That import is a new edge between the two modules, chosen by Martin
+over a third module `bq_base.py`, because R9 wants one copy of the selection
+more than it wants a tidy dependency graph.
 *Public entry points:* the eighteen below; `execute_bulk_close` is the only one
 that writes more than one ticket per call.
 *Not in scope:* member questions (private 1:1 threads), written by
@@ -37,11 +41,11 @@ here deletes a row; `archive_standard_reply` sets a flag.
   whatever the filters match. Why: that follow-up is a question already sent to
   the member, so closing discards an answer still on its way.
 - R4: `closed`, `cancelled` and `archived` are all excluded, by effective
-  status. The code excludes only the first two today, so an archived ticket
-  inside the filters is swept and comes back `closed`. Adding `archived` is the
-  change this rule asks for (Martin, 2026-10-19) — and it is the one rule here
-  whose test can go red against the live divergence rather than against a
-  missing helper.
+  status. `bq_reads.bulk_close_rows_sql` excludes all three, so neither the
+  preview number nor the sweep touches an archived ticket;
+  `tests/test_bulk_close.py::test_r4_*` guards it. `archived` was added on
+  2026-10-19 (Martin) and was the one rule here whose test went red against
+  live behaviour rather than against a missing helper.
 - R5: the write is one `MERGE` on `content_id`. Matched, it sets
   `status='closed'`, `updated_at`, `closed_at`, `closed_by`; unmatched, it
   inserts a metadata row, carrying `assigned_to` and `domain` forward.
@@ -56,13 +60,14 @@ here deletes a row; `archive_standard_reply` sets a flag.
   here and is never swept, although the coach's list shows it open
   (`bq_reads.md` R1a). For a destructive sweep that is the safe direction, and
   it is deliberate, not an oversight.
-- R9: **preview and execute must select the same rows.** `preview_bulk_close`
-  (`bq_reads.py:490`, specified with this pair rather than with the reads)
-  rebuilds the same WHERE and the same `base` CTE and returns
-  `{"will_close": N, "skipped_followup": M}`. They are two copies of that logic
-  today, so a change to one is a change to both in the same commit. The coach
-  consents to a number; if the two drift, the app asks about one thing and does
-  another.
+- R9: **preview and execute must select the same rows.** Both call
+  `bq_reads.bulk_close_rows_sql`, which builds the `base` CTE and the filtered
+  SELECT once; the pending-follow-up predicate (R3) stays per caller (execute:
+  `NOT IN`; preview: a LEFT JOIN with `COUNTIF`). `test_r9_*` asserts the
+  helper's text sits inside what both callers send. `preview_bulk_close`
+  (`bq_reads.py:544`, specified with this pair rather than with the reads)
+  returns `{"will_close": N, "skipped_followup": M}`. The coach consents to a
+  number; if the two drift, the app asks about one thing and does another.
 - R10: filter values must reach BigQuery as query parameters. Today all four
   are interpolated into the SQL with ad-hoc quote stripping
   (`.replace("'", "")`) — not a safety boundary, and why the query breaks on a
@@ -83,21 +88,21 @@ for all; an ISO date (`YYYY-MM-DD`) or `""` for all dates; the closing coach.
 one statement. No `BTB_ALERT`: this runs behind a coach's click, not on a
 schedule, so a human sees the failure at once.
 
-*Test:* none exists — `grep -rn bulk_close tests/` finds nothing, so every rule
-above is unguarded. A worktree taking this on adds `tests/test_bulk_close.py`
-and runs:
+*Test:* `tests/test_bulk_close.py` guards R2, R3 (in both callers), R4 and R9,
+on SQL strings with no BigQuery client; R7, R8 and R10 are not tested. 18
+tests, run with:
 
 ```
 PATH=/opt/anaconda3/bin:$PATH python -m pytest tests/test_bulk_close.py -q
 ```
 
 Never bare `pytest tests/` — that runs `smoke_test.py`, which writes the live
-`ticket_metadata`. To be testable at all, the WHERE building must come out of both functions into one shared pure
-helper returning SQL text for given filters — the shape
-`bq_reads._reopen_predicate` already uses. Then R2, R3, R4 and R10 are
-assertions on a string with no BigQuery client, and R9 is one assertion that
-both callers use that helper. Red first against `origin/main`: today both build
-their SQL inline, so the helper does not exist and the import fails.
+`ticket_metadata`. R9's strongest guard reads
+`tests/fixtures/bulk_close_sql_before.json`, the SQL both functions built
+*before* the extraction, and compares line multisets for four filter sets
+against both callers, pinning the only differences the extraction was allowed
+to have (`'archived'` added, and the nesting). It bites: one extra column added
+to the helper's `base` SELECT takes all eight of those cases red.
 
 ### preview_bulk_close(status_filter="answered", assigned_to="", before_date="")
 
@@ -167,7 +172,7 @@ event_id, member_id, rsvped_by)`
   nothing anyone sees and only moves numbers in reports that count by status —
   a silent edit to history. The three terminal-ish states now behave alike,
   which is the asymmetry a reader would otherwise have had to rediscover.
-  Carried by R4; not yet in the code.
+  Carried by R4, and in the code since `be289bf` (landed 2026-10-19).
 - 2026-10-19: the Conversations version offers **status only** (Martin). Not
   coach — member questions carry no `assigned_to` and no lane, so there is
   nothing to filter on. Not an age either: "answered and untouched for N days"
