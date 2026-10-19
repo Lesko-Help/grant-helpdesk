@@ -1273,8 +1273,8 @@ def show_member_question_dialog(content_id: str, row_dict: dict):
     row_dict["messages"] is already on the row from load_member_questions —
     no extra BigQuery read needed to open this. thread_id is content_id
     with the "pc:" prefix load_member_questions adds stripped back off.
-    A successful send closes the thread at once (R7) via the close_thread
-    lambda passed to render_thread_and_reply, wrapping set_thread_workflow.
+    A successful send leaves the thread open as "answered" (add_coach_reply
+    R7); only the row's Close action closes it.
     Output: none — draws the dialog; closes via reply_form's st.rerun()
     on a successful send."""
     mem = row_dict.get("member_name") or "Unknown"
@@ -1289,7 +1289,6 @@ def show_member_question_dialog(content_id: str, row_dict: dict):
         _lookup_coach_member_id,
         coach_inbox.add_coach_reply,
         load_member_questions.clear,
-        lambda tid, user: coach_inbox.set_thread_workflow(tid, status="closed", updated_by=user),
     )
 
     st.divider()
