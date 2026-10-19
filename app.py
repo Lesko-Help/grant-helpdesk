@@ -544,6 +544,14 @@ def _cached_standard_replies():
 
 _STD_REPLY_PLACEHOLDER = "— insert a standard reply —"
 
+# The dropdown's help sentence belongs to the dialog, not the picker. In the
+# ticket and group dialogs the box is a plain text area, so picking after
+# typing appends below the typing. In the member 1:1 dialog the box sits in
+# an st.form, which keeps typing out of session_state until Send, so there
+# the honest advice is to pick first.
+_STD_REPLY_HELP_DEFAULT = "Appends the template below what you've already typed — edit freely before posting"
+_STD_REPLY_HELP_IN_FORM = "Adds the template to the box — pick it first, then edit"
+
 def _insert_std_reply(sel_key: str, target_key: str):
     """Selectbox on_change: append the picked reply body to the answer box.
 
@@ -564,8 +572,14 @@ def _insert_std_reply(sel_key: str, target_key: str):
     st.session_state[target_key] = f"{cur}\n\n{body}" if cur else body
     st.session_state[sel_key] = _STD_REPLY_PLACEHOLDER
 
-def _std_reply_picker(sel_key: str, target_key: str):
-    """Render the dropdown (only when replies exist) above an answer box."""
+def _std_reply_picker(sel_key: str, target_key: str, help_text: str = _STD_REPLY_HELP_DEFAULT):
+    """Render the dropdown (only when replies exist) above an answer box.
+
+    In: the dropdown's and the answer box's session_state keys, and
+    optionally the help sentence (the 1:1 dialog passes its own; the other
+    two take the default). Out: nothing returned; the selectbox is drawn.
+    Why the sentence is an argument: what is true to say about typing
+    depends on whether the box is inside an st.form."""
     try:
         _titles = _cached_standard_replies()["title"].tolist()
     except Exception as _e:
@@ -579,7 +593,7 @@ def _std_reply_picker(sel_key: str, target_key: str):
             on_change=_insert_std_reply,
             args=(sel_key, target_key),
             label_visibility="collapsed",
-            help="Appends the template below what you've already typed — edit freely before posting",
+            help=help_text,
         )
 
 
@@ -1267,7 +1281,7 @@ def show_member_question_dialog(content_id: str, row_dict: dict):
         coach_inbox.add_coach_reply,
         load_member_questions.clear,
         lambda tid, user: coach_inbox.set_thread_workflow(tid, status="closed", updated_by=user),
-        std_reply_picker=_std_reply_picker,
+        std_reply_picker=lambda sel_key, target_key: _std_reply_picker(sel_key, target_key, _STD_REPLY_HELP_IN_FORM),
     )
 
     st.divider()

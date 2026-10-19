@@ -384,3 +384,132 @@ def test_app_py_uses_the_one_shared_picker_in_exactly_three_dialogs():
     root = Path(__file__).resolve().parent.parent
     assert _uses_of_std_reply_picker((root / "app.py").read_text()) == 3
     assert _uses_of_std_reply_picker((root / "reply_form.py").read_text()) == 0
+
+
+# ── the picker itself: append, reset, and whose help sentence ───────────────
+#
+# app.py cannot be imported under AppTest, so the picker's real source is
+# lifted out of app.py with ast and executed inside the AppTest script with
+# a fake template list. What runs is app.py's own code, not a copy of it.
+
+_PICKER_NAMES = {
+    "_STD_REPLY_PLACEHOLDER", "_STD_REPLY_HELP_DEFAULT", "_STD_REPLY_HELP_IN_FORM",
+    "_insert_std_reply", "_std_reply_picker",
+}
+# Written out here on purpose: a test that read these from app.py would
+# agree with app.py even if someone changed the default for the other two.
+_OLD_HELP = "Appends the template below what you've already typed — edit freely before posting"
+_FORM_HELP = "Adds the template to the box — pick it first, then edit"
+
+
+def _picker_source_from_app():
+    """Input: nothing (reads app.py next to the tests). Output: the source
+    text of the picker's constants and two functions, nothing else. Why: so
+    an AppTest script can run the real picker without importing app."""
+    import ast
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent.parent / "app.py").read_text()
+    wanted = []
+    for node in ast.parse(text).body:
+        names = [t.id for t in getattr(node, "targets", []) if isinstance(t, ast.Name)]
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            names.append(node.name)
+        if _PICKER_NAMES & set(names):
+            wanted.append(ast.get_source_segment(text, node))
+    return "\n\n".join(wanted)
+
+
+def _real_picker_script(picker_source, one_to_one):
+    """Input: the lifted picker source, and whether the dialog is the 1:1
+    one (which passes its own help sentence) or an ordinary one (which
+    passes none). Output: the real reply dialog drawn with the real picker
+    and two fake templates. Why: lets a test pick, send and read the box."""
+    import pandas as pd
+    import streamlit as st
+
+    import coach_inbox
+    import reply_form
+
+    class _FakeBq:
+        @staticmethod
+        def log_event(*args):
+            pass
+
+    namespace = {
+        "st": st,
+        "bq_client": _FakeBq,
+        "_cached_standard_replies": lambda: pd.DataFrame(
+            {"title": ["Grant deadline", "Thanks"], "body": ["Deadline is Friday.", "Thanks for asking."]}
+        ),
+    }
+    exec(picker_source, namespace)
+    picker = namespace["_std_reply_picker"]
+    if one_to_one:
+        picker_for_dialog = lambda sel_key, target_key: picker(sel_key, target_key, namespace["_STD_REPLY_HELP_IN_FORM"])
+    else:
+        picker_for_dialog = picker
+
+    reply_form.render_thread_and_reply(
+        "th1", [], "reply_body", "reply_result", "coach@example.com",
+        lambda email: 42, lambda *a: coach_inbox.ReplyResult.WRITE_FAILED, lambda: None,
+        lambda *a: coach_inbox.WorkflowResult.OK, std_reply_picker=picker_for_dialog,
+    )
+
+
+def _real_picker_app(one_to_one=True):
+    return AppTest.from_function(_real_picker_script, args=(_picker_source_from_app(), one_to_one))
+
+
+def test_a_pick_lands_the_template_in_the_box_and_the_dropdown_resets():
+    at = _real_picker_app()
+    at.run()
+    at.selectbox[0].select("Grant deadline").run()
+
+    assert list(at.exception) == []
+    assert at.text_area[0].value == "Deadline is Friday."
+    assert at.selectbox[0].value == "— insert a standard reply —"
+
+
+def test_a_second_pick_appends_below_the_first_with_one_blank_line():
+    at = _real_picker_app()
+    at.run()
+    at.selectbox[0].select("Grant deadline").run()
+    at.selectbox[0].select("Thanks").run()
+
+    assert at.text_area[0].value == "Deadline is Friday.\n\nThanks for asking."
+    assert at.selectbox[0].value == "— insert a standard reply —"
+
+
+def test_the_one_to_one_dialog_shows_the_pick_first_then_edit_sentence():
+    at = _real_picker_app(one_to_one=True)
+    at.run()
+
+    assert at.selectbox[0].help == _FORM_HELP
+
+
+def test_the_other_dialogs_keep_the_old_sentence_when_given_no_third_argument():
+    at = _real_picker_app(one_to_one=False)
+    at.run()
+
+    assert at.selectbox[0].help == _OLD_HELP
+
+
+def test_app_py_gives_only_the_one_to_one_dialog_its_own_sentence():
+    import ast
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent.parent / "app.py").read_text()
+    three_argument_calls = [
+        node for node in ast.walk(ast.parse(text))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "_std_reply_picker"
+        and len(node.args) == 3
+    ]
+    plain_calls = [
+        node for node in ast.walk(ast.parse(text))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "_std_reply_picker"
+        and len(node.args) == 2
+    ]
+    assert len(plain_calls) == 2
+    assert len(three_argument_calls) == 1
+    assert three_argument_calls[0].args[2].id == "_STD_REPLY_HELP_IN_FORM"
