@@ -150,15 +150,27 @@ def test_filter_questions_by_status_shows_only_closed_when_filter_is_closed():
     assert result["content_id"].tolist() == ["pc:t3"]
 
 
-def test_filter_questions_by_status_hides_closed_under_every_other_status():
-    # R4: every Status other than "closed", including "All", hides the
-    # closed ones and keeps the rest.
+def test_filter_questions_by_status_all_shows_every_question_closed_included():
+    # R4: Status = All keeps waiting, answered AND closed, so a thread a
+    # coach closed by hand is still findable.
     questions = pd.DataFrame([
         {"content_id": "pc:t1", "status": "waiting"},
         {"content_id": "pc:t2", "status": "answered"},
         {"content_id": "pc:t3", "status": "closed"},
     ])
-    for filter_status in ("All", "open", "answered"):
+    result = coach_inbox.filter_questions_by_status(questions, "All")
+    assert result["content_id"].tolist() == ["pc:t1", "pc:t2", "pc:t3"]
+
+
+def test_filter_questions_by_status_hides_closed_under_every_other_status():
+    # R4: every Status other than "All" and "closed" keeps only the
+    # non-closed ones.
+    questions = pd.DataFrame([
+        {"content_id": "pc:t1", "status": "waiting"},
+        {"content_id": "pc:t2", "status": "answered"},
+        {"content_id": "pc:t3", "status": "closed"},
+    ])
+    for filter_status in ("open", "answered"):
         result = coach_inbox.filter_questions_by_status(questions, filter_status)
         assert result["content_id"].tolist() == ["pc:t1", "pc:t2"]
 

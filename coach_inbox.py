@@ -455,14 +455,16 @@ def filter_questions_by_status(questions: pd.DataFrame, filter_status: str) -> p
     filter value ("All", "open", "answered", "closed", ...). Output: which
     of those questions merge_into_tickets should even see.
 
-    R4: a closed member question follows the sidebar Status filter the way
-    a closed ticket does — shown only when Status is exactly "closed", and
-    then only the closed ones; under every other Status, including "All",
-    only the non-closed ones show. Runs before merge_into_tickets, the same
-    way should_include_questions decides up front whether to pass any
-    questions in at all for the urgency/domain/space filters.
+    R4: "All" shows every member question, closed ones included, so a
+    thread a coach closed is still findable (SQL: no WHERE). "closed" shows
+    only the closed ones (WHERE status = 'closed'); any other Status shows
+    the non-closed ones (WHERE status <> 'closed'). Community tickets still
+    hide closed under "All" — the two kinds differ on purpose. Runs before
+    merge_into_tickets, the same way should_include_questions decides up
+    front whether to pass any questions in at all for the urgency/domain/
+    space filters.
     """
-    if questions.empty:
+    if questions.empty or filter_status == "All":
         return questions
     if filter_status == "closed":
         return questions[questions["status"] == "closed"]
