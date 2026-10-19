@@ -111,6 +111,8 @@ Slices 1-2: `deploy.sh` (Cloud Run app), run by the overseer from main after lan
 
 2026-10-19: the overseer's memory message had not arrived when this brief was committed; its content gets added here when it comes. Spec: `docs/specs/modules/bq_reads.md` (`## Derived`, R1a/R4a/R13a/R15a/R18a, Decisions 2026-10-19). The reopen predicate sits at `bq_reads.py` :33, :176, :227, :271; the app reads the live CTE, not `grant_tickets.ticket_status`, so the `.sqlx` copy alone would change nothing a coach sees. Never bare `pytest tests/`: `smoke_test.py` writes the live `ticket_metadata`.
 
+2026-10-19 (overseer): the mock-up's "answered 3d ago" age is deliberately not built, since the row carries no `closed_at` and the spec asks only for the mark; the overseer is putting the age to Martin as a separate follow-up. Known limit, not a bug: in the ticket list a multi-ticket group shows the REOPENED chip on its first row only (`row = grp.iloc[0]`); the group dialog shows each ticket's own. Site names, not line numbers: list row = `render_ticket_table`, detail header = `show_ticket_dialog`, group dialog = `show_group_dialog`; `app.py:644` is `STATUS_ICON.get(...)`, the status snap is `app.py:1116` against the list at `:1023`.
+
 ## Spec proposals
 
 Specs belong to the overseer (DECISION BY MARTIN 2026-09-24) — this worktree
@@ -126,7 +128,7 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done: brief (f51d3d6); slice 1 (status-free mark, `bq_reads.py`, 6cf05ff); slice 2: `_reopened_chip(row)` in `app.py`, drawn beside the status at the list row (`render_ticket_table`), the detail header badge row (`show_ticket_dialog`) and both group-dialog cards (`show_group_dialog`); `tests/test_reopened_chip.py`; 15 tests pass across the two files.
-In flight: waiting for the overseer's reply to the slice 2 report.
-Next: slice 3 (`definitions/marts/grant_tickets.sqlx`) only on the overseer's separate go; the push is the overseer's.
+Done: brief (f51d3d6); slice 1 (6cf05ff): status-free `is_reopened` in `bq_reads.py` via `_reopen_predicate()`, branch adds `tm.status = 'closed'`; slice 2 (82016b4): `_reopened_chip(row)` in `app.py`; slice 3: `is_reopened` column in `definitions/marts/grant_tickets.sqlx` after `ticket_status` (rule 4 untouched, no new status value), `tests/test_grant_tickets_sqlx_is_reopened.py`. 17 tests pass across the three test files.
+In flight: merge origin/main, `wt-done.sh --check reopened-mark`, queue row, report.
+Next: after the report, wait for the overseer's review; the push to main plus `deploy.sh` is the overseer's window (app deploy may go before the `.sqlx` push thanks to the EXCEPT guard).
 Traps (with dates): 2026-10-19: once slice 3 adds `is_reopened` to `grant_tickets`, `gt.* EXCEPT(...)` would duplicate the name; slice 1 already EXCEPTs it when the table has it, so the app deploy can precede the `.sqlx` push. 2026-10-19: the R7 test also guards the mark (it slices from `AS ticket_status,` to `AS urgency`, which holds the `is_reopened` line); keep that anchor. 2026-10-19: `TERMINAL_STATUSES` has three values: closed, cancelled, archived. 2026-10-19: the brief's slice-2 line numbers are off: the list row is `render_ticket_table` (~:1514), the detail header is the badge row in `show_ticket_dialog` (~:667), the group dialog cards are in `show_group_dialog` (~:1063, :1148); :1115 is the status dropdown. `app.py` cannot be imported by tests (Streamlit starts on import), so the chip test reads it with `ast`. In a multi-ticket list group the chip shows on the group's first row only (`row = grp.iloc[0]`); the group dialog shows each ticket's own.
