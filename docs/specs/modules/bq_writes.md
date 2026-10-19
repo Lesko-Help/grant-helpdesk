@@ -36,9 +36,12 @@ here deletes a row; `archive_standard_reply` sets a flag.
 - R3: a ticket with any `pending` row in `followup_queue` is never closed,
   whatever the filters match. Why: that follow-up is a question already sent to
   the member, so closing discards an answer still on its way.
-- R4: `closed` and `cancelled` are excluded, by effective status. `archived` is
-  **not**, so an archived ticket inside the filters is swept and comes back
-  `closed` — see Decisions.
+- R4: `closed`, `cancelled` and `archived` are all excluded, by effective
+  status. The code excludes only the first two today, so an archived ticket
+  inside the filters is swept and comes back `closed`. Adding `archived` is the
+  change this rule asks for (Martin, 2026-10-19) — and it is the one rule here
+  whose test can go red against the live divergence rather than against a
+  missing helper.
 - R5: the write is one `MERGE` on `content_id`. Matched, it sets
   `status='closed'`, `updated_at`, `closed_at`, `closed_by`; unmatched, it
   inserts a metadata row, carrying `assigned_to` and `domain` forward.
@@ -159,25 +162,33 @@ event_id, member_id, rsvped_by)`
   read "N will be closed, M skipped", press the button. R9 exists because that
   number is the whole of the consent: nobody re-reads forty rows, so the number
   must be true.
-- 2026-10-19: `archived` stays sweepable rather than being quietly added to
-  R4's exclusion list. Why it is a decision, not a bug: an archived ticket is
-  already out of every coach's list, so closing it changes nothing a coach
-  sees, and the only visible effect is in reports counting by status. **Needs
-  Martin:** exclude it, or state that archived counts as closeable. Written
-  down so the next reader need not rediscover the asymmetry with `closed` and
-  `cancelled`.
-- 2026-10-19 (open, Martin or Misty): which filters the Conversations version
-  offers. The ticket version has status, grant coach, created-before. Member
-  questions have no `assigned_to` and no lane, so coach is not a filter there;
-  the honest candidates are status (`answered` only, or any) and an age —
-  "answered and untouched for N days" — which needs the same `closed_at` field
-  the cut "answered 3d ago" age needed (`coach_inbox.md`, same date).
-  Unanswered, so no worktree opens for helpdesk-05 yet.
+- 2026-10-19: `archived` is excluded from the sweep (Martin). An archived
+  ticket is already out of every coach's list, so sweeping it closed changes
+  nothing anyone sees and only moves numbers in reports that count by status —
+  a silent edit to history. The three terminal-ish states now behave alike,
+  which is the asymmetry a reader would otherwise have had to rediscover.
+  Carried by R4; not yet in the code.
+- 2026-10-19: the Conversations version offers **status only** (Martin). Not
+  coach — member questions carry no `assigned_to` and no lane, so there is
+  nothing to filter on. Not an age either: "answered and untouched for N days"
+  needs the same `closed_at` field the cut "answered 3d ago" age needed
+  (`coach_inbox.md`, same date), so it would drag that column onto the thread
+  queries before it could offer anything. One filter also keeps the sweep
+  small, which is the right default for a destructive action nobody reviews
+  row by row (R9).
+- 2026-10-19: that version lives in `coach_inbox.py`, not here, and is
+  specified in `coach_inbox.md`. R1 is why: a sweep keyed off the ticket tables
+  must never be able to reach a private thread, so the thread sweep is a
+  separate function closing through `set_thread_workflow`, with its own preview.
+  It shares this spec's R2, R3, R6, R9 and R10 by reference rather than by
+  copied code. The cost is that `coach_inbox.md` grows while already over
+  STYLE R8 — which is an argument for splitting that spec, not for putting the
+  function in the wrong module.
 - 2026-10-19: the other seventeen functions here are grouped stubs, by what
   each group writes, not seventeen one-line sections. Why: a section each costs
   ~70 lines saying nothing, putting the file over STYLE R8's ~150 before a rule
   is written — and R8's answer to a long spec is to split the module. The
-  groups are the seams a split would follow. The file is still over R8's ~150 at 180
-  prose lines, all of the excess being the ten invariants on the one
-  destructive path; cutting those to reach a line count would be the wrong
-  trade, so the overage stands and the split is Martin's call.
+  groups are the seams a split would follow. The file is still well over R8's ~150, the
+  excess being the ten invariants on the one destructive path and the decisions
+  behind them; cutting those to reach a line count would be the wrong trade, so
+  the overage stands and the split is Martin's call.
