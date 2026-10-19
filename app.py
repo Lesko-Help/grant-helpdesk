@@ -535,7 +535,8 @@ def _cached_member_history(member_id, exclude_content_id=None):
     return bq_client.get_member_history(member_id, exclude_content_id=exclude_content_id)
 
 # Standard replies (answer templates) — managed in the 📋 Replies tab,
-# offered as an "Insert standard reply" dropdown in both answer dialogs.
+# offered as an "Insert standard reply" dropdown in all three answer dialogs
+# (ticket, group comment, member 1:1), always through _std_reply_picker.
 # Invalidated whenever a reply is saved or archived.
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_standard_replies():
@@ -1266,6 +1267,7 @@ def show_member_question_dialog(content_id: str, row_dict: dict):
         coach_inbox.add_coach_reply,
         load_member_questions.clear,
         lambda tid, user: coach_inbox.set_thread_workflow(tid, status="closed", updated_by=user),
+        std_reply_picker=_std_reply_picker,
     )
 
     st.divider()

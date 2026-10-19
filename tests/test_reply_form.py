@@ -358,3 +358,29 @@ def test_without_a_picker_no_dropdown_is_drawn_and_the_box_is_still_there():
     assert list(at.exception) == []
     assert len(at.selectbox) == 0
     assert len(at.text_area) == 1
+
+
+# ── the three answer dialogs share one picker ───────────────────────────────
+
+
+def _uses_of_std_reply_picker(source):
+    """Input: Python source text. Output: how many times the name
+    `_std_reply_picker` is used (called or handed over as an argument),
+    not counting its own `def`. Why: app.py cannot be imported under
+    AppTest, so the wiring is checked by reading the source; the 1:1 dialog
+    passes the helper as an argument rather than calling it, so counting
+    only Call nodes would miss that third use."""
+    import ast
+
+    return sum(
+        1 for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Name) and node.id == "_std_reply_picker"
+    )
+
+
+def test_app_py_uses_the_one_shared_picker_in_exactly_three_dialogs():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    assert _uses_of_std_reply_picker((root / "app.py").read_text()) == 3
+    assert _uses_of_std_reply_picker((root / "reply_form.py").read_text()) == 0
