@@ -40,11 +40,14 @@ list, `:241-242` for the detail). The reopen predicate is written out at four
 separate sites in `bq_reads.py`: `:33` (`_live_status_cte()`, used by
 `get_open_stats` and `get_daily_stats`), `:176` (`get_tickets`), `:227`
 (`get_ticket_detail`) and `:271` (`get_member_thread_tickets`). A change to the
-reopen reading is wrong unless all four carry it.
+reopen reading is wrong unless all four carry it. Each site carries two
+expressions, not one: R1's branch inside the status CASE, and R1a's mark beside
+it, on a predicate of its own.
 
 `definitions/marts/grant_tickets.sqlx` computes its own copy of the same reopen
 (rule (4) in the comment block at `:95`, branch at `:107-108`). That copy serves
-SQL readers of the table, never the app. It must agree with R1-R1a here; it is
+SQL readers of the table, never the app. Its rule (4) must agree with R1 here,
+and an `is_reopened` column added there must use R1a's status-free predicate; it is
 not where a coach-visible change lands. No spec owns the
 `definitions/marts/*.sqlx` layer yet — until one does, this paragraph is the
 only written statement that the two copies must match.
@@ -57,8 +60,16 @@ only written statement that the two copies must match.
   `open` and no new status is invented: `config.TICKET_STATUSES` is the vocabulary
   of values a *coach can write* through the dropdown, and a reopen is derived from
   two timestamps, not clicked.
-- R1a: the same condition as R1 is also selected as its own boolean column,
-  `is_reopened` — true exactly when R1's branch fired, false otherwise. It is the
+- R1a: `is_reopened` is selected as its own boolean column, true when
+  `gt.last_member_activity_at > tm.closed_at` (both non-NULL), false otherwise.
+  **This is deliberately not R1's condition.** R1 also requires
+  `tm.status = 'closed'`, because R1 decides which status value to *show* and so
+  must yield to a coach's own click (R2). The mark answers a different question —
+  had this ticket already been answered and closed before the member came back —
+  and the answer stays yes after a coach marks it `answered`, which is exactly
+  when a coach still needs to know it is a return visit. So the mark tests no
+  status, on the same grounds as the clock (R7), and it clears on the next close,
+  because closing writes a `closed_at` later than the member's comment. It is the
   one place the app learns that an `open` ticket had already been answered and
   closed, and it is what the REOPENED mark in the list, the detail header and the
   group dialog is drawn from. It is derived, never stored, and it is never
@@ -79,7 +90,9 @@ only written statement that the two copies must match.
 `is_reopened` true. Closed 2026-10-01, no member activity since -> `closed`,
 `is_reopened` false. Never closed, created 2026-10-18 -> `open`, `is_reopened`
 false — the two read the same but only one of them is a question nobody has
-answered yet.
+answered yet. Closed 2026-10-01, member comments 2026-10-06, coach then marks it
+`answered` -> `answered` by R2, `is_reopened` still true: R1 has stopped firing
+and the mark has not, which is the whole point of R1a having its own predicate.
 
 ### The urgency clock — `_urgency_clock_expr()`
 
@@ -146,7 +159,8 @@ and the `urgency='Normal'` filter both read `urgency_since`, that
 `urgency_since` is the R5/R6 expression, and that each of the four built
 queries (`get_tickets`, `get_ticket_detail`, `get_member_thread_tickets`, and
 `_live_status_cte()` as `get_open_stats` uses it) selects `is_reopened` from the
-same predicate as its reopen branch — proves R12, R1a, R13a and R15a. A
+two timestamps alone, with no `tm.status` test inside the mark, while its reopen
+branch still tests `tm.status = 'closed'` — proves R12, R1a, R13a and R15a. A
 second case stubs `_tickets_cols()` *without* `last_member_activity_at` and
 observes `is_reopened` still selected and constant false — proves R4a. Red first
 against `origin/main` @ `3ecd4d6`, where `is_reopened` appears in no query; R12's
@@ -251,6 +265,15 @@ commit before the fix, `57fc071`.
   `answered` moves neither the badge nor the mark. Cost: a fifth value
   duplicated across the four reopen sites, a new column on the table, and three
   render sites in `app.py` to touch.
+- 2026-10-19: `is_reopened` gets its own predicate rather than reusing R1's
+  (R1a). Why: the first draft of R1a said "the same condition as R1", which
+  contradicted both this section's own closing claim that the mark tests no
+  status and the agreed goal that *every* ticket whose `closed_at` precedes
+  `last_member_activity_at` is marked. Coupled to R1, the mark would vanish the
+  moment a coach marked the ticket `answered` — R1 needs `tm.status = 'closed'`,
+  so a coach's click switches it off — and that is the one moment the coach most
+  needs it. Found by the `reopened-mark` worker while building R1a as written,
+  before any of it shipped.
 - 2026-10-19: fixing `definitions/marts/grant_tickets.sqlx` alone was rejected as
   a no-op. Why: the app reads the live CTE, not `grant_tickets.ticket_status` —
   the CASE's `ELSE gt.ticket_status` is its last branch, and the reopen branch
