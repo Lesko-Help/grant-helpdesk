@@ -308,3 +308,53 @@ def test_render_thread_and_reply_on_failure_keeps_the_dialog_open_with_the_text(
     assert [e.value for e in at.error] == [
         "This conversation could not be found — it may have been removed."
     ]
+
+
+# ── render_thread_and_reply: the optional standard-reply picker ─────────────
+#
+# reply_form must never import app (app cannot run under AppTest), so the
+# picker arrives as a callable. The fake below stands in for app.py's
+# _std_reply_picker: it records its two arguments and draws one selectbox,
+# which is enough to see WHERE the dropdown lands relative to the form.
+
+
+def _picker_script(with_picker):
+    """Input: whether to hand the dialog a fake picker. Output: the dialog,
+    drawn once. Why: one script for both the 'picker given' and 'None'
+    cases, so the only difference between them is the argument under test."""
+    import streamlit as st
+
+    import coach_inbox
+    import reply_form
+
+    st.session_state.setdefault("picker_calls", [])
+
+    def _fake_picker(sel_key, target_key):
+        st.session_state["picker_calls"].append((sel_key, target_key))
+        st.selectbox("Insert standard reply", ["— insert a standard reply —", "Grant deadline"], key=sel_key)
+
+    extra = {"std_reply_picker": _fake_picker} if with_picker else {}
+    reply_form.render_thread_and_reply(
+        "th1", [], "reply_body", "reply_result", "coach@example.com",
+        lambda email: 42, lambda *a: coach_inbox.ReplyResult.OK, lambda: None,
+        lambda *a: coach_inbox.WorkflowResult.OK, **extra,
+    )
+
+
+def test_picker_is_called_once_with_the_body_key_and_drawn_before_the_form():
+    at = AppTest.from_function(_picker_script, args=(True,))
+    at.run()
+
+    assert list(at.exception) == []
+    assert at.session_state["picker_calls"] == [("stdreply_reply_body", "reply_body")]
+    kinds = [child.type for child in at.main.children.values()]
+    assert kinds.index("selectbox") < kinds.index("form")
+
+
+def test_without_a_picker_no_dropdown_is_drawn_and_the_box_is_still_there():
+    at = AppTest.from_function(_picker_script, args=(False,))
+    at.run()
+
+    assert list(at.exception) == []
+    assert len(at.selectbox) == 0
+    assert len(at.text_area) == 1

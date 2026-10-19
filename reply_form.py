@@ -73,7 +73,7 @@ def on_reply_submit(thread_id, body_key, result_key, current_user, lookup_author
             st.session_state[result_key] = "Answer sent, but the thread could not be closed"
 
 
-def render_thread_and_reply(thread_id, messages, body_key, result_key, current_user, lookup_author, add_reply, clear_cache, close_thread):
+def render_thread_and_reply(thread_id, messages, body_key, result_key, current_user, lookup_author, add_reply, clear_cache, close_thread, std_reply_picker=None):
     """
     Input: the private thread's id; its messages so far, oldest first, each
     a dict with author_role/body/created_at — the same shape
@@ -81,12 +81,19 @@ def render_thread_and_reply(thread_id, messages, body_key, result_key, current_u
     this needs no extra BigQuery read; the reply box's and outcome's own
     session_state keys; the logged-in coach's email; and the four
     dependency callables on_reply_submit needs (author lookup, the actual
-    write, the cache to clear on success, and closing the thread on OK).
+    write, the cache to clear on success, and closing the thread on OK);
+    optionally std_reply_picker, a callable app.py supplies that draws the
+    "insert a standard reply" dropdown.
     Output: none — draws the thread and the reply form. On a successful
     send it calls st.rerun(), the same idiom show_flag_dialog,
     show_assign_dialog and show_delete_dialog already use to close their
     @st.dialog after a write; on any other outcome it shows that outcome's
     own message and leaves the typed text in place.
+    The picker, when given, is called once as
+    std_reply_picker(f"stdreply_{body_key}", body_key) above the form (a
+    selectbox inside st.form could not fire its on_change); None draws no
+    dropdown. It arrives as an argument because this module must not import
+    app, which cannot run under AppTest.
     Why this is a plain function and not inline in app.py's dialog: app.py
     can't run under AppTest (login gate, live BigQuery loaders), so the
     dialog's real logic has to live somewhere a real widget test can call
@@ -96,6 +103,9 @@ def render_thread_and_reply(thread_id, messages, body_key, result_key, current_u
         role = "assistant" if message["author_role"] == "coach" else "user"
         with st.chat_message(role):
             st.write(message["body"])
+
+    if std_reply_picker is not None:
+        std_reply_picker(f"stdreply_{body_key}", body_key)
 
     with st.form(f"reply_form_{thread_id}", clear_on_submit=False):
         st.text_area(
