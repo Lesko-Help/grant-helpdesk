@@ -111,7 +111,7 @@ Module `bq_writes`. Files: `bq_writes.py`, `bq_reads.py`, `tests/test_bulk_close
 
 ## Context
 
-2026-10-19: the overseer's memory message had not arrived when this brief was committed; add its content here once it does.
+2026-10-19, from the overseer's memory message: this is an extraction, not a new feature (`execute_bulk_close` `bq_writes.py:145`, `preview_bulk_close` `bq_reads.py:490`, UI `app.py:1751-1797`). Leave alone: R7 (`closed_by` defaults to empty), R10 (interpolation; the dormant `bq-writes-params` worktree owns it), deprecated `utcnow()`, community tickets only. R8 is deliberate: the sweep skips reopened tickets. The auto-reopen lives in `definitions/marts/grant_tickets.sqlx:105-107`, so any member message reopens a closed ticket. Martin, 2026-10-19: exclude `archived` because sweeping it silently edits history in status reports. Test command always names the file; never bare `pytest tests/`. Next worktree `bulk-close-convo` will reuse the helper, so keep it clean.
 
 Design choice: the helper `bulk_close_rows_sql(status_filter, assigned_to, before_date)` lives in `bq_reads.py` (next to `preview_bulk_close`, `bq_writes` imports it). It returns the `base` CTE plus the filtered SELECT; the pending-follow-up handling (R3) stays with each caller. R10 stays as is (interpolation), as the brief says.
 
