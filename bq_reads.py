@@ -496,14 +496,14 @@ def bulk_close_rows_sql(
     In: the three bulk-close filters ("" = no constraint on that field, R2).
     Out: SQL text (no query is run) of one SELECT, with its own WITH base CTE,
     returning content_id, assigned_to, domain for every community ticket the
-    filters match whose effective status is not closed/cancelled.
+    filters match whose effective status is not closed/cancelled/archived (R4).
     Why: execute_bulk_close and preview_bulk_close must pick the same rows
     (bq_writes.md R9); both call this, so the selection exists once.
     SQL analogy: a view over grant_tickets LEFT JOIN ticket_metadata, with the
     filters as its WHERE. The pending-follow-up exclusion (R3) is not here:
     each caller applies it in its own way (NOT IN vs. LEFT JOIN count).
     """
-    conditions = ["t.effective_status NOT IN ('closed', 'cancelled')"]
+    conditions = ["t.effective_status NOT IN ('closed', 'cancelled', 'archived')"]
     if status_filter:
         safe_status = status_filter.replace("'", "")
         conditions.append(f"t.effective_status = '{safe_status}'")
