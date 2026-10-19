@@ -79,12 +79,12 @@ Design: docs/specs/modules/coach_inbox.md — Screens (Answer dialog), `merge_in
 Verdict: `<fill in — pass, or changes requested>`
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+1. FINDING 1 (must fix) — the module patch is never undone, and it breaks another suite. `_fixed_script` and `_dialog_script` both do `coach_inbox.set_thread_workflow = _workflow_recorder` and never restore it. AppTest runs in this process, so after `tests/test_reply_form.py` has run, the real function is gone for everything after it. `tests/test_reply_form.py tests/test_coach_inbox_workflow.py -q` gives 7 failed, 13 passed.
+2. FINDING 2 (nit) — `reply_form.py:40` is 126 characters after the docstring reflow and `:73` is 124. Rewrap both.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. Finding 1: `5cfb099` — an autouse fixture in `tests/test_reply_form.py` restores `set_thread_workflow` after each test; 20 passed in either order, 7 red with the restore removed.
+2. Finding 2: `5cfb099` — both lines rewrapped.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
