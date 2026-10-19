@@ -74,7 +74,21 @@ Design: docs/specs/modules/bq_reads.md — `## Derived` (R1, new R1a/R4a), the f
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass — overseer review 2026-10-19. Checked the rule this change exists
+to get right: `_reopen_predicate()` tests no `tm.status`, so the mark stays true
+after a coach clicks `answered` (R1a) and clears on the next close, while
+`_live_status_cte()` adds the status test on top so the status branch still
+yields to a coach's click (R1). Also confirmed FALSE on an old schema (R4a), the
+`.sqlx` column additive with rule (4) and `ticket_status` untouched, and the chip
+drawn beside the status in all four places, never instead of it. 17 tests green
+here. One observation accepted rather than sent back: `is_reopened` is also
+selected in `get_open_stats` and `get_daily_stats`, where nothing reads it. It
+cannot move the KPI numbers — both CTEs select named columns and the outer
+queries are COUNTIF over named columns, no `SELECT *` and no UNION, and both
+already read `last_member_activity_at` and `closed_at`, so there is no extra
+scan. R18a governs the cards, not the CTEs, so it contradicts nothing, and
+re-cutting the two KPI queries to drop an inert column would be churn in the
+riskiest part of the diff. Landing authorised by Martin 2026-10-19.
 
 ### Findings
 What the overseer's review subagent flagged — style, bugs, security —
