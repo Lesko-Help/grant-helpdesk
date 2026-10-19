@@ -76,7 +76,17 @@ Design: docs/specs/modules/coach_inbox.md — Screens (Answer dialog), `merge_in
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass — overseer review 2026-10-19. Read the whole source diff and
+checked the four things that could have gone wrong: no production caller still
+passes close_thread, the row's own Close is still the single closer
+(app.py:1429 via set_thread_workflow), `answered` stays derived from who spoke
+last (coach_inbox.py:135) and is never written, and community tickets still
+hide closed under All on purpose. One fault found and sent back — the new tests
+patched coach_inbox.set_thread_workflow without restoring it, which turned
+tests/test_coach_inbox_workflow.py 7-red when run after this file; fixed in
+5cfb099 with an autouse fixture. I saw that 7-red myself before the fix and 57
+green across the three files after it, so red-then-green is proven from the
+overseer's side too. Landing authorised by Martin 2026-10-19.
 
 ### Findings
 1. FINDING 1 (must fix) — the module patch is never undone, and it breaks another suite. `_fixed_script` and `_dialog_script` both do `coach_inbox.set_thread_workflow = _workflow_recorder` and never restore it. AppTest runs in this process, so after `tests/test_reply_form.py` has run, the real function is gone for everything after it. `tests/test_reply_form.py tests/test_coach_inbox_workflow.py -q` gives 7 failed, 13 passed.
