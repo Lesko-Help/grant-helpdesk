@@ -118,7 +118,7 @@ never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
 
-1. File `bq_reads.md`, R1a against the Decisions entry of 2026-10-19. R1a says `is_reopened` is true exactly when R1's branch fired, and R1 requires `tm.status = 'closed'`. The Decisions entry says the mark tests no status, so marking a reopened ticket `answered` moves neither badge nor mark. Both cannot hold: once a coach saves `answered`, `tm.status` is no longer `'closed'`, R1 stops firing, and R1a's mark goes false. Proposed: R1a stays as written (the mark exists to say "a member spoke after the close and nobody has acted yet"; it clears when a coach acts, like the status does), and the Decisions sentence about `answered` is cut back to the clock only (R7). The alternative is a status-free predicate (`closed_at < last_member_activity_at`), which matches the Product line "every ticket whose `closed_at` precedes `last_member_activity_at`" but would need R1a reworded. Until answered, this branch builds R1a as written (same predicate as R1).
+1. Resolved 2026-10-19 by the overseer on main (`8b4eb3f`): R1a is now its own status-free predicate, R1 keeps `tm.status = 'closed'`. This branch builds the corrected text; nothing further proposed.
 
 ## State
 
@@ -126,7 +126,7 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done: brief (f51d3d6); slice 1 (1c9b3a4): `_reopen_predicate()` in `bq_reads.py`, `is_reopened` in all five live CTEs, 4 new tests red-then-green, 10 pass.
-In flight: waiting for the overseer's reply to "slice 1 done" and on the R1a question.
-Next: slice 2 (`app.py` chip at the three render sites), then slice 3 (`.sqlx`, last).
-Traps (with dates): 2026-10-19: the R7 test sliced the SQL from `AS ticket_status,` to `AS urgency`; `is_reopened` legitimately reads `tm.status`, so the slice now starts after `AS is_reopened,`. 2026-10-19: once slice 3 adds `is_reopened` to `grant_tickets`, `gt.* EXCEPT(...)` would duplicate the name; slice 1 already EXCEPTs it when the table has it, so slice 3 is safe to land after the app deploy.
+Done: brief (f51d3d6); slice 1: `_reopen_predicate()` in `bq_reads.py` is the status-free mark (R1a), `_live_status_cte()` adds `tm.status = 'closed'` for the branch (R1); `is_reopened` in all five live CTEs; origin/main (`8b4eb3f`) merged. 11 tests pass in `tests/test_bq_reads_urgency.py`.
+In flight: waiting for the overseer's reply to the slice 1 report.
+Next: slice 2 (`app.py` chip at the three render sites; the status snap is :1116 against the list at :1023, not :644), then slice 3 (`.sqlx`, last, push is the overseer's).
+Traps (with dates): 2026-10-19: once slice 3 adds `is_reopened` to `grant_tickets`, `gt.* EXCEPT(...)` would duplicate the name; slice 1 already EXCEPTs it when the table has it, so the app deploy can precede the `.sqlx` push. 2026-10-19: the R7 test also guards the mark (it slices from `AS ticket_status,` to `AS urgency`, which holds the `is_reopened` line); keep that anchor. 2026-10-19: `TERMINAL_STATUSES` has three values: closed, cancelled, archived.

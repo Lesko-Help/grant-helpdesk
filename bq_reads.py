@@ -23,21 +23,24 @@ _TERMINAL_IN = "(" + ", ".join(f"'{s}'" for s in config.TERMINAL_STATUSES) + ")"
 
 def _reopen_predicate(gt_cols=None) -> str:
     """
-    Returns the one SQL condition that means "this ticket was closed and the
-    member has spoken since" (R1 in bq_reads.md), or the literal FALSE when
-    grant_tickets has no last_member_activity_at column yet (R4/R4a).
+    Returns the SQL condition behind the is_reopened mark (R1a in bq_reads.md):
+    the member's last activity is later than the ticket's close, both set. Or
+    the literal FALSE when grant_tickets has no last_member_activity_at column
+    yet (R4a).
 
     In: the grant_tickets column names (read from the table when not given).
     Out: a SQL boolean expression over the aliases gt and tm.
-    Why: the condition used to be written out at four sites; now it is written
-    once, so the status branch and the is_reopened column cannot drift apart.
-    SQL analogy: a named view of one WHERE condition, reused by four queries.
+    Why: it deliberately tests no tm.status. The mark answers "had this been
+    answered and closed before the member came back", and that stays true after
+    a coach marks the ticket answered; the status branch (R1) must yield to a
+    coach's click, so it adds its own status test on top (_live_status_cte).
+    SQL analogy: a named WHERE condition, reused by the mark and the branch.
     """
     gt_cols = _tickets_cols() if gt_cols is None else gt_cols
     if "last_member_activity_at" not in gt_cols:
         return "FALSE"
     return (
-        "tm.status = 'closed' AND gt.last_member_activity_at IS NOT NULL "
+        "gt.last_member_activity_at IS NOT NULL "
         "AND tm.closed_at IS NOT NULL AND gt.last_member_activity_at > tm.closed_at"
     )
 
@@ -45,7 +48,9 @@ def _reopen_predicate(gt_cols=None) -> str:
 def _live_status_cte(gt_cols=None) -> str:
     """
     Returns the reopen_clause string for building the live-join CTE status CASE:
-    `WHEN <reopen predicate> THEN 'open'`, or "" on an old schema (R4).
+    `WHEN tm.status = 'closed' AND <reopen predicate> THEN 'open'` (R1), or ""
+    on an old schema (R4). The status test lives here, not in the predicate, so
+    the branch yields to a coach's click while the is_reopened mark does not.
     Used by get_open_stats(), get_daily_stats() and the three ticket readers so
     their numbers always match the ticket list (which also uses a live join).
 
@@ -54,7 +59,7 @@ def _live_status_cte(gt_cols=None) -> str:
     gt_cols = _tickets_cols() if gt_cols is None else gt_cols
     if "last_member_activity_at" not in gt_cols:
         return ""
-    return f"WHEN {_reopen_predicate(gt_cols)} THEN 'open'"
+    return f"WHEN tm.status = 'closed' AND {_reopen_predicate(gt_cols)} THEN 'open'"
 
 
 def _urgency_clock_expr(gt_cols=None) -> str:

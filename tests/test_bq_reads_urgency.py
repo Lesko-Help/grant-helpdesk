@@ -14,6 +14,8 @@ Never `pytest tests/` — that also collects smoke_test.py, which writes to the
 live ticket_metadata table.
 """
 
+import sqlite3
+
 import pandas as pd
 
 import bq_reads
@@ -152,9 +154,11 @@ def test_r7_clock_does_not_test_ticket_status(monkeypatch):
     bq_reads.get_ticket_detail("content_1")
 
     sql = captured[0]
-    # Isolate the urgency CASE: it is the block between the is_reopened column
-    # (which legitimately tests tm.status, R1a) and the "AS urgency" after it.
-    urgency_block = sql.split("AS is_reopened,", 1)[1].split("AS urgency", 1)[0]
+    # Isolate the urgency CASE: it is the block between the ticket_status
+    # CASE that precedes it and the "AS urgency" that follows it. The
+    # is_reopened column sits in that block too and must not read tm.status
+    # either (R1a), so this still catches a status test creeping into either.
+    urgency_block = sql.split("AS ticket_status,", 1)[1].split("AS urgency", 1)[0]
     assert "tm.status" not in urgency_block
 
 
@@ -181,9 +185,12 @@ def _predicate_before_alias(sql):
     return head.rsplit("\n", 1)[1].strip()
 
 
-def test_all_four_queries_select_is_reopened_from_the_reopen_branch_predicate(monkeypatch):
-    """R1a/R13a/R15a: the boolean is the very condition the status branch
-    tests, so the mark and the 'open' it explains cannot disagree."""
+def test_all_four_queries_mark_without_a_status_test_while_the_branch_keeps_it(monkeypatch):
+    """R1a vs R1: the mark is true whenever the member spoke after the close,
+    whatever status a coach has since saved; the 'open' branch still requires
+    tm.status = 'closed' so a coach's click wins (R2). Coupling the two was the
+    first draft's bug: the mark would vanish the moment a coach marked the
+    ticket answered."""
     _stub_tickets_cols(monkeypatch)
     for name, call in _FOUR_QUERIES.items():
         captured = []
@@ -191,10 +198,12 @@ def test_all_four_queries_select_is_reopened_from_the_reopen_branch_predicate(mo
         call()
         sql = captured[0]
         assert "AS is_reopened" in sql, name
-        predicate = _predicate_before_alias(sql)
-        assert "tm.status = 'closed'" in predicate, name
-        assert "gt.last_member_activity_at > tm.closed_at" in predicate, name
-        assert f"WHEN {predicate} THEN 'open'" in sql, name
+        mark = _predicate_before_alias(sql)
+        assert "gt.last_member_activity_at > tm.closed_at" in mark, name
+        assert "tm.status" not in mark, name
+        assert (
+            "WHEN tm.status = 'closed' AND gt.last_member_activity_at" in sql
+        ), name
 
 
 def test_get_daily_stats_live_cte_selects_is_reopened_too(monkeypatch):
@@ -233,3 +242,32 @@ def test_is_reopened_already_in_the_table_is_excepted_not_duplicated(monkeypatch
         _FOUR_QUERIES[name]()
         except_list = captured[0].split("EXCEPT(", 1)[1].split(")", 1)[0]
         assert "is_reopened" in except_list, name
+
+
+def _run_mark_and_branch(coach_status, closed_at, member_activity_at):
+    """Runs the REAL predicate strings from bq_reads on a one-row SQLite
+    table (gt and tm aliases, ISO timestamps compare as text) and returns
+    (shown_status, is_reopened) the way the live CTE would compute them."""
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE gt (last_member_activity_at TEXT, ticket_status TEXT)")
+    db.execute("CREATE TABLE tm (status TEXT, closed_at TEXT)")
+    db.execute("INSERT INTO gt VALUES (?, 'open')", (member_activity_at,))
+    db.execute("INSERT INTO tm VALUES (?, ?)", (coach_status, closed_at))
+    cols = {"last_member_activity_at"}
+    return db.execute(f"""
+        SELECT CASE {bq_reads._live_status_cte(cols)}
+                    WHEN tm.status IS NOT NULL AND tm.status != '' THEN tm.status
+                    ELSE gt.ticket_status END,
+               {bq_reads._reopen_predicate(cols)}
+        FROM gt, tm""").fetchone()
+
+
+def test_mark_survives_a_coach_click_that_the_status_branch_yields_to():
+    """The example that tells R1 and R1a apart: closed on the 1st, member
+    comments on the 6th, coach then marks it answered. Status reads answered
+    (R2: the click wins), the mark is still true (R1a). Closed with no later
+    comment: closed, not marked. Still closed after the comment: open, marked."""
+    assert _run_mark_and_branch("answered", "2026-10-01", "2026-10-06") == ("answered", 1)
+    assert _run_mark_and_branch("closed", "2026-10-01", "2026-10-06") == ("open", 1)
+    assert _run_mark_and_branch("closed", "2026-10-01", "2026-09-30") == ("closed", 0)
+    assert _run_mark_and_branch("closed", "2026-10-06", "2026-10-01") == ("closed", 0)
