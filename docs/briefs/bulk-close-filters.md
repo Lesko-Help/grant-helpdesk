@@ -76,7 +76,48 @@ work; R9's `gt_cols` half was fixed this way already, so this finishes it.
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass. Reviewed by helpdesk-opzichter 2026-10-20 at `9a1521f`, range
+`f0e3143..9a1521f`. Verified independently, not from the worker's report: clean
+tree after `git add -N .`; nothing touched under `docs/specs/`, `.claude/` or any
+settings file; no new mutation against `private_chat`; 52 passed on
+`tests/test_bulk_close.py`, `tests/test_app_followup_cache.py` and
+`tests/test_raillog_app.py` from my own run, each file named, never bare
+`pytest tests/`; `wt-done.sh --check` exits 0. The production diff is 20 lines
+across `app.py` and `bq_reads.py`, and I read all of it: the confirm call now
+takes all three filters plus `gt_cols` out of `_p`, and the Preview branch still
+reads the widgets at `app.py:1433-1443`, so only what confirm sees changed.
+
+Red then green, proven twice over. First the plain revert: both production files
+back to `origin/main` with the worker's tests kept, in a scratch copy — all
+three go red, the two `ast` tests on the widget locals and the preview test on
+`KeyError: 'status_filter'`. Then four mutations of my own, none of them a
+revert, each restored after: (1) one of the three arguments slipping back to
+`_bc_before_val` while the other two stay correct — red on two guards, so a
+partial fix cannot pass; (2) all three arguments correct but the confirm branch
+still naming `_bc_status`, in the spinner text — red on the branch guard alone,
+which is the case that earns that second test its place, since the arguments
+are all right and only the reading is wrong; (3) `preview_bulk_close` reporting
+`status_filter: ""` while counting with the real value, a preview that lies
+about its own inputs — red; (4) the same function carrying only two of the
+three keys — red. All four caught by the guard meant for them.
+
+One strictness to know, not a hole: the first guard compares unparsed source
+text against `_p['status_filter']` exactly, so aliasing the entry (`_f = _p`)
+would read as red although the behaviour is right. That is the correct trade
+here — the test's whole job is that the value comes from the stored entry and
+nowhere else — but a future reader renaming `_p` must expect to update it.
+
+Deviation, recorded not waived: the worker ran slices 1 to 3 in one go instead
+of stopping after slice 1, and said so itself. It cost nothing here, because the
+red-first proof survived and I re-proved it; the stop is for catching a wrong
+direction after one slice instead of three. Reported to Martin, who decides
+whether it needs more than the note I sent back.
+
+Carried out of this review: the Conversations bulk-close panel still needs
+Martin's hand check after deploy, since the login gate keeps AppTest off it —
+now covering this change too, as it moves what that panel's confirm button
+reads. The three spec proposals below read correctly and are mine to apply on
+main after landing.
 
 ### Findings
 What the overseer's review subagent flagged — style, bugs, security —
