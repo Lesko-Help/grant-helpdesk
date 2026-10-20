@@ -561,14 +561,19 @@ def preview_bulk_close(
 ) -> dict:
     """
     In: the three bulk-close filters and the one lane to count (R11).
-    Out: {"will_close": N, "skipped_followup": M, "gt_cols": [...]}, where
-    gt_cols is the sorted grant_tickets column list this count was built with.
+    Out: {"will_close": N, "skipped_followup": M, "gt_cols": [...],
+    "status_filter": ..., "assigned_to": ..., "before_date": ...}, where gt_cols
+    is the sorted grant_tickets column list this count was built with and the
+    three filter keys echo the values it was counted with.
     Why: the number the coach consents to before pressing the button. Rows come
     from bulk_close_rows_sql, the same selection execute_bulk_close uses (R9);
     those with a pending follow-up are counted as skipped, not as will_close.
     gt_cols is returned so the panel can hand it to execute_bulk_close: the
     schema cache lives five minutes, a coach can take longer, and a migration
     adding `lane` in between would make execute close more than was counted.
+    The three filter values travel the same way (R9): the coach may change a
+    widget while the old number is on screen, and execute must still run with
+    the filters the number came from.
     SQL analogy: SELECT COUNT(*), COUNTIF(pending) over the helper's view.
     """
     gt_cols = set(_tickets_cols())
@@ -588,7 +593,8 @@ def preview_bulk_close(
     total        = int(row["total"])
     skipped      = int(row["skipped_followup"])
     return {"will_close": total - skipped, "skipped_followup": skipped,
-            "gt_cols": sorted(gt_cols)}
+            "gt_cols": sorted(gt_cols), "status_filter": status_filter,
+            "assigned_to": assigned_to, "before_date": before_date}
 
 
 def get_open_stats() -> dict:

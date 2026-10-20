@@ -1405,9 +1405,11 @@ def render_bulk_close_panel(lane, team_members, current_user):
     the confirm press closes that lane's matching rows and reruns.
     Why: one panel for both tabs, so the Preview number and the sweep agree
     (bq_writes.md R9, R12). The lane goes to preview and to execute with no
-    default; the gt_cols preview returns is kept in the lane's own session-state
-    entry and handed to execute, so both build one identical lane expression
-    even if the table gains a column between the two presses.
+    default; the whole preview result (gt_cols and the three filter values it was
+    counted with) is kept in the lane's own session-state entry and handed to
+    execute, so both build one identical selection even if the table gains a
+    column, or the coach changes a filter, between the two presses. The widgets
+    are read only by the Preview branch.
     SQL analogy: the same parameterised query form, run once per lane.
     """
     _keys  = bulk_close_keys(lane)
@@ -1451,9 +1453,9 @@ def render_bulk_close_panel(lane, team_members, current_user):
                 if _bc_go_col.button(f"✅ Close {_p['will_close']} {_noun}", key=_keys["execute_button"], type="primary"):
                     with st.spinner(f"Closing {_noun}…"):
                         _bc_closed = bq_client.execute_bulk_close(
-                            status_filter=_bc_status_val,
-                            assigned_to=_bc_coach_val,
-                            before_date=_bc_before_val,
+                            status_filter=_p["status_filter"],
+                            assigned_to=_p["assigned_to"],
+                            before_date=_p["before_date"],
                             closed_by=current_user or "",
                             lane=lane,
                             gt_cols=_p["gt_cols"],
