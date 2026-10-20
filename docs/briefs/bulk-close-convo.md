@@ -107,7 +107,9 @@ Module `bq_writes`. Files: `bq_reads.py`, `bq_writes.py`, `app.py`, `tests/test_
 
 ## Context
 
-2026-10-20: the overseer's memory message had not arrived when this brief was committed; its content gets added here once it does.
+2026-10-20, overseer's memory message: the bug is live, since the Tickets-tab button today also closes Conversations rows. Both callers go through `bulk_close_rows_sql`, and `bq_writes` imports `bq_reads` for it (Martin's choice over a third module). Lanes are the same tables: Tickets is `load_tickets(lane="question")`, Conversations `load_tickets(lane=config.LANE_GENERAL)` at `app.py:1880`; `coach_inbox.py` is not needed. Martin's decision of 2026-10-20: the Conversations sweep has the same three filters as Tickets, reusing the panel with a lane argument; read R11 and R12, not the older bullets.
+
+Traps from the message: never bare `pytest tests/` (it writes live `ticket_metadata`). The R9 fixture test compares line multisets with exact equality; add the lane lines to the allowed `added` list per case, never regenerate the fixture and never loosen to substring containment. R3 stays per caller, R10 belongs to `bq-writes-params`, leave both alone.
 
 Spec: `docs/specs/modules/bq_writes.md` R9, R11, R12 (on main, `68f5971`). Today the Tickets sweep (`app.py:1880` area) has no lane condition and so closes `general` rows too.
 
