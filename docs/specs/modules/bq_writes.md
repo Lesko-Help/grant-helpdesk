@@ -86,6 +86,14 @@ here deletes a row; `archive_standard_reply` sets a flag.
   whose test goes red against live behaviour rather than against a missing
   helper. `app.py` passes `config.LANE_QUESTION` from the Tickets tab and
   `config.LANE_GENERAL` from Conversations.
+  `bulk_close_rows_sql` stays pure: it takes `gt_cols` and hands it on, the way
+  `_reopen_predicate(gt_cols)` and its siblings do, and never calls
+  `_tickets_cols()` itself. Why it matters here and not only as tidiness: that
+  probe is a BigQuery call, and the whole of `tests/test_bulk_close.py` builds
+  SQL with no client. Both branches of the guard get a test — `lane` present in
+  `grant_tickets` (the expression reads `gt.lane`) and absent (it reads the
+  `'question'` literal, so a pre-migration `general` sweep matches only rows a
+  coach has moved by hand, which is correct).
 - R12: **the panel exists once.** The two tabs' bulk-close panels are one
   renderer taking the lane, not two copies, and every widget key plus the
   preview's session-state key carries the lane in it — both tabs render on the
