@@ -113,10 +113,12 @@ see the Open check: nobody has watched it fail.
   `test_r9_preview_returns_the_three_filters_it_used`. The second of those is
   the one that catches a widget merely *named* in the confirm branch while all
   three arguments are correct.
-- R10: filter values must reach BigQuery as query parameters. Today all four
-  are interpolated into the SQL with ad-hoc quote stripping
-  (`.replace("'", "")`) — not a safety boundary, and why the query breaks on a
-  name like `O'Brien`. The dormant `bq-writes-params` worktree holds this.
+- R10: filter values must reach BigQuery as query parameters. Today all four are
+  interpolated into the SQL with ad-hoc quote stripping — not a safety boundary,
+  and it corrupts rather than refuses: `status_filter`, `before_date` and `lane`
+  drop the quote (`.replace("'", "")`), so a sweep filtered on `O'Brien` runs on
+  a value the coach never typed; `assigned_to` escapes it instead. Held by the
+  `bulk-close-params` worktree, opened 2026-10-20.
 - R11: **one lane per sweep.** Preview and execute each take a `lane` and
   constrain the selection to it, through the same live-lane expression the lists
   use (`bq_reads._live_lane_expr`: `tm.lane` when set, else `gt.lane`, else
