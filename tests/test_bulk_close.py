@@ -498,3 +498,79 @@ def test_r12_each_tab_calls_the_renderer_with_its_own_lane():
     """The Tickets tab passes LANE_QUESTION, the Conversations tab LANE_GENERAL."""
     lanes = sorted(ast.unparse(c.args[0]) for c in _calls_to("render_bulk_close_panel"))
     assert lanes == ["config.LANE_GENERAL", "config.LANE_QUESTION"]
+
+
+# R10 -------------------------------------------------------------------------
+# Filter values must reach BigQuery as query parameters, never inside the SQL
+# text. Each assertion below is its own test, so the red-first output on
+# origin/main names which half of R10 is missing.
+
+_TRICKY = {"status": "ans'wered", "assigned": "O'Brien@x.org", "before": "2026-01-01",
+           "lane": config.LANE_GENERAL}
+
+
+class _ParamClient:
+    """Remembers the SQL and the job_config of the last query(), runs nothing."""
+
+    def __init__(self):
+        self.sql = None
+        self.job_config = None
+
+    def query(self, sql, job_config=None):
+        """In: SQL text and optional job config. Out: a fake job. Why: records both."""
+        self.sql = sql
+        self.job_config = job_config
+        return _FakeJob()
+
+
+@pytest.fixture
+def sent_query(monkeypatch):
+    """
+    In: nothing. Out: a function (execute|preview) -> (sql, {name: (type, value)})
+    for the sweep run with _TRICKY filters. Why: shows what BigQuery would get,
+    text and parameters side by side, without a client.
+    """
+    def run(which):
+        fake = _ParamClient()
+        monkeypatch.setattr(bq_reads, "client", fake)
+        monkeypatch.setattr(bq_writes, "client", fake)
+        monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "cols", {"lane"})
+        monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "expires_at", float("inf"))
+        t = _TRICKY
+        if which == "execute":
+            bq_writes.execute_bulk_close(t["status"], t["assigned"], t["before"],
+                                         "coach@x.org", lane=t["lane"])
+        else:
+            bq_reads.preview_bulk_close(t["status"], t["assigned"], t["before"], lane=t["lane"])
+        config_ = fake.job_config
+        params = {p.name: (p.type_, p.value)
+                  for p in (getattr(config_, "query_parameters", None) or [])}
+        return fake.sql, params
+    return run
+
+
+@pytest.mark.parametrize("which", ["execute", "preview"])
+def test_r10_sql_text_carries_no_filter_value(sent_query, which):
+    """No filter value, quoted, stripped or escaped, appears in the SQL text."""
+    sql, _ = sent_query(which)
+    for value in ("ans'wered", "ans\\'wered", "answered", "O'Brien", "O\\'Brien",
+                  "OBrien", "2026-01-01", "'general'"):
+        assert value not in sql, value
+
+
+@pytest.mark.parametrize("which", ["execute", "preview"])
+def test_r10_parameters_carry_each_value_exactly(sent_query, which):
+    """All four values, apostrophes intact, travel as STRING parameters."""
+    _, params = sent_query(which)
+    assert sorted(v[1] for v in params.values()) == sorted(
+        [_TRICKY["status"], _TRICKY["assigned"], _TRICKY["before"], _TRICKY["lane"]])
+    assert {v[0] for v in params.values()} == {"STRING"}
+
+
+def test_r10_preview_and_execute_are_handed_the_identical_pair(sent_query):
+    """The helper's SQL and parameters are one unit: both callers send the same."""
+    exec_sql, exec_params = sent_query("execute")
+    prev_sql, prev_params = sent_query("preview")
+    assert prev_params and exec_params == prev_params
+    for name in prev_params:
+        assert f"@{name}" in exec_sql and f"@{name}" in prev_sql
