@@ -72,7 +72,33 @@ feature, so the fix ships as the feature.
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass. Reviewed by helpdesk-opzichter 2026-10-20 at 2167d38, range
+5f25bc4..2167d38. Verified independently, not from the worker's report: clean
+tree after `git add -N .`; nothing touched under `docs/specs/`, `.claude/` or any
+settings file; no new mutation against `private_chat`; 49 passed on the merged
+head in a scratch copy (44 in `tests/test_bulk_close.py`), the file named, never
+bare `pytest tests/`; `wt-done.sh --check` exits 0. I read the `app.py` diff
+myself and confirmed both call sites pass a lane and that the panel hands
+execute the `gt_cols` preview returned.
+
+Red then green, proven by six mutations of my own in a scratch copy, each
+different from the six the worker ran, all restored after: (1) execute quietly
+dropping `lane` from the `gt_cols` it was handed — red on seven tests across
+three guards; (2) the lane condition moved out of last place, which made the
+test helper that strips it crash loudly rather than quietly weaken R2 and R4;
+(3) a silent change to the lane expression (`!= ''` -> `> ''`) — red on all 8
+fixture cases, and green on the worker's own lane test, which builds its
+expectation by calling the function it tests; (4) the sweep ignoring its lane
+argument — 14 red; (5) the Tickets tab pointed at `LANE_GENERAL`, the exact
+live bug this task fixes — red; (6) the session-state key losing its lane
+inside `bulk_close_keys`, the one place the bare-string test deliberately does
+not look — red on the disjointness test.
+
+Carried out of this review: the Conversations panel needs a hand check after
+deploy, since the login gate keeps AppTest off it. The pre-existing
+stale-filters gap the worker found is not in this branch by my decision — it
+would have widened an approved gate — and Martin has taken it as the next task
+(2026-10-20).
 
 ### Findings
 What the overseer's review subagent flagged — style, bugs, security —
