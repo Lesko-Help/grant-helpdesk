@@ -277,8 +277,8 @@ if "show_kpis" not in st.session_state:
     st.session_state.show_kpis = True
 if "_pending_action" not in st.session_state:
     st.session_state._pending_action = None  # {"action", "content_id", "row"}
-if "_bc_preview" not in st.session_state:
-    st.session_state._bc_preview = None
+# The bulk-close preview lives under one session-state key per lane
+# (bulk_close_keys), read with .get() — nothing to initialise here.
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
 
@@ -1379,6 +1379,93 @@ _LANE_MOVES = {
     "This is a question": config.LANE_QUESTION,
 }
 
+def bulk_close_keys(lane):
+    """
+    In: a lane name. Out: a dict of every widget key and the session-state key
+    the bulk-close panel uses for that lane.
+    Why: both tabs render the panel on the same Streamlit run, and a key used
+    twice raises a duplicate-key error, so every key carries the lane
+    (bq_writes.md R12). Kept free of any Streamlit call so a test can load it
+    from the source alone: the login gate keeps AppTest off this panel.
+    """
+    return {
+        "status":         f"bc_status_{lane}",
+        "coach":          f"bc_coach_{lane}",
+        "before":         f"bc_before_{lane}",
+        "preview_button": f"bc_preview_{lane}",
+        "execute_button": f"bc_execute_{lane}",
+        "preview_state":  f"_bc_preview_{lane}",
+    }
+
+
+def render_bulk_close_panel(lane, team_members, current_user):
+    """
+    In: the lane this tab shows, the coach list for the filter, and the signed-in
+    coach's email. Out: nothing returned; draws the Bulk Close expander, and on
+    the confirm press closes that lane's matching rows and reruns.
+    Why: one panel for both tabs, so the Preview number and the sweep agree
+    (bq_writes.md R9, R12). The lane goes to preview and to execute with no
+    default; the gt_cols preview returns is kept in the lane's own session-state
+    entry and handed to execute, so both build one identical lane expression
+    even if the table gains a column between the two presses.
+    SQL analogy: the same parameterised query form, run once per lane.
+    """
+    _keys  = bulk_close_keys(lane)
+    _noun  = "tickets" if lane == config.LANE_QUESTION else "conversations"
+    with st.expander(f"🗂️ Bulk Close {_noun.capitalize()}"):
+        st.caption(f"Close multiple {_noun} at once. Rows with a pending follow-up question are always skipped.")
+        _bc_c1, _bc_c2, _bc_c3 = st.columns(3)
+        _bc_status = _bc_c1.selectbox(
+            "Status", ["answered", "open", "flagged", "— any open status —"],
+            key=_keys["status"],
+        )
+        _bc_coach = _bc_c2.selectbox(
+            "Grant coach", ["— all coaches —"] + team_members,
+            key=_keys["coach"],
+        )
+        _bc_before = _bc_c3.date_input(
+            "Created before", value=None, key=_keys["before"],
+            help="Leave blank to include all dates",
+        )
+
+        _bc_status_val  = "" if _bc_status  == "— any open status —" else _bc_status
+        _bc_coach_val   = "" if _bc_coach   == "— all coaches —"     else _bc_coach
+        _bc_before_val  = str(_bc_before) if _bc_before else ""
+
+        _bc_prev_col, _bc_go_col = st.columns([2, 1])
+        if _bc_prev_col.button("Preview", key=_keys["preview_button"]):
+            with st.spinner("Counting…"):
+                _bc_result = bq_client.preview_bulk_close(
+                    status_filter=_bc_status_val,
+                    assigned_to=_bc_coach_val,
+                    before_date=_bc_before_val,
+                    lane=lane,
+                )
+            st.session_state[_keys["preview_state"]] = _bc_result
+
+        if st.session_state.get(_keys["preview_state"]):
+            _p = st.session_state[_keys["preview_state"]]
+            _skip_note = f" — {_p['skipped_followup']} skipped (follow-up pending)" if _p["skipped_followup"] else ""
+            st.info(f"**{_p['will_close']} {_noun} will be closed**{_skip_note}")
+            if _p["will_close"] > 0:
+                if _bc_go_col.button(f"✅ Close {_p['will_close']} {_noun}", key=_keys["execute_button"], type="primary"):
+                    with st.spinner(f"Closing {_noun}…"):
+                        _bc_closed = bq_client.execute_bulk_close(
+                            status_filter=_bc_status_val,
+                            assigned_to=_bc_coach_val,
+                            before_date=_bc_before_val,
+                            closed_by=current_user or "",
+                            lane=lane,
+                            gt_cols=_p["gt_cols"],
+                        )
+                    st.session_state[_keys["preview_state"]] = None
+                    load_tickets.clear()
+                    load_open_stats.clear()
+                    load_daily_stats.clear()
+                    st.success(f"Closed {_bc_closed} {_noun}.")
+                    st.rerun()
+
+
 @st.fragment
 def render_ticket_table(tickets, team_members, filter_status="All", lane=config.LANE_QUESTION):
     """Isolated fragment — re-runs only when a widget inside it changes,
@@ -1748,55 +1835,7 @@ with tab_main:
         b3.markdown(kpi_card("Daily avg (30d)",                            daily_stats.get("daily_avg", 0)), unsafe_allow_html=True)
 
     # ── Bulk Close ────────────────────────────────────────────────────────────
-    with st.expander("🗂️ Bulk Close Tickets"):
-        st.caption("Close multiple tickets at once. Tickets with a pending follow-up question are always skipped.")
-        _bc_c1, _bc_c2, _bc_c3 = st.columns(3)
-        _bc_status = _bc_c1.selectbox(
-            "Status", ["answered", "open", "flagged", "— any open status —"],
-            key="bc_status",
-        )
-        _bc_coach = _bc_c2.selectbox(
-            "Grant coach", ["— all coaches —"] + team_members,
-            key="bc_coach",
-        )
-        _bc_before = _bc_c3.date_input(
-            "Created before", value=None, key="bc_before",
-            help="Leave blank to include all dates",
-        )
-
-        _bc_status_val  = "" if _bc_status  == "— any open status —" else _bc_status
-        _bc_coach_val   = "" if _bc_coach   == "— all coaches —"     else _bc_coach
-        _bc_before_val  = str(_bc_before) if _bc_before else ""
-
-        _bc_prev_col, _bc_go_col = st.columns([2, 1])
-        if _bc_prev_col.button("Preview", key="bc_preview"):
-            with st.spinner("Counting…"):
-                _bc_result = bq_client.preview_bulk_close(
-                    status_filter=_bc_status_val,
-                    assigned_to=_bc_coach_val,
-                    before_date=_bc_before_val,
-                )
-            st.session_state._bc_preview = _bc_result
-
-        if st.session_state.get("_bc_preview"):
-            _p = st.session_state._bc_preview
-            _skip_note = f" — {_p['skipped_followup']} skipped (follow-up pending)" if _p["skipped_followup"] else ""
-            st.info(f"**{_p['will_close']} ticket(s) will be closed**{_skip_note}")
-            if _p["will_close"] > 0:
-                if _bc_go_col.button(f"✅ Close {_p['will_close']} tickets", key="bc_execute", type="primary"):
-                    with st.spinner("Closing tickets…"):
-                        _bc_closed = bq_client.execute_bulk_close(
-                            status_filter=_bc_status_val,
-                            assigned_to=_bc_coach_val,
-                            before_date=_bc_before_val,
-                            closed_by=current_user or "",
-                        )
-                    st.session_state._bc_preview = None
-                    load_tickets.clear()
-                    load_open_stats.clear()
-                    load_daily_stats.clear()
-                    st.success(f"Closed {_bc_closed} tickets.")
-                    st.rerun()
+    render_bulk_close_panel(config.LANE_QUESTION, team_members, current_user)
 
     # ── Member questions (coach_inbox, slice A2: real private_chat read) ─────
     # load_member_questions returns one row per thread with a `messages` list
@@ -1900,6 +1939,8 @@ with tab_convos:
         f'<div class="section-card-title" style="padding:6px 0 10px">Conversations ({_convo_groups}){_c_page_info}</div>',
         unsafe_allow_html=True,
     )
+
+    render_bulk_close_panel(config.LANE_GENERAL, team_members, current_user)
 
     render_ticket_table(convos, team_members, filter_status, lane=config.LANE_GENERAL)
 

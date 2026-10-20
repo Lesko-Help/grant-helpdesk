@@ -1,6 +1,6 @@
 """
 Offline proof for the bulk close sweep — docs/specs/modules/bq_writes.md,
-`### execute_bulk_close(...)`, rules R2, R3, R4, R9 and R11 (one lane per sweep).
+`### execute_bulk_close(...)`, rules R2, R3, R4, R9, R11 (one lane per sweep) and R12 (the panel exists once).
 
 Input: nothing from BigQuery. The `client` of bq_reads and bq_writes is swapped
 for a fake that only remembers the SQL text it was asked to run. Output: that
@@ -11,6 +11,7 @@ Never `pytest tests/` — that also collects smoke_test.py, which writes to the
 live ticket_metadata table.
 """
 
+import ast
 import json
 import pathlib
 import re
@@ -377,3 +378,78 @@ def test_r11_preview_returns_the_gt_cols_it_used(sent_sql, monkeypatch):
     monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "expires_at", float("inf"))
     result = bq_reads.preview_bulk_close(lane=config.LANE_QUESTION)
     assert result["gt_cols"] == ["a", "b"]
+
+
+# R12 ------------------------------------------------------------------------
+# The panel lives in app.py, which cannot be imported (it runs the login gate)
+# and which AppTest cannot get past. So these tests read app.py as SOURCE: they
+# parse it with ast, and run only the one pure function that builds the keys.
+
+_APP_TREE = ast.parse((pathlib.Path(__file__).parent.parent / "app.py").read_text())
+
+
+def _app_function(name: str) -> ast.FunctionDef:
+    """In: a top-level function name. Out: its ast node in app.py (must exist once)."""
+    found = [n for n in _APP_TREE.body if isinstance(n, ast.FunctionDef) and n.name == name]
+    assert len(found) == 1, f"app.py must define {name} exactly once"
+    return found[0]
+
+
+def _bulk_close_keys(lane: str) -> dict:
+    """Runs app.py's own bulk_close_keys, alone, with no Streamlit around it."""
+    namespace: dict = {}
+    exec(compile(ast.Module([_app_function("bulk_close_keys")], []), "app.py", "exec"), namespace)
+    return namespace["bulk_close_keys"](lane)
+
+
+def test_r12_the_two_lanes_use_disjoint_widget_and_state_keys():
+    """
+    Both tabs render on one Streamlit run: a key shared by the two lanes raises
+    a duplicate-key error. So the key sets must not overlap, every key must
+    carry its lane, and no lane may use one key twice.
+    """
+    per_lane = {lane: _bulk_close_keys(lane) for lane in _LANES}
+    for lane, keys in per_lane.items():
+        assert len(set(keys.values())) == len(keys)
+        assert all(lane in key for key in keys.values())
+    assert not set(per_lane[config.LANE_QUESTION].values()) & set(per_lane[config.LANE_GENERAL].values())
+
+
+def test_r12_no_bulk_close_key_is_written_out_bare_in_app():
+    """
+    A bare "bc_status" literal anywhere in app.py is a second, lane-less copy of
+    the panel (or a leftover of the old one). Only bulk_close_keys may spell keys.
+    """
+    in_keys_function = {id(n) for n in ast.walk(_app_function("bulk_close_keys"))}
+    bare = [n.value for n in ast.walk(_APP_TREE)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and re.match(r"_?bc_", n.value) and id(n) not in in_keys_function]
+    assert bare == []
+    assert not [n for n in ast.walk(_APP_TREE)
+                if isinstance(n, ast.Attribute) and n.attr == "_bc_preview"]
+
+
+def _calls_to(name: str) -> list:
+    """Every call in app.py to something named `name`, as ast.Call nodes."""
+    return [n for n in ast.walk(_APP_TREE) if isinstance(n, ast.Call)
+            and getattr(n.func, "attr", getattr(n.func, "id", None)) == name]
+
+
+def test_r12_preview_and_execute_are_called_once_each_with_the_panels_lane():
+    """
+    One call site each (one panel), both passing the renderer's `lane`, and
+    execute also passing the gt_cols that preview returned (R9, R11).
+    """
+    preview, execute = _calls_to("preview_bulk_close"), _calls_to("execute_bulk_close")
+    assert len(preview) == 1 and len(execute) == 1
+    for call in (preview[0], execute[0]):
+        lane_kw = {k.arg: k.value for k in call.keywords}["lane"]
+        assert isinstance(lane_kw, ast.Name) and lane_kw.id == "lane"
+    gt_cols_kw = {k.arg: k.value for k in execute[0].keywords}["gt_cols"]
+    assert ast.unparse(gt_cols_kw) == "_p['gt_cols']"
+
+
+def test_r12_each_tab_calls_the_renderer_with_its_own_lane():
+    """The Tickets tab passes LANE_QUESTION, the Conversations tab LANE_GENERAL."""
+    lanes = sorted(ast.unparse(c.args[0]) for c in _calls_to("render_bulk_close_panel"))
+    assert lanes == ["config.LANE_GENERAL", "config.LANE_QUESTION"]
