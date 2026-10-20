@@ -504,7 +504,7 @@ def bulk_close_rows_sql(
     that lane the filters match whose effective status is not
     closed/cancelled/archived (R4).
     Why: execute_bulk_close and preview_bulk_close must pick the same rows
-    (bq_writes.md R9); both call this, so the selection exists once. gt_cols is
+    (bulk_close.md R9); both call this, so the selection exists once. gt_cols is
     handed in, never probed here, so the helper stays pure and testable
     without a BigQuery client (R11).
     SQL analogy: a view over grant_tickets LEFT JOIN ticket_metadata, with the

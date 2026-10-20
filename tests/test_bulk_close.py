@@ -1,5 +1,5 @@
 """
-Offline proof for the bulk close sweep — docs/specs/modules/bq_writes.md,
+Offline proof for the bulk close sweep — docs/specs/modules/bulk_close.md,
 `### execute_bulk_close(...)`, rules R2, R3, R4, R9, R11 (one lane per sweep) and R12 (the panel exists once).
 
 Input: nothing from BigQuery. The `client` of bq_reads and bq_writes is swapped

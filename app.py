@@ -1385,7 +1385,7 @@ def bulk_close_keys(lane):
     the bulk-close panel uses for that lane.
     Why: both tabs render the panel on the same Streamlit run, and a key used
     twice raises a duplicate-key error, so every key carries the lane
-    (bq_writes.md R12). Kept free of any Streamlit call so a test can load it
+    (bulk_close.md R12). Kept free of any Streamlit call so a test can load it
     from the source alone: the login gate keeps AppTest off this panel.
     """
     return {
@@ -1404,7 +1404,7 @@ def render_bulk_close_panel(lane, team_members, current_user):
     coach's email. Out: nothing returned; draws the Bulk Close expander, and on
     the confirm press closes that lane's matching rows and reruns.
     Why: one panel for both tabs, so the Preview number and the sweep agree
-    (bq_writes.md R9, R12). The lane goes to preview and to execute with no
+    (bulk_close.md R9, R12). The lane goes to preview and to execute with no
     default; the whole preview result (gt_cols and the three filter values it was
     counted with) is kept in the lane's own session-state entry and handed to
     execute, so both build one identical selection even if the table gains a
