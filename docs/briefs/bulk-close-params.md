@@ -81,15 +81,25 @@ destructive path we have. The repo already uses `ScalarQueryParameter`
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: `pass` — reviewed by the overseer on 2026-10-20 by independent verification, not by the worker's report.
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+1. The brief carried the review fragment twice, so it held two `Verdict:` lines.
+   `wt-done.sh` greps `head -1`, so only the first governed and the second would
+   have misled the next reader. Cut in this commit, with the stale template text
+   under it.
+2. The worker's own red proof did not cover the bug the task exists to fix: its
+   mutations kept the placeholder and changed other things. The overseer added
+   the missing one — placeholder kept, `.replace("'", "")` put back on the
+   parameter VALUE — and `test_r10_parameters_carry_each_value_exactly` goes red
+   for both callers. No change needed; the guard was already sufficient.
+3. Scope: `closed_by` is a fifth parameter, one more than Martin's approved gate.
+   Flagged to him; his to revert to four if he prefers.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. Fixed in this commit (the overseer's, on the worker's branch).
+2. Not a defect — verified separately by the overseer, nothing to fix.
+3. Open question for Martin, not a defect.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
@@ -117,51 +127,6 @@ Module `bulk_close`. Files: `bq_reads.py` (`bulk_close_rows_sql`, `preview_bulk_
 ## Context
 
 2026-10-20: the overseer's memory message had not arrived when this brief was committed; add its content when it comes. 2026-10-20, overseer message: R10's old text on main said the `bq-writes-params` worktree holds this; no such worktree ever existed, and main (`3810342`) now names this one. The same fix corrected R10's reason: the query does not break on `O'Brien`, three of the four filters silently drop the quote. The `ans'wered` becoming `answered` in the red-first run is that evidence. 2026-10-20 steer: `closed_by` added as a fifth parameter (it was interpolated twice in the MERGE); the R9 fixture is never regenerated, only the expected WHERE line and two `closed_by` lines are derived and pinned literally. Spec read: `bulk_close.md` R9, R10, R11 and the `*Test:*` paragraph. Existing tests call `bulk_close_rows_sql` expecting a string and `_FakeClient.query(sql)` takes no `job_config`, so slice 2 forces edits to those tests; slice 1 adds only new ones. Existing `.replace("'", ...)` sites outside this sweep (`closed_by_val` in `execute_bulk_close`, etc.) are out of scope.
-
-## Agentic review
-
-### Verdict
-Verdict: `<fill in — pass, or changes requested>`
-
-### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
-
-### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
-
-This section is filled last, after the overseer runs its review subagent
-and sends the findings back — never by the worker reviewing its own
-diff. Record the findings under Findings (word for word) and the
-fixes under Fixed in (one line per finding, naming its commit), fix
-what needs fixing, commit, then report again the normal way. Also
-leave the `Verdict:` line exactly as it stands: the overseer fills
-it at review.
-
-wt-done.sh's check on this is literal: it greps this brief for a line
-starting with exactly `Verdict:` at the very start of the line (column 0)
-— no bold, no indent, no renamed label, no different case. Keep the
-`Verdict:` line reading exactly as it does above, or the guard cannot see
-it and treats the brief as not yet reviewed.
-
-
-## May touch
-
-Name the module first — the smallest thing that deploys or is scheduled on
-its own (see docs/specs/INDEX.md for this repo's module list). Then the
-folders and files in scope. Anything outside this list is a question back to
-the overseer, not a change.
-
-## Deploy implied
-
-Which deploy script (or Dataform tag) this change needs to go live. The
-worktree session never runs it; the overseer does, from main, after the merge.
-
-## Context
-
-Links: the HANDOFF doc, the session log lines, the ids, the numbers measured.
-Enough that a fresh session needs no paste.
 
 ## Spec proposals
 
