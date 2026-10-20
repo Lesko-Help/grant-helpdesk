@@ -12,8 +12,7 @@ import traceback
 from google.cloud import bigquery
 
 import config
-from bq_base import client, log_event
-from bq_base import _tickets_cols
+from bq_base import client, log_event, _tickets_cols
 from bq_reads import bulk_close_rows_sql
 
 
