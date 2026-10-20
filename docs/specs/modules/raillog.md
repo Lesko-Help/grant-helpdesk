@@ -59,7 +59,6 @@ Everything the alert rail depends on — the JSON line, `REPO`, `CODES`,
   month will not be inside `alert()`. A `print` carrying a `file=` keyword is
   exempt: stderr is line-buffered even when piped. The walk fails if it found no
   marker print at all, or it passes vacuously the day the helper stops printing.
-  *(not built yet)*
 - R4: `runnable` names *what* failed, not the process that noticed. `app.py` and
   `coach_inbox.py` both pass `"coach-inbox"`; `jobs/poll_dataform_failures.py`
   passes `"poll_dataform_failures"` for its own breakage and the Dataform action
@@ -96,11 +95,13 @@ repo root, no fixture beyond the two calls in the Examples above; observes that
 stdout holds one line, that it parses as JSON with `"severity": "ERROR"` and the
 exact message (R1), and that an unknown code comes back as `UNEXPECTED` (R2);
 red first against a copy of the file with the `severity` key removed. This
-covers the root copy only — `jobs/raillog.py` has no test of its own, and R3,
-R5 and R6 have no guard at all. The missing three are one `ast` walk over both
-files: `flush=True` on every marker print (R3), `REPO` assigned a string
-constant (R5), and the two files equal once comments and docstrings are stripped
-(R6). *(not built yet)* Never `capsys` or `subprocess.run(...).stdout` as the
+covers the root copy only. R3, R5 and R6 are guarded apart from it, in
+`tests/test_raillog_kit.py`: one `ast` walk over both files, asserting
+`flush=True` on every marker print (R3), `REPO` assigned a string constant equal
+to `"grant-helpdesk"` (R5), and the two files equal once comments and docstrings
+are stripped (R6). Each guard there is a function from source text to a list of
+problems, run against the real files and again against mutated copies held in
+memory, so the red proof reruns on every suite run. Never `capsys` or `subprocess.run(...).stdout` as the
 proof of R3: the buffer flushes when the process ends, so a read-back sees the
 line whether or not the print flushed, and the test passes over exactly the bug
 it was written for. Never `pytest tests/` either: that runs `smoke_test.py`,
@@ -116,6 +117,12 @@ which writes to the live `ticket_metadata`.
 
 ## Decisions
 
+- 2026-10-20: the R3/R5/R6 walk mutates copies in memory rather than files in a
+  scratch directory, so its red proof reruns with the suite. That shape proves
+  the guard functions catch breakage but *not* that the tests read the real
+  files — a wrong path in `COPIES` would leave every mutation test green. So the
+  review also broke the real files on disk five ways, including a new unflushed
+  marker print outside `alert()`. Repeat that by hand if `COPIES` ever moves.
 - 2026-10-15: this spec owns both copies, and `coach_inbox.md` gives up the root
   one. Why: `jobs/raillog.py` belonged to no spec at all while the root copy
   belonged to an app spec, so a change to the pair had nowhere to be described
