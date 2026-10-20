@@ -177,18 +177,45 @@ _FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "bulk_close_sql_before.j
 # The ONLY lines allowed to differ from the fixture (after 'archived' is
 # stripped from the exclusion list, which R4 tests separately). Each is
 # either nesting (the helper wrapped in a subselect or CTE) or the two extra
-# helper columns preview now carries.
+# helper columns preview now carries. The lane (R11, 2026-10-20) adds, for BOTH
+# callers: the `AS lane` column of base (written out here, not read from
+# bq_reads, so the test cannot agree with itself), the trailing comma that
+# column puts on the line before it, and a WHERE line that is the fixture's own
+# WHERE line plus ` AND t.lane = 'question'` — that pair is built per case in
+# _allowed_for() from the fixture, since the WHERE line differs per filter set.
+_LANE_COLUMN = ("CASE WHEN tm.lane IS NOT NULL AND tm.lane != '' "
+                "THEN tm.lane ELSE gt.lane END AS lane")
+_EFFECTIVE_ASSIGNED = "COALESCE(tm.assigned_to, gt.assigned_to) AS effective_assigned_to"
+_LANE_ADDED = [_LANE_COLUMN, _EFFECTIVE_ASSIGNED + ","]
+_LANE_REMOVED = [_EFFECTIVE_ASSIGNED]
 _ALLOWED_EXECUTE = {
     "added": [") r", "FROM (", "SELECT r.content_id, r.assigned_to, r.domain",
-              "WHERE r.content_id NOT IN ("],
-    "removed": ["AND t.content_id NOT IN ("],
+              "WHERE r.content_id NOT IN ("] + _LANE_ADDED,
+    "removed": ["AND t.content_id NOT IN ("] + _LANE_REMOVED,
 }
 _ALLOWED_PREVIEW = {
     "added": [")", "COALESCE(tm.assigned_to, gt.assigned_to) AS assigned_to,",
               "COALESCE(tm.domain, gt.domain)           AS domain,",
-              "SELECT t.content_id, t.assigned_to, t.domain", "WITH filtered AS ("],
-    "removed": ["),", "SELECT t.content_id", "filtered AS ("],
+              "SELECT t.content_id, t.assigned_to, t.domain", "WITH filtered AS ("]
+             + _LANE_ADDED,
+    "removed": ["),", "SELECT t.content_id", "filtered AS ("] + _LANE_REMOVED,
 }
+
+
+def _allowed_for(case: dict, which: str, allowed: dict) -> tuple:
+    """
+    In: one fixture case, the caller name, that caller's pinned lists.
+    Out: (added, removed) with this case's WHERE pair included: the fixture's
+    own WHERE line is removed and the same line plus the Tickets-lane
+    predicate is added. Why: the WHERE line is the one line that differs per
+    filter set, and reading it from the fixture keeps the expectation
+    independent of the code under test.
+    """
+    old_where = [line for line in _lines(case[which]) if line.startswith("WHERE t.")]
+    assert len(old_where) == 1, "the fixture must hold exactly one helper WHERE line"
+    added = allowed["added"] + [old_where[0] + " AND t.lane = 'question'"]
+    removed = allowed["removed"] + old_where
+    return sorted(added), sorted(removed)
 
 
 def _lines(sql: str) -> Counter:
@@ -220,8 +247,9 @@ def test_r9_sql_differs_from_the_before_fixture_only_where_allowed(
     status, assigned, before, _closed_by = case["filters"]
     old = _lines(case[which])
     new = _lines(sent_sql(which, status, assigned, before))
-    assert sorted((new - old).elements()) == sorted(allowed["added"])
-    assert sorted((old - new).elements()) == sorted(allowed["removed"])
+    added, removed = _allowed_for(case, which, allowed)
+    assert sorted((new - old).elements()) == added
+    assert sorted((old - new).elements()) == removed
 
 
 # R11 ------------------------------------------------------------------------
