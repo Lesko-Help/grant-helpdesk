@@ -49,7 +49,7 @@ def sent_sql(monkeypatch):
     In: nothing. Out: a function (execute|preview, filters) -> the SQL text
     that function sent. Why: lets a test see the statement without BigQuery.
     """
-    def run(which, status="answered", assigned="", before="", lane=None,
+    def run(which, status="answered", assigned="", before="", lane=config.LANE_QUESTION,
             table_cols=frozenset({"lane"})):
         fake = _FakeClient()
         monkeypatch.setattr(bq_reads, "client", fake)
@@ -57,25 +57,36 @@ def sent_sql(monkeypatch):
         # Prime the schema cache so the callers' column probe needs no client.
         monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "cols", set(table_cols))
         monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "expires_at", float("inf"))
-        extra = {} if lane is None else {"lane": lane}
         if which == "execute":
-            bq_writes.execute_bulk_close(status, assigned, before, "coach@x.org", **extra)
+            bq_writes.execute_bulk_close(status, assigned, before, "coach@x.org", lane=lane)
         else:
-            bq_reads.preview_bulk_close(status, assigned, before, **extra)
+            bq_reads.preview_bulk_close(status, assigned, before, lane=lane)
         return fake.sql
     return run
 
 
-def _where(sql: str) -> str:
+# The lane every older test sweeps: Tickets. gt_cols matches sent_sql's default.
+_Q = {"lane": config.LANE_QUESTION, "gt_cols": {"lane"}}
+
+
+def _raw_where(sql: str) -> str:
     """The helper's WHERE line, without the keyword: its AND-ed conditions."""
     return re.search(r"WHERE (t\.effective_status NOT IN.*)", sql).group(1)
+
+
+def _where(sql: str) -> str:
+    """
+    _raw_where without the lane condition, so R2 and R4 keep counting only the
+    conditions they are about; R11's tests read _raw_where to see the lane.
+    """
+    return re.sub(r" AND t\.lane = '\w+'$", "", _raw_where(sql))
 
 
 # R2 -------------------------------------------------------------------------
 
 def test_r2_empty_filters_add_no_constraint():
     """All three "" -> the widest sweep: only the not-closed exclusion remains."""
-    where = _where(bq_reads.bulk_close_rows_sql("", "", ""))
+    where = _where(bq_reads.bulk_close_rows_sql("", "", "", **_Q))
     assert "AND" not in where
     assert "effective_status =" not in where
     assert "effective_assigned_to" not in where
@@ -84,9 +95,9 @@ def test_r2_empty_filters_add_no_constraint():
 
 def test_r2_each_filter_adds_only_its_own_condition():
     """One filter set -> exactly one extra condition, and not the others."""
-    status = _where(bq_reads.bulk_close_rows_sql("answered", "", ""))
-    coach = _where(bq_reads.bulk_close_rows_sql("", "coach@x.org", ""))
-    date = _where(bq_reads.bulk_close_rows_sql("", "", "2026-01-01"))
+    status = _where(bq_reads.bulk_close_rows_sql("answered", "", "", **_Q))
+    coach = _where(bq_reads.bulk_close_rows_sql("", "coach@x.org", "", **_Q))
+    date = _where(bq_reads.bulk_close_rows_sql("", "", "2026-01-01", **_Q))
     assert status.count(" AND ") == 1 and "effective_status = 'answered'" in status
     assert coach.count(" AND ") == 1 and "effective_assigned_to = 'coach@x.org'" in coach
     assert date.count(" AND ") == 1 and "DATE(t.created_at) < '2026-01-01'" in date
@@ -94,7 +105,7 @@ def test_r2_each_filter_adds_only_its_own_condition():
 
 def test_r2_filters_are_anded_together():
     """All three set -> three extra conditions joined by AND, never OR."""
-    where = _where(bq_reads.bulk_close_rows_sql("answered", "coach@x.org", "2026-01-01"))
+    where = _where(bq_reads.bulk_close_rows_sql("answered", "coach@x.org", "2026-01-01", **_Q))
     assert where.count(" AND ") == 3
     assert " OR " not in where
 
@@ -124,14 +135,14 @@ def test_r3_preview_counts_pending_followups_as_skipped(sent_sql):
 def test_r4_closed_cancelled_and_archived_are_all_excluded():
     """The exclusion list holds exactly these three statuses, in every sweep."""
     for filters in (("", "", ""), ("answered", "coach@x.org", "2026-01-01")):
-        where = _where(bq_reads.bulk_close_rows_sql(*filters))
+        where = _where(bq_reads.bulk_close_rows_sql(*filters, **_Q))
         listed = re.search(r"NOT IN \(([^)]*)\)", where).group(1)
         assert sorted(re.findall(r"'(\w+)'", listed)) == ["archived", "cancelled", "closed"]
 
 
 def test_r4_archived_is_excluded_even_when_the_status_filter_asks_for_it():
     """status_filter="archived" is ANDed with the exclusion, so it matches nothing."""
-    where = _where(bq_reads.bulk_close_rows_sql("archived", "", ""))
+    where = _where(bq_reads.bulk_close_rows_sql("archived", "", "", **_Q))
     assert "'archived'" in where.split(" AND ")[0]
     assert "effective_status = 'archived'" in where
 
@@ -148,7 +159,7 @@ def test_r9_preview_and_execute_both_embed_the_helpers_selection(sent_sql, filte
     The helper's exact text appears in what BOTH callers send. A caller that
     inlines its own copy of the selection makes this red.
     """
-    selection = bq_reads.bulk_close_rows_sql(*filters)
+    selection = bq_reads.bulk_close_rows_sql(*filters, **_Q)
     assert selection in sent_sql("execute", *filters)
     assert selection in sent_sql("preview", *filters)
 
@@ -240,7 +251,7 @@ def test_r11_helper_confines_the_selection_to_its_lane(lane, gt_cols):
     gt_cols (so a coach's tm.lane override counts, R11).
     """
     sql = bq_reads.bulk_close_rows_sql("", "", "", lane=lane, gt_cols=gt_cols)
-    assert _lane_predicate(lane) in _where(sql)
+    assert _lane_predicate(lane) in _raw_where(sql)
     assert _lane_predicate(_OTHER[lane]) not in sql
     assert f"{bq_reads._live_lane_expr(gt_cols)} AS lane" in " ".join(sql.split())
 
@@ -248,7 +259,7 @@ def test_r11_helper_confines_the_selection_to_its_lane(lane, gt_cols):
 @pytest.mark.parametrize("lane", _LANES)
 def test_r11_helper_lane_condition_is_anded_with_the_filters(lane):
     """Lane is one more AND-ed condition: three filters + lane = four ANDs."""
-    where = _where(bq_reads.bulk_close_rows_sql(
+    where = _raw_where(bq_reads.bulk_close_rows_sql(
         "answered", "coach@x.org", "2026-01-01", lane=lane, gt_cols={"lane"}))
     assert where.count(" AND ") == 4 and " OR " not in where
 
@@ -302,3 +313,39 @@ def test_r11_preview_and_execute_embed_the_lane_helpers_selection(sent_sql, lane
         "answered", "", "", lane=lane, gt_cols={"lane"})
     assert selection in sent_sql("execute", lane=lane)
     assert selection in sent_sql("preview", lane=lane)
+
+
+def test_r11_execute_given_previews_gt_cols_builds_the_same_lane_expression(
+        sent_sql, monkeypatch):
+    """
+    Preview runs while grant_tickets has no `lane` column; the Dataform
+    migration then adds it; the coach presses confirm. Execute is handed the
+    gt_cols preview returned, so its lane expression is byte-identical to
+    preview's (ELSE 'question'), not the new table's (ELSE gt.lane) — otherwise
+    it would close more rows than the number the coach agreed to (R9).
+    """
+    fake = _FakeClient()
+    monkeypatch.setattr(bq_reads, "client", fake)
+    monkeypatch.setattr(bq_writes, "client", fake)
+    monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "cols", {"content_id"})
+    monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "expires_at", float("inf"))
+    result = bq_reads.preview_bulk_close(lane=config.LANE_GENERAL)
+    preview_sql = fake.sql
+    # The migration lands: the live table now has `lane`.
+    monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "cols", {"content_id", "lane"})
+    bq_writes.execute_bulk_close(lane=config.LANE_GENERAL, closed_by="c@x.org",
+                                 gt_cols=result["gt_cols"])
+    execute_sql = fake.sql
+    expr = bq_reads._live_lane_expr({"content_id"})
+    assert expr in " ".join(preview_sql.split())
+    assert expr in " ".join(execute_sql.split())
+    assert "gt.lane" not in execute_sql
+
+
+def test_r11_preview_returns_the_gt_cols_it_used(sent_sql, monkeypatch):
+    """preview's result carries the sorted column list, for the panel to keep."""
+    monkeypatch.setattr(bq_reads, "client", _FakeClient())
+    monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "cols", {"b", "a"})
+    monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "expires_at", float("inf"))
+    result = bq_reads.preview_bulk_close(lane=config.LANE_QUESTION)
+    assert result["gt_cols"] == ["a", "b"]

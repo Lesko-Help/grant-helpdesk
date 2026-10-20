@@ -491,17 +491,25 @@ def bulk_close_rows_sql(
     status_filter: str = "answered",
     assigned_to: str = "",
     before_date: str = "",
+    *,
+    lane: str,
+    gt_cols,
 ) -> str:
     """
-    In: the three bulk-close filters ("" = no constraint on that field, R2).
+    In: the three bulk-close filters ("" = no constraint on that field, R2),
+    the one lane to sweep (config.LANE_QUESTION or LANE_GENERAL, no default,
+    R11) and gt_cols, the column names grant_tickets has right now.
     Out: SQL text (no query is run) of one SELECT, with its own WITH base CTE,
-    returning content_id, assigned_to, domain for every community ticket the
-    filters match whose effective status is not closed/cancelled/archived (R4).
+    returning content_id, assigned_to, domain for every community ticket in
+    that lane the filters match whose effective status is not
+    closed/cancelled/archived (R4).
     Why: execute_bulk_close and preview_bulk_close must pick the same rows
-    (bq_writes.md R9); both call this, so the selection exists once.
+    (bq_writes.md R9); both call this, so the selection exists once. gt_cols is
+    handed in, never probed here, so the helper stays pure and testable
+    without a BigQuery client (R11).
     SQL analogy: a view over grant_tickets LEFT JOIN ticket_metadata, with the
-    filters as its WHERE. The pending-follow-up exclusion (R3) is not here:
-    each caller applies it in its own way (NOT IN vs. LEFT JOIN count).
+    filters and the lane as its WHERE. The pending-follow-up exclusion (R3) is
+    not here: each caller applies it in its own way (NOT IN vs. LEFT JOIN count).
     """
     conditions = ["t.effective_status NOT IN ('closed', 'cancelled', 'archived')"]
     if status_filter:
@@ -513,6 +521,8 @@ def bulk_close_rows_sql(
     if before_date:
         safe_date = before_date.replace("'", "")
         conditions.append(f"DATE(t.created_at) < '{safe_date}'")
+    safe_lane = lane.replace("'", "")
+    conditions.append(f"t.lane = '{safe_lane}'")
 
     where = "WHERE " + " AND ".join(conditions)
 
@@ -527,7 +537,8 @@ def bulk_close_rows_sql(
                     WHEN tm.status IS NOT NULL AND tm.status != '' THEN tm.status
                     ELSE gt.ticket_status
                 END AS effective_status,
-                COALESCE(tm.assigned_to, gt.assigned_to) AS effective_assigned_to
+                COALESCE(tm.assigned_to, gt.assigned_to) AS effective_assigned_to,
+                {_live_lane_expr(gt_cols)} AS lane
             FROM `{config.TICKETS_TABLE}` gt
             LEFT JOIN (
                 SELECT * FROM `{config.META_TABLE}`
@@ -545,16 +556,24 @@ def preview_bulk_close(
     status_filter: str = "answered",
     assigned_to: str = "",
     before_date: str = "",
+    *,
+    lane: str,
 ) -> dict:
     """
-    In: the three bulk-close filters. Out: {"will_close": N, "skipped_followup": M}.
+    In: the three bulk-close filters and the one lane to count (R11).
+    Out: {"will_close": N, "skipped_followup": M, "gt_cols": [...]}, where
+    gt_cols is the sorted grant_tickets column list this count was built with.
     Why: the number the coach consents to before pressing the button. Rows come
     from bulk_close_rows_sql, the same selection execute_bulk_close uses (R9);
     those with a pending follow-up are counted as skipped, not as will_close.
+    gt_cols is returned so the panel can hand it to execute_bulk_close: the
+    schema cache lives five minutes, a coach can take longer, and a migration
+    adding `lane` in between would make execute close more than was counted.
     SQL analogy: SELECT COUNT(*), COUNTIF(pending) over the helper's view.
     """
+    gt_cols = set(_tickets_cols())
     sql = f"""
-        WITH filtered AS ({bulk_close_rows_sql(status_filter, assigned_to, before_date)})
+        WITH filtered AS ({bulk_close_rows_sql(status_filter, assigned_to, before_date, lane=lane, gt_cols=gt_cols)})
         SELECT
             COUNT(*) AS total,
             COUNTIF(fq.ticket_id IS NOT NULL) AS skipped_followup
@@ -568,7 +587,8 @@ def preview_bulk_close(
     row = list(client.query(sql).result())[0]
     total        = int(row["total"])
     skipped      = int(row["skipped_followup"])
-    return {"will_close": total - skipped, "skipped_followup": skipped}
+    return {"will_close": total - skipped, "skipped_followup": skipped,
+            "gt_cols": sorted(gt_cols)}
 
 
 def get_open_stats() -> dict:

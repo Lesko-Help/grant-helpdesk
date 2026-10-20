@@ -13,6 +13,7 @@ from google.cloud import bigquery
 
 import config
 from bq_base import client, log_event
+from bq_base import _tickets_cols
 from bq_reads import bulk_close_rows_sql
 
 
@@ -148,24 +149,32 @@ def execute_bulk_close(
     assigned_to: str = "",
     before_date: str = "",
     closed_by: str = "",
+    *,
+    lane: str,
+    gt_cols=None,
 ) -> int:
     """
-    In: the three bulk-close filters and the closing coach's email.
+    In: the three bulk-close filters, the closing coach's email, the one lane
+    to sweep (R11, no default) and gt_cols, the grant_tickets columns the
+    preview was built with (None = look them up now).
     Out: the number of tickets closed (rows the MERGE affected, R6).
     Why: the coach's "close these" button. The rows come from
     bq_reads.bulk_close_rows_sql, the same selection preview_bulk_close counts
-    (R9); tickets with a pending follow-up are left out (R3).
+    (R9); tickets with a pending follow-up are left out (R3). The panel passes
+    the gt_cols preview returned, so both build one identical lane expression
+    even if the table gained a column between the two button presses.
     SQL analogy: one MERGE into ticket_metadata USING that view, setting
     status='closed' on match and inserting a metadata row otherwise.
     """
     now = datetime.datetime.utcnow().isoformat()
     closed_by_val = (closed_by or "").replace("'", "\\'")
+    gt_cols = set(_tickets_cols() if gt_cols is None else gt_cols)
 
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
             SELECT r.content_id, r.assigned_to, r.domain
-            FROM ({bulk_close_rows_sql(status_filter, assigned_to, before_date)}) r
+            FROM ({bulk_close_rows_sql(status_filter, assigned_to, before_date, lane=lane, gt_cols=gt_cols)}) r
             WHERE r.content_id NOT IN (
                 SELECT DISTINCT ticket_id
                 FROM `{config.FOLLOWUP_QUEUE_TABLE}`
