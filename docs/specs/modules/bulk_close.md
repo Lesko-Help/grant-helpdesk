@@ -98,17 +98,21 @@ see the Open check: nobody has watched it fail.
   Stated generally: **everything the number depended on travels with the
   number** — the preview result carries every input its count came from, and
   execute runs with those, not with the widgets as they stand at confirm time.
-  `gt_cols` already works this way (R11). The three filter values do **not**:
-  `app.py` recomputes them from the widgets on every run, so a coach can press
-  Preview, change the Status filter, and confirm while the old number is still
-  on screen — and the sweep runs with the new filters. That is R9 failing
-  through the screen rather than the SQL, and it strikes the one number that
-  carries the consent. It is pre-existing, not introduced by the lane work. The
-  fix has the same shape as the `gt_cols` hand-off: store the three values in
-  the lane's preview entry beside `gt_cols`, and have confirm pass those to
-  `execute_bulk_close` — preferred over clearing the preview whenever a filter
-  changes, which would snatch away the number the coach is reading. Specified,
-  not built; see the Open check.
+  `gt_cols` works this way (R11) and so do the three filter values:
+  `preview_bulk_close` returns `status_filter`, `assigned_to` and `before_date`
+  beside `gt_cols`, and the confirm button passes those to `execute_bulk_close`.
+  The widgets are read only by the Preview branch. Until 2026-10-20 they were
+  not: `app.py` recomputed them from the widgets on every run, so a coach could
+  press Preview, change the Status filter, and confirm while the old number was
+  still on screen — and the sweep ran with the new filters. That was R9 failing
+  through the screen rather than the SQL, striking the one number that carries
+  the consent. Fixed rather than papered over by clearing the preview whenever a
+  filter changes, which would snatch away the number the coach is reading.
+  Guarded by `test_r9_execute_filters_come_from_the_stored_preview`,
+  `test_r9_confirm_branch_does_not_read_the_filter_widgets` and
+  `test_r9_preview_returns_the_three_filters_it_used`. The second of those is
+  the one that catches a widget merely *named* in the confirm branch while all
+  three arguments are correct.
 - R10: filter values must reach BigQuery as query parameters. Today all four
   are interpolated into the SQL with ad-hoc quote stripping
   (`.replace("'", "")`) — not a safety boundary, and why the query breaks on a
@@ -143,7 +147,7 @@ see the Open check: nobody has watched it fail.
   would leave preview on the `'question'` literal while execute read `gt.lane`
   — execute then closes more rows than the number the coach agreed to, which is
   R9's exact failure. So `preview_bulk_close` probes once and returns the sorted
-  list as a third key, `{"will_close", "skipped_followup", "gt_cols"}`; `app.py`
+  list as a third key, beside the three filter values (R9); `app.py`
   keeps that result in the lane's `_bc_preview_<lane>` entry, which already
   spans the two presses; and `execute_bulk_close` takes `gt_cols` as a keyword
   whose default `None` means "probe now", with the panel always passing what
@@ -221,7 +225,9 @@ inside of that function — a lane stripped from a key *there* goes red on it.
 ### preview_bulk_close(status_filter="answered", assigned_to="", before_date="", *, lane)
 
 *Lives in `bq_reads.py:544`; specified above as half of the pair — see R9 and
-R11.* Returns `{"will_close": N, "skipped_followup": M, "gt_cols": [...]}`.
+R11.* Returns `{"will_close": N, "skipped_followup": M, "gt_cols": [...],
+"status_filter": ..., "assigned_to": ..., "before_date": ...}` — the count, and
+every input the count was built from (R9).
 
 ### bulk_close_rows_sql(status_filter="answered", assigned_to="", before_date="", *, lane, gt_cols)
 
@@ -241,10 +247,6 @@ a caller cannot forget either one quietly.
   rendering; it is hand-checked on the live app after a deploy, as
   `coach_inbox`'s click-through is. First due after the 2026-10-20 deploy,
   revision `grant-helpdesk-00078-rmk`.
-- R9's filter hand-off is specified and **not built** (the `gt_cols` half is).
-  Needs its own slice, with a source-reading test that the execute call's
-  `status_filter`, `assigned_to` and `before_date` come from the stored preview
-  entry, so changing a widget after Preview cannot change them.
 - The error view above is read off the absence of a `try` in the panel, not off
   a failure anyone watched. What a coach actually sees is unverified.
 
