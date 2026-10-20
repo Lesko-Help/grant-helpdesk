@@ -128,7 +128,25 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done:
-In flight (file:line):
-Next:
+Done (2026-10-20), all accepted by `helpdesk-opzichter` up to slice 3; slice 4 reported, reply pending:
+- Slice 1, `47abfe1`: R11 lane tests, red first (19 failed, 19 passed on the old base).
+- Slice 2, `c822aeb`: `lane` required keyword on `bulk_close_rows_sql`, `preview_bulk_close`, `execute_bulk_close`. The helper also takes `gt_cols` and never probes. Preview returns `gt_cols` (sorted list); execute takes `gt_cols=None` and the panel always passes preview's.
+- Slice 3, `d3f7935`: R9 fixture test pins the lane lines (`_LANE_COLUMN` written out literally, comma pair, per-case WHERE pair from `_allowed_for`). Fixture not regenerated, comparison still exact.
+- Slice 4, `3a0555d` (one bq_base import line) and `fbb687b`: `bulk_close_keys(lane)`, `render_bulk_close_panel(lane, team_members, current_user)` in `app.py`, called from both tabs; R12 tests read `app.py` as source with ast.
+- Suite: `PATH=/opt/anaconda3/bin:$PATH python -m pytest tests/test_bulk_close.py -q` gives 44 passed; `tests/test_app_followup_cache.py` and `tests/test_raillog_app.py` give 5 passed.
+
+In flight: nothing uncommitted. Waiting for the overseer's reply to "slice 4 done - continue or re-steer?".
+
+Next (slice 5 and landing):
+1. Write the spec proposals under `## Spec proposals`, not in `docs/specs/`: R11 (the `gt_cols` hand-off: preview returns it, execute takes it, the five-minute schema cache is why; test count now 44), R12 (`bulk_close_keys` and the source-reading tests), and the finding below.
+2. Merge `origin/main` once, then `git add -N .`, check `git status` is clean.
+3. Run `wt-done.sh --check bulk-close-convo` until it exits 0. Never fill the `Verdict:` line.
+4. Read the werk.queue row id from the Goal (it names none so far, so write nothing and say so) and report to `helpdesk-opzichter [434020]` (use the ref, the bare name is ambiguous): branch, range `5f25bc4..HEAD`, HEAD sha, summary, red-then-green proof, deploy implied (`deploy.sh`, app plus both bq modules, no Dataform).
+
 Traps (with dates):
+- 2026-10-20: never bare `pytest tests/` (it runs `smoke_test.py`, which writes live `ticket_metadata`).
+- 2026-10-20: do not tidy `_LANE_COLUMN` in the test into a call to `bq_reads._live_lane_expr`; the fixture test is the only guard that catches a silent change to the expression.
+- 2026-10-20: the schema cache lives five minutes (`bq_base._TICKETS_COLS_TTL_SEC`), hence the `gt_cols` hand-off from preview to execute.
+- 2026-10-20: a heredoc followed by a stray `cat > /dev/null` hangs the shell on stdin; do not add one.
+- 2026-10-20: `SendMessage` to `helpdesk-opzichter` needs the ref `[434020]` (four sessions share the name).
+- 2026-10-20: pre-existing, not fixed: the confirm button runs with the filter widgets as they are NOW, not as at Preview time, so the sweep can differ from the number shown (R9-relevant). Goes in the spec proposals and the report.
