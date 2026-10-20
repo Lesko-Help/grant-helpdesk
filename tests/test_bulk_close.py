@@ -449,6 +449,51 @@ def test_r12_preview_and_execute_are_called_once_each_with_the_panels_lane():
     assert ast.unparse(gt_cols_kw) == "_p['gt_cols']"
 
 
+_WIDGET_LOCALS = {"_bc_status", "_bc_coach", "_bc_before",
+                  "_bc_status_val", "_bc_coach_val", "_bc_before_val"}
+
+
+def _confirm_branch() -> ast.If:
+    """
+    In: nothing (reads app.py's source). Out: the innermost `if` of the panel
+    that contains the execute_bulk_close call, i.e. the confirm-button branch.
+    Why: R9 is about what that branch may read; this finds it without running it.
+    """
+    panel = _app_function("render_bulk_close_panel")
+    execute_call = _calls_to("execute_bulk_close")[0]
+    enclosing = [n for n in ast.walk(panel) if isinstance(n, ast.If)
+                 and execute_call in list(ast.walk(n))]
+    return min(enclosing, key=lambda n: len(list(ast.walk(n))))
+
+
+def test_r9_execute_filters_come_from_the_stored_preview():
+    """
+    The number a coach consents to was counted with the filters Preview used.
+    So the execute call must read all three from the stored preview entry `_p`,
+    never from the widgets as they stand at confirm time (R9).
+    """
+    keywords = {k.arg: ast.unparse(k.value) for k in _calls_to("execute_bulk_close")[0].keywords}
+    for name in ("status_filter", "assigned_to", "before_date"):
+        assert keywords[name] == f"_p['{name}']"
+
+
+def test_r9_confirm_branch_does_not_read_the_filter_widgets():
+    """
+    Nothing inside the confirm branch may mention a widget or a widget-derived
+    local: that is the only way a changed filter could reach the sweep.
+    """
+    used = {n.id for n in ast.walk(_confirm_branch()) if isinstance(n, ast.Name)}
+    assert used & _WIDGET_LOCALS == set()
+
+
+def test_r9_preview_returns_the_three_filters_it_used(sent_sql, monkeypatch):
+    """preview's result carries the filter values it counted with, beside gt_cols."""
+    monkeypatch.setattr(bq_reads, "client", _FakeClient())
+    result = bq_reads.preview_bulk_close("flagged", "ann@x.org", "2026-01-01", lane=config.LANE_QUESTION)
+    assert (result["status_filter"], result["assigned_to"], result["before_date"]) == (
+        "flagged", "ann@x.org", "2026-01-01")
+
+
 def test_r12_each_tab_calls_the_renderer_with_its_own_lane():
     """The Tickets tab passes LANE_QUESTION, the Conversations tab LANE_GENERAL."""
     lanes = sorted(ast.unparse(c.args[0]) for c in _calls_to("render_bulk_close_panel"))
