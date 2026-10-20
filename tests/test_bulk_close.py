@@ -1,6 +1,6 @@
 """
 Offline proof for the bulk close sweep — docs/specs/modules/bq_writes.md,
-`### execute_bulk_close(...)`, rules R2, R3, R4 and R9.
+`### execute_bulk_close(...)`, rules R2, R3, R4, R9 and R11 (one lane per sweep).
 
 Input: nothing from BigQuery. The `client` of bq_reads and bq_writes is swapped
 for a fake that only remembers the SQL text it was asked to run. Output: that
@@ -18,8 +18,10 @@ from collections import Counter
 
 import pytest
 
+import bq_base
 import bq_reads
 import bq_writes
+import config
 
 
 class _FakeJob:
@@ -47,14 +49,19 @@ def sent_sql(monkeypatch):
     In: nothing. Out: a function (execute|preview, filters) -> the SQL text
     that function sent. Why: lets a test see the statement without BigQuery.
     """
-    def run(which, status="answered", assigned="", before=""):
+    def run(which, status="answered", assigned="", before="", lane=None,
+            table_cols=frozenset({"lane"})):
         fake = _FakeClient()
         monkeypatch.setattr(bq_reads, "client", fake)
         monkeypatch.setattr(bq_writes, "client", fake)
+        # Prime the schema cache so the callers' column probe needs no client.
+        monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "cols", set(table_cols))
+        monkeypatch.setitem(bq_base._TICKETS_COLS_CACHE, "expires_at", float("inf"))
+        extra = {} if lane is None else {"lane": lane}
         if which == "execute":
-            bq_writes.execute_bulk_close(status, assigned, before, "coach@x.org")
+            bq_writes.execute_bulk_close(status, assigned, before, "coach@x.org", **extra)
         else:
-            bq_reads.preview_bulk_close(status, assigned, before)
+            bq_reads.preview_bulk_close(status, assigned, before, **extra)
         return fake.sql
     return run
 
@@ -204,3 +211,94 @@ def test_r9_sql_differs_from_the_before_fixture_only_where_allowed(
     new = _lines(sent_sql(which, status, assigned, before))
     assert sorted((new - old).elements()) == sorted(allowed["added"])
     assert sorted((old - new).elements()) == sorted(allowed["removed"])
+
+
+# R11 ------------------------------------------------------------------------
+# One lane per sweep. The Tickets tab (config.LANE_QUESTION) must never close a
+# Conversations (config.LANE_GENERAL) row and the reverse. Both branches of the
+# migration guard are covered: grant_tickets has a `lane` column, or it does
+# not yet (the expression then reads the 'question' literal).
+
+_LANES = [config.LANE_QUESTION, config.LANE_GENERAL]
+_OTHER = {config.LANE_QUESTION: config.LANE_GENERAL,
+          config.LANE_GENERAL: config.LANE_QUESTION}
+_GUARD_BRANCHES = [pytest.param({"lane", "content_id"}, id="gt-has-lane"),
+                   pytest.param({"content_id"}, id="gt-lacks-lane")]
+
+
+def _lane_predicate(lane: str) -> str:
+    """The one WHERE condition that confines a sweep to `lane`."""
+    return f"t.lane = '{lane}'"
+
+
+@pytest.mark.parametrize("gt_cols", _GUARD_BRANCHES)
+@pytest.mark.parametrize("lane", _LANES)
+def test_r11_helper_confines_the_selection_to_its_lane(lane, gt_cols):
+    """
+    The helper's WHERE carries this lane's predicate and not the other lane's,
+    and its base CTE computes lane with the live-lane expression for this
+    gt_cols (so a coach's tm.lane override counts, R11).
+    """
+    sql = bq_reads.bulk_close_rows_sql("", "", "", lane=lane, gt_cols=gt_cols)
+    assert _lane_predicate(lane) in _where(sql)
+    assert _lane_predicate(_OTHER[lane]) not in sql
+    assert f"{bq_reads._live_lane_expr(gt_cols)} AS lane" in " ".join(sql.split())
+
+
+@pytest.mark.parametrize("lane", _LANES)
+def test_r11_helper_lane_condition_is_anded_with_the_filters(lane):
+    """Lane is one more AND-ed condition: three filters + lane = four ANDs."""
+    where = _where(bq_reads.bulk_close_rows_sql(
+        "answered", "coach@x.org", "2026-01-01", lane=lane, gt_cols={"lane"}))
+    assert where.count(" AND ") == 4 and " OR " not in where
+
+
+def test_r11_helper_without_a_lane_raises():
+    """No default, no "both lanes": a call that names no lane is a TypeError."""
+    with pytest.raises(TypeError):
+        bq_reads.bulk_close_rows_sql("", "", "", gt_cols={"lane"})
+
+
+def test_r11_helper_does_not_probe_the_table_schema(monkeypatch):
+    """The helper is pure: it must not call _tickets_cols (a BigQuery call)."""
+    def boom():
+        raise AssertionError("bulk_close_rows_sql probed the schema")
+    monkeypatch.setattr(bq_reads, "_tickets_cols", boom)
+    bq_reads.bulk_close_rows_sql("", "", "", lane=config.LANE_QUESTION, gt_cols=set())
+
+
+@pytest.mark.parametrize("which", ["execute", "preview"])
+@pytest.mark.parametrize("table_cols", _GUARD_BRANCHES)
+@pytest.mark.parametrize("lane", _LANES)
+def test_r11_both_callers_send_one_lane_only(sent_sql, which, lane, table_cols):
+    """
+    Preview and execute each send this lane's predicate, built from the live
+    expression for the table's real columns, and never the other lane's. A
+    `general` row survives a `question` sweep and the reverse.
+    """
+    sql = sent_sql(which, lane=lane, table_cols=table_cols)
+    assert _lane_predicate(lane) in sql
+    assert _lane_predicate(_OTHER[lane]) not in sql
+    assert bq_reads._live_lane_expr(table_cols) in " ".join(sql.split())
+
+
+@pytest.mark.parametrize("which", ["execute", "preview"])
+def test_r11_a_caller_without_a_lane_raises(monkeypatch, which):
+    """Neither caller may default to a lane or to both: no lane is a TypeError."""
+    fake = _FakeClient()
+    monkeypatch.setattr(bq_reads, "client", fake)
+    monkeypatch.setattr(bq_writes, "client", fake)
+    call = (bq_writes.execute_bulk_close if which == "execute"
+            else bq_reads.preview_bulk_close)
+    with pytest.raises(TypeError):
+        call("answered", "", "")
+    assert fake.sql is None  # nothing was sent
+
+
+@pytest.mark.parametrize("lane", _LANES)
+def test_r11_preview_and_execute_embed_the_lane_helpers_selection(sent_sql, lane):
+    """R9 with lane: the helper's text for this lane sits inside BOTH callers."""
+    selection = bq_reads.bulk_close_rows_sql(
+        "answered", "", "", lane=lane, gt_cols={"lane"})
+    assert selection in sent_sql("execute", lane=lane)
+    assert selection in sent_sql("preview", lane=lane)
