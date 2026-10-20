@@ -136,6 +136,8 @@ never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
 
+File `docs/specs/modules/raillog.md`, rule R3 and the `Test:` paragraph. Now: both carry the mark "(not built yet)". Should say: the same text without the mark, and the Test paragraph naming `tests/test_raillog_kit.py` as the file holding the R3, R5 and R6 guards, next to `tests/test_raillog_app.py`. Why: the guards exist and each is proven red against an in-memory mutation inside the suite itself (deleted `flush=True`, a marker print outside `alert()`, no marker print at all, `REPO` from `os.environ`, one changed line of code, plus a green case for a `file=` print and for changed comments).
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
