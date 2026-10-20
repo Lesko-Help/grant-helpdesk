@@ -233,6 +233,13 @@ _ALLOWED_EXECUTE = {
               "WHERE r.content_id NOT IN ("] + _LANE_ADDED,
     "removed": ["AND t.content_id NOT IN ("] + _LANE_REMOVED,
 }
+# R10, closed_by: the audit field is a parameter too, so the MERGE's SET line
+# and the tail of its VALUES line carry @closed_by where the fixture has the
+# quoted address. Written out literally; these are the only two such lines.
+_ALLOWED_EXECUTE["added"] += ["closed_by  = @closed_by",
+                              "TIMESTAMP 'T', TIMESTAMP 'T', @closed_by)"]
+_ALLOWED_EXECUTE["removed"] += ["closed_by  = 'coach@x.org'",
+                                "TIMESTAMP 'T', TIMESTAMP 'T', 'coach@x.org')"]
 _ALLOWED_PREVIEW = {
     "added": [")", "COALESCE(tm.assigned_to, gt.assigned_to) AS assigned_to,",
               "COALESCE(tm.domain, gt.domain)           AS domain,",
@@ -596,7 +603,7 @@ def test_r12_each_tab_calls_the_renderer_with_its_own_lane():
 # origin/main names which half of R10 is missing.
 
 _TRICKY = {"status": "ans'wered", "assigned": "O'Brien@x.org", "before": "2026-01-01",
-           "lane": config.LANE_GENERAL}
+           "lane": config.LANE_GENERAL, "closed_by": "o'coach@x.org"}
 
 
 class _ParamClient:
@@ -629,7 +636,7 @@ def sent_query(monkeypatch):
         t = _TRICKY
         if which == "execute":
             bq_writes.execute_bulk_close(t["status"], t["assigned"], t["before"],
-                                         "coach@x.org", lane=t["lane"])
+                                         t["closed_by"], lane=t["lane"])
         else:
             bq_reads.preview_bulk_close(t["status"], t["assigned"], t["before"], lane=t["lane"])
         config_ = fake.job_config
@@ -643,8 +650,11 @@ def sent_query(monkeypatch):
 def test_r10_sql_text_carries_no_filter_value(sent_query, which):
     """No filter value, quoted, stripped or escaped, appears in the SQL text."""
     sql, _ = sent_query(which)
-    for value in ("ans'wered", "ans\\'wered", "answered", "O'Brien", "O\\'Brien",
-                  "OBrien", "2026-01-01", "'general'"):
+    values = ["ans'wered", "ans\\'wered", "answered", "O'Brien", "O\\'Brien",
+              "OBrien", "2026-01-01", "'general'"]
+    if which == "execute":  # only execute has a closed_by (the audit field)
+        values += ["o'coach@x.org", "o\\'coach@x.org", "ocoach@x.org"]
+    for value in values:
         assert value not in sql, value
 
 
@@ -652,15 +662,22 @@ def test_r10_sql_text_carries_no_filter_value(sent_query, which):
 def test_r10_parameters_carry_each_value_exactly(sent_query, which):
     """All four values, apostrophes intact, travel as STRING parameters."""
     _, params = sent_query(which)
-    assert sorted(v[1] for v in params.values()) == sorted(
-        [_TRICKY["status"], _TRICKY["assigned"], _TRICKY["before"], _TRICKY["lane"]])
-    assert {v[0] for v in params.values()} == {"STRING"}
+    expected = {"status_filter": _TRICKY["status"], "assigned_to": _TRICKY["assigned"],
+                "before_date": _TRICKY["before"], "lane": _TRICKY["lane"]}
+    if which == "execute":
+        expected["closed_by"] = _TRICKY["closed_by"]
+    # Type per name, not a blanket set: a later DATE-typed before_date is then
+    # a visible one-line change here, not a failure in an apostrophe test.
+    assert params == {name: ("STRING", value) for name, value in expected.items()}
 
 
 def test_r10_preview_and_execute_are_handed_the_identical_pair(sent_query):
-    """The helper's SQL and parameters are one unit: both callers send the same."""
+    """
+    The helper's SQL and parameters are one unit: both callers send the same
+    pair. Execute alone adds closed_by, the audit field, on top of that pair.
+    """
     exec_sql, exec_params = sent_query("execute")
     prev_sql, prev_params = sent_query("preview")
-    assert prev_params and exec_params == prev_params
+    assert prev_params and {k: v for k, v in exec_params.items() if k != "closed_by"} == prev_params
     for name in prev_params:
         assert f"@{name}" in exec_sql and f"@{name}" in prev_sql

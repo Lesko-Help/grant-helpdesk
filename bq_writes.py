@@ -157,6 +157,8 @@ def execute_bulk_close(
     to sweep (R11, no default) and gt_cols, the grant_tickets columns the
     preview was built with (None = look them up now).
     Out: the number of tickets closed (rows the MERGE affected, R6).
+    Every value that came from a person (the four filters and closed_by, the
+    audit field) reaches BigQuery as a query parameter, never in the SQL text (R10).
     Why: the coach's "close these" button. The rows come from
     bq_reads.bulk_close_rows_sql, the same selection preview_bulk_close counts
     (R9); tickets with a pending follow-up are left out (R3). The panel passes
@@ -166,10 +168,10 @@ def execute_bulk_close(
     status='closed' on match and inserting a metadata row otherwise.
     """
     now = datetime.datetime.utcnow().isoformat()
-    closed_by_val = (closed_by or "").replace("'", "\\'")
     gt_cols = set(_tickets_cols() if gt_cols is None else gt_cols)
     selection_sql, params = bulk_close_rows_sql(
         status_filter, assigned_to, before_date, lane=lane, gt_cols=gt_cols)
+    params = params + [bigquery.ScalarQueryParameter("closed_by", "STRING", closed_by or "")]
 
     sql = f"""
         MERGE `{config.META_TABLE}` T
@@ -187,12 +189,12 @@ def execute_bulk_close(
             status     = 'closed',
             updated_at = TIMESTAMP '{now}',
             closed_at  = TIMESTAMP '{now}',
-            closed_by  = '{closed_by_val}'
+            closed_by  = @closed_by
         WHEN NOT MATCHED THEN INSERT
             (content_id, status, assigned_to, domain, updated_at, closed_at, closed_by)
         VALUES
             (S.content_id, 'closed', S.assigned_to, S.domain,
-             TIMESTAMP '{now}', TIMESTAMP '{now}', '{closed_by_val}')
+             TIMESTAMP '{now}', TIMESTAMP '{now}', @closed_by)
     """
     job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params))
     job.result()
