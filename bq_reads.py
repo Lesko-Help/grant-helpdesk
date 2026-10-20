@@ -494,39 +494,46 @@ def bulk_close_rows_sql(
     *,
     lane: str,
     gt_cols,
-) -> str:
+) -> tuple[str, list]:
     """
     In: the three bulk-close filters ("" = no constraint on that field, R2),
     the one lane to sweep (config.LANE_QUESTION or LANE_GENERAL, no default,
     R11) and gt_cols, the column names grant_tickets has right now.
-    Out: SQL text (no query is run) of one SELECT, with its own WITH base CTE,
-    returning content_id, assigned_to, domain for every community ticket in
-    that lane the filters match whose effective status is not
-    closed/cancelled/archived (R4).
+    Out: (SQL text, query parameters); no query is run. The SQL is one SELECT,
+    with its own WITH base CTE, returning content_id, assigned_to, domain for
+    every community ticket in that lane the filters match whose effective
+    status is not closed/cancelled/archived (R4). The SQL holds @status_filter,
+    @assigned_to, @before_date and @lane in place of the values (only for the
+    filters that are set; @lane always); the list holds one STRING
+    ScalarQueryParameter per placeholder, value exactly as typed (R10).
+    The two travel together so no caller can run the SQL without its values.
     Why: execute_bulk_close and preview_bulk_close must pick the same rows
     (bulk_close.md R9); both call this, so the selection exists once. gt_cols is
     handed in, never probed here, so the helper stays pure and testable
     without a BigQuery client (R11).
-    SQL analogy: a view over grant_tickets LEFT JOIN ticket_metadata, with the
-    filters and the lane as its WHERE. The pending-follow-up exclusion (R3) is
+    SQL analogy: a prepared statement over a view of grant_tickets LEFT JOIN
+    ticket_metadata, with the filters and the lane as its WHERE ? placeholders
+    and the bound values returned beside it. The pending-follow-up exclusion (R3) is
     not here: each caller applies it in its own way (NOT IN vs. LEFT JOIN count).
     """
     conditions = ["t.effective_status NOT IN ('closed', 'cancelled', 'archived')"]
+    params = []
     if status_filter:
-        safe_status = status_filter.replace("'", "")
-        conditions.append(f"t.effective_status = '{safe_status}'")
+        conditions.append("t.effective_status = @status_filter")
+        params.append(bigquery.ScalarQueryParameter("status_filter", "STRING", status_filter))
     if assigned_to:
-        safe_assigned = assigned_to.replace("'", "\\'")
-        conditions.append(f"t.effective_assigned_to = '{safe_assigned}'")
+        conditions.append("t.effective_assigned_to = @assigned_to")
+        params.append(bigquery.ScalarQueryParameter("assigned_to", "STRING", assigned_to))
     if before_date:
-        safe_date = before_date.replace("'", "")
-        conditions.append(f"DATE(t.created_at) < '{safe_date}'")
-    safe_lane = lane.replace("'", "")
-    conditions.append(f"t.lane = '{safe_lane}'")
+        # A STRING parameter cast in the SQL, so every value stays one type.
+        conditions.append("DATE(t.created_at) < DATE(@before_date)")
+        params.append(bigquery.ScalarQueryParameter("before_date", "STRING", before_date))
+    conditions.append("t.lane = @lane")
+    params.append(bigquery.ScalarQueryParameter("lane", "STRING", lane))
 
     where = "WHERE " + " AND ".join(conditions)
 
-    return f"""
+    sql = f"""
         WITH base AS (
             SELECT
                 gt.content_id,
@@ -550,6 +557,7 @@ def bulk_close_rows_sql(
         FROM base t
         {where}
     """
+    return sql, params
 
 
 def preview_bulk_close(
@@ -577,8 +585,10 @@ def preview_bulk_close(
     SQL analogy: SELECT COUNT(*), COUNTIF(pending) over the helper's view.
     """
     gt_cols = set(_tickets_cols())
+    selection_sql, params = bulk_close_rows_sql(
+        status_filter, assigned_to, before_date, lane=lane, gt_cols=gt_cols)
     sql = f"""
-        WITH filtered AS ({bulk_close_rows_sql(status_filter, assigned_to, before_date, lane=lane, gt_cols=gt_cols)})
+        WITH filtered AS ({selection_sql})
         SELECT
             COUNT(*) AS total,
             COUNTIF(fq.ticket_id IS NOT NULL) AS skipped_followup
@@ -589,7 +599,8 @@ def preview_bulk_close(
             WHERE status = 'pending'
         ) fq ON f.content_id = fq.ticket_id
     """
-    row = list(client.query(sql).result())[0]
+    job_config = bigquery.QueryJobConfig(query_parameters=params)
+    row = list(client.query(sql, job_config=job_config).result())[0]
     total        = int(row["total"])
     skipped      = int(row["skipped_followup"])
     return {"will_close": total - skipped, "skipped_followup": skipped,

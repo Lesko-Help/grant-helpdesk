@@ -39,7 +39,7 @@ class _FakeClient:
     def __init__(self):
         self.sql = None
 
-    def query(self, sql):
+    def query(self, sql, job_config=None):
         self.sql = sql
         return _FakeJob()
 
@@ -87,7 +87,7 @@ def _where(sql: str) -> str:
 
 def test_r2_empty_filters_add_no_constraint():
     """All three "" -> the widest sweep: only the not-closed exclusion remains."""
-    where = _where(bq_reads.bulk_close_rows_sql("", "", "", **_Q))
+    where = _where(bq_reads.bulk_close_rows_sql("", "", "", **_Q)[0])
     assert "AND" not in where
     assert "effective_status =" not in where
     assert "effective_assigned_to" not in where
@@ -96,9 +96,9 @@ def test_r2_empty_filters_add_no_constraint():
 
 def test_r2_each_filter_adds_only_its_own_condition():
     """One filter set -> exactly one extra condition, and not the others."""
-    status = _where(bq_reads.bulk_close_rows_sql("answered", "", "", **_Q))
-    coach = _where(bq_reads.bulk_close_rows_sql("", "coach@x.org", "", **_Q))
-    date = _where(bq_reads.bulk_close_rows_sql("", "", "2026-01-01", **_Q))
+    status = _where(bq_reads.bulk_close_rows_sql("answered", "", "", **_Q)[0])
+    coach = _where(bq_reads.bulk_close_rows_sql("", "coach@x.org", "", **_Q)[0])
+    date = _where(bq_reads.bulk_close_rows_sql("", "", "2026-01-01", **_Q)[0])
     assert status.count(" AND ") == 1 and "effective_status = 'answered'" in status
     assert coach.count(" AND ") == 1 and "effective_assigned_to = 'coach@x.org'" in coach
     assert date.count(" AND ") == 1 and "DATE(t.created_at) < '2026-01-01'" in date
@@ -106,7 +106,7 @@ def test_r2_each_filter_adds_only_its_own_condition():
 
 def test_r2_filters_are_anded_together():
     """All three set -> three extra conditions joined by AND, never OR."""
-    where = _where(bq_reads.bulk_close_rows_sql("answered", "coach@x.org", "2026-01-01", **_Q))
+    where = _where(bq_reads.bulk_close_rows_sql("answered", "coach@x.org", "2026-01-01", **_Q)[0])
     assert where.count(" AND ") == 3
     assert " OR " not in where
 
@@ -136,14 +136,14 @@ def test_r3_preview_counts_pending_followups_as_skipped(sent_sql):
 def test_r4_closed_cancelled_and_archived_are_all_excluded():
     """The exclusion list holds exactly these three statuses, in every sweep."""
     for filters in (("", "", ""), ("answered", "coach@x.org", "2026-01-01")):
-        where = _where(bq_reads.bulk_close_rows_sql(*filters, **_Q))
+        where = _where(bq_reads.bulk_close_rows_sql(*filters, **_Q)[0])
         listed = re.search(r"NOT IN \(([^)]*)\)", where).group(1)
         assert sorted(re.findall(r"'(\w+)'", listed)) == ["archived", "cancelled", "closed"]
 
 
 def test_r4_archived_is_excluded_even_when_the_status_filter_asks_for_it():
     """status_filter="archived" is ANDed with the exclusion, so it matches nothing."""
-    where = _where(bq_reads.bulk_close_rows_sql("archived", "", "", **_Q))
+    where = _where(bq_reads.bulk_close_rows_sql("archived", "", "", **_Q)[0])
     assert "'archived'" in where.split(" AND ")[0]
     assert "effective_status = 'archived'" in where
 
@@ -160,7 +160,7 @@ def test_r9_preview_and_execute_both_embed_the_helpers_selection(sent_sql, filte
     The helper's exact text appears in what BOTH callers send. A caller that
     inlines its own copy of the selection makes this red.
     """
-    selection = bq_reads.bulk_close_rows_sql(*filters, **_Q)
+    selection, _params = bq_reads.bulk_close_rows_sql(*filters, **_Q)
     assert selection in sent_sql("execute", *filters)
     assert selection in sent_sql("preview", *filters)
 
@@ -279,7 +279,7 @@ def test_r11_helper_confines_the_selection_to_its_lane(lane, gt_cols):
     and its base CTE computes lane with the live-lane expression for this
     gt_cols (so a coach's tm.lane override counts, R11).
     """
-    sql = bq_reads.bulk_close_rows_sql("", "", "", lane=lane, gt_cols=gt_cols)
+    sql, _params = bq_reads.bulk_close_rows_sql("", "", "", lane=lane, gt_cols=gt_cols)
     assert _lane_predicate(lane) in _raw_where(sql)
     assert _lane_predicate(_OTHER[lane]) not in sql
     assert f"{bq_reads._live_lane_expr(gt_cols)} AS lane" in " ".join(sql.split())
@@ -289,7 +289,7 @@ def test_r11_helper_confines_the_selection_to_its_lane(lane, gt_cols):
 def test_r11_helper_lane_condition_is_anded_with_the_filters(lane):
     """Lane is one more AND-ed condition: three filters + lane = four ANDs."""
     where = _raw_where(bq_reads.bulk_close_rows_sql(
-        "answered", "coach@x.org", "2026-01-01", lane=lane, gt_cols={"lane"}))
+        "answered", "coach@x.org", "2026-01-01", lane=lane, gt_cols={"lane"})[0])
     assert where.count(" AND ") == 4 and " OR " not in where
 
 
@@ -338,7 +338,7 @@ def test_r11_a_caller_without_a_lane_raises(monkeypatch, which):
 @pytest.mark.parametrize("lane", _LANES)
 def test_r11_preview_and_execute_embed_the_lane_helpers_selection(sent_sql, lane):
     """R9 with lane: the helper's text for this lane sits inside BOTH callers."""
-    selection = bq_reads.bulk_close_rows_sql(
+    selection, _params = bq_reads.bulk_close_rows_sql(
         "answered", "", "", lane=lane, gt_cols={"lane"})
     assert selection in sent_sql("execute", lane=lane)
     assert selection in sent_sql("preview", lane=lane)

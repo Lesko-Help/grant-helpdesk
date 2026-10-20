@@ -168,12 +168,14 @@ def execute_bulk_close(
     now = datetime.datetime.utcnow().isoformat()
     closed_by_val = (closed_by or "").replace("'", "\\'")
     gt_cols = set(_tickets_cols() if gt_cols is None else gt_cols)
+    selection_sql, params = bulk_close_rows_sql(
+        status_filter, assigned_to, before_date, lane=lane, gt_cols=gt_cols)
 
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
             SELECT r.content_id, r.assigned_to, r.domain
-            FROM ({bulk_close_rows_sql(status_filter, assigned_to, before_date, lane=lane, gt_cols=gt_cols)}) r
+            FROM ({selection_sql}) r
             WHERE r.content_id NOT IN (
                 SELECT DISTINCT ticket_id
                 FROM `{config.FOLLOWUP_QUEUE_TABLE}`
@@ -192,7 +194,7 @@ def execute_bulk_close(
             (S.content_id, 'closed', S.assigned_to, S.domain,
              TIMESTAMP '{now}', TIMESTAMP '{now}', '{closed_by_val}')
     """
-    job = client.query(sql)
+    job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params))
     job.result()
     return job.num_dml_affected_rows or 0
 
