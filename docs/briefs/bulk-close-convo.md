@@ -122,6 +122,34 @@ never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
 
+All proposals are for `docs/specs/modules/bq_writes.md`; this branch edits nothing under `docs/specs/`.
+
+### 1. R11: the gt_cols hand-off and the test counts
+
+Spec now: R11 says the helper takes `gt_cols` and never probes, and gives `execute_bulk_close(..., *, lane)` and `preview_bulk_close(..., *, lane)` as the signatures. It says nothing about who probes, and the Test paragraph says 18 tests and names R2, R3, R4 and R9.
+
+Proposed text, to add to R11: preview probes `_tickets_cols()` once and returns the sorted list as a third key, `{"will_close", "skipped_followup", "gt_cols"}`. Execute takes `gt_cols` as a keyword (default `None`, meaning probe now) and the panel always passes the list preview returned. Why: the schema cache lives five minutes (`bq_base._TICKETS_COLS_TTL_SEC`) and a coach can take longer between Preview and confirm; if the Dataform migration adds `lane` in that gap, two probes would build different lane expressions and execute would close more rows than the coach agreed to.
+
+Proposed signature lines: `execute_bulk_close(status_filter, assigned_to, before_date, closed_by, *, lane, gt_cols=None)` and a preview return of `{"will_close": N, "skipped_followup": M, "gt_cols": [...]}`.
+
+Proposed Test paragraph: `tests/test_bulk_close.py` now holds 44 tests and also guards R11 (helper, preview and execute each confine to one lane, in both `gt_cols` branches; no lane raises; the helper never probes; execute given preview's `gt_cols` builds the byte-identical lane expression) and R12. The R9 fixture test pins the lane as deliberate differences: the `AS lane` column written out literally, the comma it puts on the line before, and a per-case WHERE line equal to the fixture's own plus `AND t.lane = 'question'`. It stays exact multiset equality and the fixture is not regenerated. Proven to bite: an extra condition, a dropped lane predicate, a sweep ignoring its lane, and a silent change of the lane expression each turn all 8 fixture cases red.
+
+### 2. R12: the key function and how it is guarded
+
+Spec now: R12 says the panel is one renderer taking the lane and every key carries the lane, but names no function and no test.
+
+Proposed text, to add to R12: the keys come from one pure function in `app.py`, `bulk_close_keys(lane)`, returning the widget keys `bc_status_<lane>`, `bc_coach_<lane>`, `bc_before_<lane>`, `bc_preview_<lane>`, `bc_execute_<lane>` and the session-state key `_bc_preview_<lane>`. The renderer is `render_bulk_close_panel(lane, team_members, current_user)`, called with `config.LANE_QUESTION` from Tickets and `config.LANE_GENERAL` from Conversations. The login gate keeps AppTest off this panel, so four tests read `app.py` as source with `ast`: the two lanes' key sets are disjoint and every key carries its lane; no bare `bc_` string exists outside `bulk_close_keys`; there is exactly one preview call and one execute call, both passing `lane=lane`, execute also passing `gt_cols=_p['gt_cols']`; and each tab calls the renderer with its own lane. The panel itself has had no visual check; it needs a hand check after deploy.
+
+### 3. R9: everything the number depended on travels with the number (pre-existing)
+
+Spec now: R9 says preview and execute select the same rows, and guards that at the SQL level.
+
+The gap: on `origin/main`, before this branch, the confirm button already recomputes the filter values from the widgets on every run. A coach can press Preview, change the Status filter, and press confirm while the old number is still on screen; the sweep then runs with the new filters. That is R9 failing through the UI instead of through the SQL, and it strikes the one number that carries consent. It is pre-existing; this branch neither causes nor worsens it, and the panel body is unchanged here apart from keys, lane, noun and the `gt_cols` hand-off.
+
+Proposed clause for R9: the preview result carries every input its number depended on, and execute runs with those, not with the widgets as they are at confirm time. Concretely, store the three filter values in the lane's preview entry next to `gt_cols`, and have the confirm button pass them to `execute_bulk_close`. This is the same shape and the same fix as the `gt_cols` hand-off. Prefer this over clearing the preview on every filter change, which would hide the number the coach is looking at.
+
+Proposed test: a source-reading test that the execute call's `status_filter`, `assigned_to` and `before_date` come from the stored preview entry, and that changing a widget after Preview does not change them. Needs its own slice; not in this gate.
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
@@ -138,7 +166,7 @@ Done (2026-10-20), all accepted by `helpdesk-opzichter` up to slice 3; slice 4 r
 In flight: nothing uncommitted. Waiting for the overseer's reply to "slice 4 done - continue or re-steer?".
 
 Next (slice 5 and landing):
-1. Write the spec proposals under `## Spec proposals`, not in `docs/specs/`: R11 (the `gt_cols` hand-off: preview returns it, execute takes it, the five-minute schema cache is why; test count now 44), R12 (`bulk_close_keys` and the source-reading tests), and the finding below.
+1. DONE: spec proposals written under `## Spec proposals` (R11 hand-off, R12 key function, R9 stale-filters clause). Slice 4 accepted by the overseer, who said finding (a) goes in as a proposal only.
 2. Merge `origin/main` once, then `git add -N .`, check `git status` is clean.
 3. Run `wt-done.sh --check bulk-close-convo` until it exits 0. Never fill the `Verdict:` line.
 4. Read the werk.queue row id from the Goal (it names none so far, so write nothing and say so) and report to `helpdesk-opzichter [434020]` (use the ref, the bare name is ambiguous): branch, range `5f25bc4..HEAD`, HEAD sha, summary, red-then-green proof, deploy implied (`deploy.sh`, app plus both bq modules, no Dataform).
