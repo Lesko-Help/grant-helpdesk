@@ -94,6 +94,17 @@ here deletes a row; `archive_standard_reply` sets a flag.
   `grant_tickets` (the expression reads `gt.lane`) and absent (it reads the
   `'question'` literal, so a pre-migration `general` sweep matches only rows a
   coach has moved by hand, which is correct).
+  The two callers must also build the *same* expression as each other, and a
+  schema probe each is not enough to guarantee it: `_tickets_cols()` is cached
+  for 300 seconds (`bq_base.py:53`), a coach can take longer than that between
+  Preview and the confirm button, and the pending Dataform migration adding
+  `lane` inside that gap would leave preview on the `'question'` literal while
+  execute reads `gt.lane` — execute then closes more rows than the number the
+  coach agreed to, which is R9's exact failure. So `preview_bulk_close` returns
+  the `gt_cols` it used as a key of its result dict, `app.py` keeps it in the
+  `_bc_preview` session state that already spans the two presses, and
+  `execute_bulk_close` is handed it. Identical by construction, not by two
+  probes happening to agree.
 - R12: **the panel exists once.** The two tabs' bulk-close panels are one
   renderer taking the lane, not two copies, and every widget key plus the
   preview's session-state key carries the lane in it — both tabs render on the
