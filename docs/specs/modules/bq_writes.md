@@ -27,7 +27,7 @@ here deletes a row; `archive_standard_reply` sets a flag.
 
 ## Functions
 
-### execute_bulk_close(status_filter="answered", assigned_to="", before_date="", closed_by="")
+### execute_bulk_close(status_filter="answered", assigned_to="", before_date="", closed_by="", *, lane)
 
 - R1: community tickets only. It writes `ticket_metadata` keyed by `content_id`
   from `grant_tickets`, so a member's private thread can never be swept by it,
@@ -60,7 +60,8 @@ here deletes a row; `archive_standard_reply` sets a flag.
   here and is never swept, although the coach's list shows it open
   (`bq_reads.md` R1a). For a destructive sweep that is the safe direction, and
   it is deliberate, not an oversight.
-- R9: **preview and execute must select the same rows.** Both call
+- R9: **preview and execute must select the same rows**, lane included (R11).
+  Both call
   `bq_reads.bulk_close_rows_sql`, which builds the `base` CTE and the filtered
   SELECT once; the pending-follow-up predicate (R3) stays per caller (execute:
   `NOT IN`; preview: a LEFT JOIN with `COUNTIF`). `test_r9_*` asserts the
@@ -73,10 +74,31 @@ here deletes a row; `archive_standard_reply` sets a flag.
   (`.replace("'", "")`) — not a safety boundary, and why the query breaks on a
   name like `O'Brien`. The dormant `bq-writes-params` worktree holds this.
 
-*Examples:* `("answered", "", "", "coach@…")` -> every answered ticket with no
-pending follow-up closes, credited to that coach, count returned.
-`("", "coach@…", "2026-01-01", "coach@…")` -> only that coach's open tickets
-created before 2026-01-01.
+- R11: **one lane per sweep.** Preview and execute each take a `lane` and
+  constrain the selection to it, through the same live-lane expression the
+  lists use (`bq_reads._live_lane_expr`: `tm.lane` when set, else `gt.lane`,
+  else `question`), so the rows counted are the rows that tab shows. There is
+  no default and no value meaning "both lanes": the button sits on a tab, the
+  tab shows one lane, so a sweep that crosses lanes closes rows the coach never
+  saw and never consented to. Today `bulk_close_rows_sql` carries no lane
+  condition at all, so the Tickets-tab sweep already closes Conversations rows
+  (`app.py:1880`, lane `general`) — making this, after R4, the second rule here
+  whose test goes red against live behaviour rather than against a missing
+  helper. `app.py` passes `config.LANE_QUESTION` from the Tickets tab and
+  `config.LANE_GENERAL` from Conversations.
+- R12: **the panel exists once.** The two tabs' bulk-close panels are one
+  renderer taking the lane, not two copies, and every widget key plus the
+  preview's session-state key carries the lane in it — both tabs render on the
+  same Streamlit run, so a bare key like `bc_status` would be registered twice
+  and Streamlit raises a duplicate-key error (the same reason `lane` is
+  threaded through `render_ticket_table`, `app.py:1387`). Why one renderer: two
+  copies drift, and R9's whole promise is that the number and the sweep agree.
+
+*Examples:* `("answered", "", "", "coach@…", lane="question")` -> every
+answered Tickets-lane ticket with no pending follow-up closes, credited to that
+coach, count returned. `("", "coach@…", "2026-01-01", "coach@…",
+lane="general")` -> only that coach's open Conversations-lane rows created
+before 2026-01-01.
 
 *Inputs:* an effective status or `""` for any; a coach's login email or `""`
 for all; an ISO date (`YYYY-MM-DD`) or `""` for all dates; the closing coach.
@@ -104,9 +126,9 @@ against both callers, pinning the only differences the extraction was allowed
 to have (`'archived'` added, and the nesting). It bites: one extra column added
 to the helper's `base` SELECT takes all eight of those cases red.
 
-### preview_bulk_close(status_filter="answered", assigned_to="", before_date="")
+### preview_bulk_close(status_filter="answered", assigned_to="", before_date="", *, lane)
 
-*Lives in `bq_reads.py:490`; specified above as half of the pair — see R9.*
+*Lives in `bq_reads.py:544`; specified above as half of the pair — see R9.*
 
 ### One ticket at a time
 
@@ -173,22 +195,31 @@ event_id, member_id, rsvped_by)`
   a silent edit to history. The three terminal-ish states now behave alike,
   which is the asymmetry a reader would otherwise have had to rediscover.
   Carried by R4, and in the code since `be289bf` (landed 2026-10-19).
-- 2026-10-19: the Conversations version offers **status only** (Martin). Not
-  coach — member questions carry no `assigned_to` and no lane, so there is
-  nothing to filter on. Not an age either: "answered and untouched for N days"
-  needs the same `closed_at` field the cut "answered 3d ago" age needed
-  (`coach_inbox.md`, same date), so it would drag that column onto the thread
-  queries before it could offer anything. One filter also keeps the sweep
-  small, which is the right default for a destructive action nobody reviews
-  row by row (R9).
-- 2026-10-19: that version lives in `coach_inbox.py`, not here, and is
-  specified in `coach_inbox.md`. R1 is why: a sweep keyed off the ticket tables
-  must never be able to reach a private thread, so the thread sweep is a
-  separate function closing through `set_thread_workflow`, with its own preview.
-  It shares this spec's R2, R3, R6, R9 and R10 by reference rather than by
-  copied code. The cost is that `coach_inbox.md` grows while already over
-  STYLE R8 — which is an argument for splitting that spec, not for putting the
-  function in the wrong module.
+- 2026-10-20: **the two 2026-10-19 decisions below were wrong about what
+  "Conversations" is, and are replaced by this one and the next.** The app's
+  Conversations tab (`app.py:1880`) is `load_tickets(lane=config.LANE_GENERAL)`
+  — community posts and comments that are not grant questions, in *these same*
+  tables, carrying status, `assigned_to`, domain and urgency like any ticket.
+  The Tickets tab is the same code with `lane="question"`. Members' private 1:1
+  questions are not on that tab at all: they merge into Tickets, and their
+  status is derived in Python from who wrote last (`coach_inbox.py:135`), never
+  stored. So bulk close for Conversations is this sweep scoped to a lane (R11),
+  needs nothing in `coach_inbox.py`, and cannot reach a private thread — R1
+  holds unchanged, for the reason it always did.
+- 2026-10-20: the Conversations sweep offers **the same three filters as
+  Tickets** (Martin), reusing the one panel with a lane argument (R12). This
+  replaces "status only" (2026-10-19), whose recorded reason — "one filter
+  keeps the sweep small" — was backwards: a filter narrows a sweep, so offering
+  fewer of them makes the default sweep wider, and it would have cost a second
+  panel to build. An age filter stays out, for the reason first given: "answered
+  and untouched for N days" needs the `closed_at` column the cut "answered 3d
+  ago" age needed (`coach_inbox.md`, 2026-10-19).
+- 2026-10-20: a bulk close over members' private 1:1 threads is **not built
+  and not asked for.** It would be a separate function in `coach_inbox.py`
+  closing through `set_thread_workflow`, and it could not reuse the SQL here at
+  all, because a thread's status is derived per read in Python rather than
+  stored in a column. Written down because the 2026-10-19 pair of decisions
+  promised that function in `coach_inbox.md`, where no such section exists.
 - 2026-10-19: the other seventeen functions here are grouped stubs, by what
   each group writes, not seventeen one-line sections. Why: a section each costs
   ~70 lines saying nothing, putting the file over STYLE R8's ~150 before a rule
