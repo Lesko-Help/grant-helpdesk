@@ -38,17 +38,30 @@ class _FakeClient:
 
     def __init__(self):
         self.sql = None
+        self.job_config = None
 
     def query(self, sql, job_config=None):
         self.sql = sql
+        self.job_config = job_config
         return _FakeJob()
 
 
-@pytest.fixture
-def sent_sql(monkeypatch):
+def _param_values(job_config) -> dict:
     """
-    In: nothing. Out: a function (execute|preview, filters) -> the SQL text
-    that function sent. Why: lets a test see the statement without BigQuery.
+    In: the job_config a caller handed to client.query (or None).
+    Out: {parameter name: (type, value)}. Why: R10 and R11 are checked on what
+    the client was handed, not on what the helper says it returned.
+    """
+    return {p.name: (p.type_, p.value)
+            for p in (getattr(job_config, "query_parameters", None) or [])}
+
+
+@pytest.fixture
+def sent_with_params(monkeypatch):
+    """
+    In: nothing. Out: a function (execute|preview, filters) -> (the SQL text,
+    {name: (type, value)}) that function sent to the fake client.
+    Why: lets a test see the statement and its parameters without BigQuery.
     """
     def run(which, status="answered", assigned="", before="", lane=config.LANE_QUESTION,
             table_cols=frozenset({"lane"})):
@@ -62,12 +75,28 @@ def sent_sql(monkeypatch):
             bq_writes.execute_bulk_close(status, assigned, before, "coach@x.org", lane=lane)
         else:
             bq_reads.preview_bulk_close(status, assigned, before, lane=lane)
-        return fake.sql
+        return fake.sql, _param_values(fake.job_config)
+    return run
+
+
+@pytest.fixture
+def sent_sql(sent_with_params):
+    """
+    In: nothing. Out: a function (execute|preview, filters) -> the SQL text
+    that function sent. Why: most tests read only the statement.
+    """
+    def run(*args, **kwargs):
+        return sent_with_params(*args, **kwargs)[0]
     return run
 
 
 # The lane every older test sweeps: Tickets. gt_cols matches sent_sql's default.
 _Q = {"lane": config.LANE_QUESTION, "gt_cols": {"lane"}}
+
+
+def _helper_values(params) -> dict:
+    """In: the helper's parameter list. Out: {name: value}. Why: for R2/R4/R11 reads."""
+    return {p.name: p.value for p in params}
 
 
 def _raw_where(sql: str) -> str:
@@ -80,7 +109,7 @@ def _where(sql: str) -> str:
     _raw_where without the lane condition, so R2 and R4 keep counting only the
     conditions they are about; R11's tests read _raw_where to see the lane.
     """
-    return re.sub(r" AND t\.lane = '\w+'$", "", _raw_where(sql))
+    return re.sub(r" AND t\.lane = @lane$", "", _raw_where(sql))
 
 
 # R2 -------------------------------------------------------------------------
@@ -95,13 +124,21 @@ def test_r2_empty_filters_add_no_constraint():
 
 
 def test_r2_each_filter_adds_only_its_own_condition():
-    """One filter set -> exactly one extra condition, and not the others."""
-    status = _where(bq_reads.bulk_close_rows_sql("answered", "", "", **_Q)[0])
-    coach = _where(bq_reads.bulk_close_rows_sql("", "coach@x.org", "", **_Q)[0])
-    date = _where(bq_reads.bulk_close_rows_sql("", "", "2026-01-01", **_Q)[0])
-    assert status.count(" AND ") == 1 and "effective_status = 'answered'" in status
-    assert coach.count(" AND ") == 1 and "effective_assigned_to = 'coach@x.org'" in coach
-    assert date.count(" AND ") == 1 and "DATE(t.created_at) < '2026-01-01'" in date
+    """
+    One filter set -> exactly one extra condition, and not the others. The
+    condition names a placeholder (R10) and the matching parameter holds the
+    value, so both halves are asserted.
+    """
+    status_sql, status_params = bq_reads.bulk_close_rows_sql("answered", "", "", **_Q)
+    coach_sql, coach_params = bq_reads.bulk_close_rows_sql("", "coach@x.org", "", **_Q)
+    date_sql, date_params = bq_reads.bulk_close_rows_sql("", "", "2026-01-01", **_Q)
+    status, coach, date = _where(status_sql), _where(coach_sql), _where(date_sql)
+    assert status.count(" AND ") == 1 and "effective_status = @status_filter" in status
+    assert coach.count(" AND ") == 1 and "effective_assigned_to = @assigned_to" in coach
+    assert date.count(" AND ") == 1 and "DATE(t.created_at) < DATE(@before_date)" in date
+    assert _helper_values(status_params)["status_filter"] == "answered"
+    assert _helper_values(coach_params)["assigned_to"] == "coach@x.org"
+    assert _helper_values(date_params)["before_date"] == "2026-01-01"
 
 
 def test_r2_filters_are_anded_together():
@@ -144,8 +181,10 @@ def test_r4_closed_cancelled_and_archived_are_all_excluded():
 def test_r4_archived_is_excluded_even_when_the_status_filter_asks_for_it():
     """status_filter="archived" is ANDed with the exclusion, so it matches nothing."""
     where = _where(bq_reads.bulk_close_rows_sql("archived", "", "", **_Q)[0])
+    sql, params = bq_reads.bulk_close_rows_sql("archived", "", "", **_Q)
     assert "'archived'" in where.split(" AND ")[0]
-    assert "effective_status = 'archived'" in where
+    assert "effective_status = @status_filter" in where
+    assert _helper_values(params)["status_filter"] == "archived"
 
 
 # R9 -------------------------------------------------------------------------
@@ -214,9 +253,38 @@ def _allowed_for(case: dict, which: str, allowed: dict) -> tuple:
     """
     old_where = [line for line in _lines(case[which]) if line.startswith("WHERE t.")]
     assert len(old_where) == 1, "the fixture must hold exactly one helper WHERE line"
-    added = allowed["added"] + [old_where[0] + " AND t.lane = 'question'"]
+    added = allowed["added"] + [_parameterised_where(case, old_where[0])]
     removed = allowed["removed"] + old_where
     return sorted(added), sorted(removed)
+
+
+def _parameterised_where(case: dict, old_line: str) -> str:
+    """
+    In: one fixture case and its WHERE line as the fixture has it.
+    Out: the line R10 expects: each set filter's quoted value replaced by its
+    placeholder, plus ` AND t.lane = @lane`. The replacements are written out
+    here, not read from bq_reads, so the test cannot agree with itself.
+    Why: every one must apply exactly once. A replacement that silently
+    matched nothing would leave the old line compared with itself and pass
+    over a broken expectation.
+    """
+    status, assigned, before, _closed_by = case["filters"]
+    line = old_line
+    swaps = []
+    if status:
+        swaps.append((f"t.effective_status = '{status}'", "t.effective_status = @status_filter"))
+    if assigned:
+        # The fixture is the BEFORE state: it backslash-escaped the quote
+        # (o\'brien), so the old text is escaped on purpose; not a typo.
+        swaps.append((f"t.effective_assigned_to = '{assigned.replace(chr(39), chr(92) + chr(39))}'",
+                      "t.effective_assigned_to = @assigned_to"))
+    if before:
+        swaps.append((f"DATE(t.created_at) < '{before}'", "DATE(t.created_at) < DATE(@before_date)"))
+    for old, new in swaps:
+        assert line.count(old) == 1, f"fixture WHERE line lacks exactly one {old!r}"
+        line = line.replace(old, new)
+    assert line.count("@") == len(swaps)
+    return line + " AND t.lane = @lane"
 
 
 def _lines(sql: str) -> Counter:
@@ -266,9 +334,11 @@ _GUARD_BRANCHES = [pytest.param({"lane", "content_id"}, id="gt-has-lane"),
                    pytest.param({"content_id"}, id="gt-lacks-lane")]
 
 
-def _lane_predicate(lane: str) -> str:
-    """The one WHERE condition that confines a sweep to `lane`."""
-    return f"t.lane = '{lane}'"
+# The lane is a parameter (R10), so the SQL text no longer names it: every
+# lane's WHERE says `t.lane = @lane`. What confines a sweep to its lane is the
+# pair (this predicate, the @lane value), and the value is read from what the
+# fake client was handed, never from the helper's own return.
+_LANE_PREDICATE = "t.lane = @lane"
 
 
 @pytest.mark.parametrize("gt_cols", _GUARD_BRANCHES)
@@ -279,9 +349,10 @@ def test_r11_helper_confines_the_selection_to_its_lane(lane, gt_cols):
     and its base CTE computes lane with the live-lane expression for this
     gt_cols (so a coach's tm.lane override counts, R11).
     """
-    sql, _params = bq_reads.bulk_close_rows_sql("", "", "", lane=lane, gt_cols=gt_cols)
-    assert _lane_predicate(lane) in _raw_where(sql)
-    assert _lane_predicate(_OTHER[lane]) not in sql
+    sql, params = bq_reads.bulk_close_rows_sql("", "", "", lane=lane, gt_cols=gt_cols)
+    assert _LANE_PREDICATE in _raw_where(sql)
+    assert _helper_values(params)["lane"] == lane
+    assert _OTHER[lane] not in _helper_values(params).values()
     assert f"{bq_reads._live_lane_expr(gt_cols)} AS lane" in " ".join(sql.split())
 
 
@@ -310,16 +381,35 @@ def test_r11_helper_does_not_probe_the_table_schema(monkeypatch):
 @pytest.mark.parametrize("which", ["execute", "preview"])
 @pytest.mark.parametrize("table_cols", _GUARD_BRANCHES)
 @pytest.mark.parametrize("lane", _LANES)
-def test_r11_both_callers_send_one_lane_only(sent_sql, which, lane, table_cols):
+def test_r11_both_callers_send_one_lane_only(sent_with_params, which, lane, table_cols):
     """
-    Preview and execute each send this lane's predicate, built from the live
-    expression for the table's real columns, and never the other lane's. A
-    `general` row survives a `question` sweep and the reverse.
+    Preview and execute each send the lane predicate, built from the live
+    expression for the table's real columns, with THIS lane bound to @lane and
+    never the other lane anywhere in the parameters. A `general` row survives a
+    `question` sweep and the reverse. Read off what the client was handed.
     """
-    sql = sent_sql(which, lane=lane, table_cols=table_cols)
-    assert _lane_predicate(lane) in sql
-    assert _lane_predicate(_OTHER[lane]) not in sql
+    sql, params = sent_with_params(which, lane=lane, table_cols=table_cols)
+    assert _LANE_PREDICATE in sql
+    assert params["lane"] == ("STRING", lane)
+    assert _OTHER[lane] not in [v for _t, v in params.values()]
     assert bq_reads._live_lane_expr(table_cols) in " ".join(sql.split())
+
+
+@pytest.mark.parametrize("which", ["execute", "preview"])
+def test_r11_the_two_lanes_differ_only_in_the_bound_lane_value(sent_with_params, which):
+    """
+    With the literal gone, a Tickets and a Conversations sweep send byte-
+    identical SQL; one parameter is all that separates them. So: same text,
+    different @lane. Catches SQL built for one lane with the other's value
+    bound, which the old literal caught for free.
+    """
+    q_sql, q_params = sent_with_params(which, lane=config.LANE_QUESTION)
+    g_sql, g_params = sent_with_params(which, lane=config.LANE_GENERAL)
+    clockless = lambda sql: re.sub(r"TIMESTAMP '[^']*'", "TIMESTAMP 'T'", sql)  # execute stamps now()
+    assert clockless(q_sql) == clockless(g_sql)
+    assert q_params["lane"] != g_params["lane"]
+    assert {k: v for k, v in q_params.items() if k != "lane"} == {
+        k: v for k, v in g_params.items() if k != "lane"}
 
 
 @pytest.mark.parametrize("which", ["execute", "preview"])
