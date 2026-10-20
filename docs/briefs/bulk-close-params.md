@@ -116,7 +116,7 @@ Module `bulk_close`. Files: `bq_reads.py` (`bulk_close_rows_sql`, `preview_bulk_
 
 ## Context
 
-2026-10-20: the overseer's memory message had not arrived when this brief was committed; add its content when it comes. Spec read: `bulk_close.md` R9, R10, R11 and the `*Test:*` paragraph. Existing tests call `bulk_close_rows_sql` expecting a string and `_FakeClient.query(sql)` takes no `job_config`, so slice 2 forces edits to those tests; slice 1 adds only new ones. Existing `.replace("'", ...)` sites outside this sweep (`closed_by_val` in `execute_bulk_close`, etc.) are out of scope.
+2026-10-20: the overseer's memory message had not arrived when this brief was committed; add its content when it comes. 2026-10-20, overseer message: R10's old text on main said the `bq-writes-params` worktree holds this; no such worktree ever existed, and main (`3810342`) now names this one. The same fix corrected R10's reason: the query does not break on `O'Brien`, three of the four filters silently drop the quote. The `ans'wered` becoming `answered` in the red-first run is that evidence. 2026-10-20 steer: `closed_by` added as a fifth parameter (it was interpolated twice in the MERGE); the R9 fixture is never regenerated, only the expected WHERE line and two `closed_by` lines are derived and pinned literally. Spec read: `bulk_close.md` R9, R10, R11 and the `*Test:*` paragraph. Existing tests call `bulk_close_rows_sql` expecting a string and `_FakeClient.query(sql)` takes no `job_config`, so slice 2 forces edits to those tests; slice 1 adds only new ones. Existing `.replace("'", ...)` sites outside this sweep (`closed_by_val` in `execute_bulk_close`, etc.) are out of scope.
 
 ## Agentic review
 
@@ -165,10 +165,14 @@ Enough that a fresh session needs no paste.
 
 ## Spec proposals
 
-Specs belong to the overseer (DECISION BY MARTIN 2026-09-24) — this worktree
-never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
-module's spec goes here instead: what the spec says now, what it should say,
-and why. The overseer applies what it agrees with on main.
+Specs belong to the overseer (DECISION BY MARTIN 2026-09-24) — this worktree never edits docs/specs/ itself. Anything found missing, unclear or wrong in a module's spec goes here instead: what the spec says now, what it should say, and why. The overseer applies what it agrees with on main.
+
+1. `docs/specs/modules/bulk_close.md` R10: "all four are interpolated" should say five values are parameters: `status_filter`, `assigned_to`, `before_date`, `lane` and `closed_by`. Why: `closed_by` was escaped with `.replace("'", "\\'")` twice in the MERGE; it is the audit field of the one destructive path.
+2. Same file, `### bulk_close_rows_sql` Functions subsection: it now returns `(sql, params)`, a list of STRING `ScalarQueryParameter`s. Placeholders are `@status_filter`, `@assigned_to`, `@before_date` (used as `DATE(@before_date)`, so the parameter stays a STRING) and `@lane`, which is always present. Why: the pair travels together so no caller can run the SQL without its values. `preview_bulk_close` and `execute_bulk_close` send them via `QueryJobConfig(query_parameters=...)`; execute adds `closed_by`.
+3. Same file, `*Test:*` paragraph: "R7, R8 and R10 are not tested" becomes "R7 and R8"; "44 tests" becomes 54. R10 is guarded by `test_r10_*` (SQL text holds no value, each parameter exact and typed per name, preview and execute handed the identical pair), read from the job_config the fake client recorded.
+4. Same paragraph, the R9 fixture: the allowed differences now also include the helper's WHERE line with each set filter replaced by its placeholder plus `AND t.lane = @lane` (derived per case from the fixture, each replacement asserted to apply exactly once; the 4th case names the escaped `o\\'brien` because the fixture is the before state), and two execute lines for `closed_by`. The fixture is still never regenerated.
+5. R11's tests: the SQL text no longer names the lane (`t.lane = @lane` for both). R11 is guarded on the recorded `@lane` value, plus a case that the two lanes send identical SQL and different `@lane`. The old literal-in-text check is gone on purpose.
+6. Not done, left for the overseer to decide: other `.replace("'", ...)` sites remain outside this sweep (`bq_reads.py:436`, `bq_writes.py` lines 53, 64-66, 136, 215-216, 271-272, 454-455, 470). Same bug class, each its own task.
 
 ## State
 
@@ -176,7 +180,7 @@ Replaced in full each time the context guard asks you to save — never append a
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done:
-In flight (file:line):
-Next:
-Traps (with dates):
+Done: slice 1 red tests (0754813); slice 2 helper returns (sql, params), callers send them (c733c52); old assertions rewritten to placeholder plus recorded parameter (288588f); closed_by as fifth parameter (a1528b5). 54 passed. Mutations red: wrong lane bound 10, DATE cast dropped 5, status interpolated 9.
+In flight (file:line): brief Spec proposals and this State; then merge origin/main, wt-done.sh --check, werk.queue row, report.
+Next: report to helpdesk-opzichter. The Goal names no werk.queue row id.
+Traps (with dates): 2026-10-20 execute's SQL carries a clock literal, so two runs differ unless TIMESTAMP literals are normalised before comparing. 2026-10-20 the R9 fixture holds `o\\'brien` (escaped) on purpose, it is the before state.
