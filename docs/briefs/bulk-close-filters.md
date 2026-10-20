@@ -123,6 +123,12 @@ never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
 
+Proposal 1, `docs/specs/modules/bulk_close.md`, section "Open check": delete the bullet "R9's filter hand-off is specified and **not built**", because it is built now (commit `7d28c87`).
+
+Proposal 2, same file, rule R9: replace "Specified, not built; see the Open check." with "Built: `preview_bulk_close` returns `status_filter`, `assigned_to` and `before_date` beside `gt_cols`, and the confirm button passes those to `execute_bulk_close`. Guarded by `test_r9_execute_filters_come_from_the_stored_preview`, `test_r9_confirm_branch_does_not_read_the_filter_widgets` and `test_r9_preview_returns_the_three_filters_it_used`."
+
+Proposal 3, same file, `### preview_bulk_close` entry: its return value is now `{will_close, skipped_followup, gt_cols, status_filter, assigned_to, before_date}`.
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
