@@ -209,23 +209,44 @@ def update_ticket_meta(
     feedback_reason: str = None,
     closed_by: str = None,
 ):
+    """
+    In: one ticket's id, its new status and assignee, and optionally the domain,
+    a classifier feedback reason and (when closing) who closed it.
+    Out: nothing; one row of ticket_metadata is updated or inserted, and the
+    assignment refresh is poked when there is an assignee.
+    Why: the coach's "set status / assign" action. Every value from a person
+    (id, status, assignee, domain, reason, closer) reaches BigQuery as a named
+    STRING query parameter, never in the SQL text, so a quote or a trailing
+    backslash cannot change the statement. Only values the code makes itself
+    (the timestamp, the typed NULLs) are written into the SQL.
+    SQL analogy: MERGE ticket_metadata USING one literal row ON content_id,
+    update on match, insert otherwise.
+    """
     now        = datetime.datetime.utcnow().isoformat()
-    domain_val = domain or ""
-    reason_val = (feedback_reason or "").replace("'", "\\'")
-    closed_by_val = (closed_by or "").replace("'", "\\'")
+    params = [
+        bigquery.ScalarQueryParameter("content_id", "STRING", content_id),
+        bigquery.ScalarQueryParameter("status", "STRING", status),
+        bigquery.ScalarQueryParameter("assigned_to", "STRING", assigned_to),
+        bigquery.ScalarQueryParameter("domain", "STRING", domain or ""),
+        bigquery.ScalarQueryParameter("feedback_reason", "STRING", feedback_reason or ""),
+    ]
     # Write closed_at timestamp when closing; clear it when reopening or changing status.
     # CAST(NULL AS ...) is required — bare NULL in a MERGE USING clause has no type in BigQuery.
     closed_at_sql = f"TIMESTAMP '{now}'" if status == "closed" else "CAST(NULL AS TIMESTAMP)"
-    closed_by_sql = f"'{closed_by_val}'" if status == "closed" and closed_by_val else "CAST(NULL AS STRING)"
+    if status == "closed" and closed_by:
+        params.append(bigquery.ScalarQueryParameter("closed_by", "STRING", closed_by))
+        closed_by_sql = "@closed_by"
+    else:
+        closed_by_sql = "CAST(NULL AS STRING)"
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
             SELECT
-                '{content_id}'     AS content_id,
-                '{status}'         AS status,
-                '{assigned_to}'    AS assigned_to,
-                '{domain_val}'     AS domain,
-                '{reason_val}'     AS feedback_reason,
+                @content_id        AS content_id,
+                @status            AS status,
+                @assigned_to       AS assigned_to,
+                @domain            AS domain,
+                @feedback_reason   AS feedback_reason,
                 TIMESTAMP '{now}'  AS updated_at,
                 {closed_at_sql}    AS closed_at,
                 {closed_by_sql}    AS closed_by
@@ -247,7 +268,7 @@ def update_ticket_meta(
         VALUES
             (S.content_id, S.status, S.assigned_to, S.domain, NULLIF(S.feedback_reason, ''), S.updated_at, S.closed_at, S.closed_by)
     """
-    client.query(sql).result()
+    client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
     if assigned_to:
         trigger_assignment_refresh()
 
@@ -265,17 +286,29 @@ def set_ticket_lane(content_id: str, lane: str, feedback_reason: str = None):
 
     A row that does not exist yet is inserted with a NULL status, which
     grant_tickets reads as "no manual override" and resolves from the lane.
+
+    In: the content id, the lane, and an optional feedback reason.
+    Out: nothing; one ticket_metadata row is updated or inserted.
+    Id, lane and reason reach BigQuery as named STRING query parameters, never
+    in the SQL text. With no reason the typed NULL stays in the SQL (it is not
+    a caller value) and no reason parameter is sent.
     """
     now         = datetime.datetime.utcnow().isoformat()
-    lane_val    = (lane or "").replace("'", "\\'")
-    reason_val  = (feedback_reason or "").replace("'", "\\'")
-    reason_sql  = f"'{reason_val}'" if reason_val else "CAST(NULL AS STRING)"
+    params = [
+        bigquery.ScalarQueryParameter("content_id", "STRING", content_id),
+        bigquery.ScalarQueryParameter("lane", "STRING", lane or ""),
+    ]
+    if feedback_reason:
+        params.append(bigquery.ScalarQueryParameter("feedback_reason", "STRING", feedback_reason))
+        reason_sql = "@feedback_reason"
+    else:
+        reason_sql = "CAST(NULL AS STRING)"
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
             SELECT
-                '{content_id}'     AS content_id,
-                '{lane_val}'       AS lane,
+                @content_id        AS content_id,
+                @lane              AS lane,
                 {reason_sql}       AS feedback_reason,
                 TIMESTAMP '{now}'  AS updated_at
         ) S
@@ -289,7 +322,7 @@ def set_ticket_lane(content_id: str, lane: str, feedback_reason: str = None):
         VALUES
             (S.content_id, S.lane, S.feedback_reason, S.updated_at)
     """
-    client.query(sql).result()
+    client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
 
 
 def trigger_assignment_refresh():
