@@ -516,32 +516,56 @@ def archive_standard_reply(reply_id: str) -> None:
 
 
 def submit_team_feedback(submitted_by: str, feedback_type: str, title: str, body: str):
+    """
+    In: who sent the feedback, its type, a title and a body.
+    Out: nothing; one team_feedback row is inserted with status 'open' and a
+    new id, stamped with the time now.
+    Why: the coaches' feedback form. Every value from a person (and the new
+    id) is a STRING query parameter, never in the SQL text; only the constant
+    'open' and the code-made timestamp are written into the SQL.
+    SQL analogy: INSERT INTO team_feedback VALUES (?, ?, ?, ?, ?, 'open', now)
+    """
     now = datetime.datetime.utcnow().isoformat()
-    fid = str(uuid.uuid4())
-    safe_title = title.replace("'", "\\'")
-    safe_body  = body.replace("'", "\\'")
     sql = f"""
         INSERT INTO `{TEAM_FEEDBACK_TABLE}`
           (feedback_id, submitted_by, feedback_type, title, body, status, created_at)
         VALUES
-          ('{fid}', '{submitted_by}', '{feedback_type}',
-           '{safe_title}',
-           '{safe_body}',
+          (@feedback_id, @submitted_by, @feedback_type, @title, @body,
            'open', TIMESTAMP '{now}')
     """
-    client.query(sql).result()
+    params = [
+        bigquery.ScalarQueryParameter("feedback_id", "STRING", str(uuid.uuid4())),
+        bigquery.ScalarQueryParameter("submitted_by", "STRING", submitted_by),
+        bigquery.ScalarQueryParameter("feedback_type", "STRING", feedback_type),
+        bigquery.ScalarQueryParameter("title", "STRING", title),
+        bigquery.ScalarQueryParameter("body", "STRING", body),
+    ]
+    client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
 
 
 def reply_team_feedback(feedback_id: str, reply_text: str, replied_by: str, new_status: str):
+    """
+    In: the feedback row id, the reply text, who replied and the new status.
+    Out: nothing; that row gets the reply, the replier, the time now and the status.
+    Why: an admin answers a piece of team feedback. All four values are STRING
+    query parameters (the new status is bound as `status`, the column it
+    fills); only the code-made timestamp is written into the SQL.
+    SQL analogy: UPDATE team_feedback SET reply_text = ?, ... WHERE feedback_id = ?
+    """
     now = datetime.datetime.utcnow().isoformat()
-    safe_reply = reply_text.replace("'", "\\'")
     sql = f"""
         UPDATE `{TEAM_FEEDBACK_TABLE}`
         SET
-          reply_text = '{safe_reply}',
-          replied_by = '{replied_by}',
+          reply_text = @reply_text,
+          replied_by = @replied_by,
           replied_at = TIMESTAMP '{now}',
-          status     = '{new_status}'
-        WHERE feedback_id = '{feedback_id}'
+          status     = @status
+        WHERE feedback_id = @feedback_id
     """
-    client.query(sql).result()
+    params = [
+        bigquery.ScalarQueryParameter("reply_text", "STRING", reply_text),
+        bigquery.ScalarQueryParameter("replied_by", "STRING", replied_by),
+        bigquery.ScalarQueryParameter("status", "STRING", new_status),
+        bigquery.ScalarQueryParameter("feedback_id", "STRING", feedback_id),
+    ]
+    client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
