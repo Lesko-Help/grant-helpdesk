@@ -134,13 +134,22 @@ never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
 
+### Proposals from bq-writes-params (2026-10-21)
+
+1. File `docs/specs/modules/bq_writes.md`, sections "One ticket at a time", "Follow-ups", "Coaches and assignment", "Team feedback" (all `spec:stub`). Add one rule to the Overview: every value a person supplies reaches BigQuery as a named query parameter, never in the SQL text. Only code-made values (timestamps, typed `CAST(NULL AS ...)`, constants like `'open'`) may be written into the SQL. Why: R10 said this for bulk close only; now it holds for the seven single-row writers and `tests/test_bq_writes_params.py` guards it.
+2. Same file, Functions: parameter types. `member_id` is an INT64 parameter (`add_grant_coach`, `link_coach_login_email`), everything else STRING. Timestamps given by the caller (`sent_at`, `skipped_at` in `update_followup_status`) are STRING parameters cast in the SQL with `TIMESTAMP(@x)`. `reply_team_feedback`'s `new_status` is bound as `status`, the column it fills.
+3. Same file, a "Guards" note: the test checks three things per writer, no caller value in the SQL, each value a STRING (or INT64) parameter that round-trips `O'Brien\`, and each parameter lands in its own column (`@name AS name`, `column = @name`, Nth INSERT column takes Nth value). The mapping check requires every sent parameter to be matched, so an SQL shape it cannot read goes red.
+4. Follow-up task (out of scope here, runs unattended daily): `jobs/send_followups.py` lines 66-80 has its own `update_status`, a near-duplicate of `update_followup_status`, that interpolates `status`, `reason` and the id with no escaping at all. Propose a task to bind its values the same way, or have it call the bq_writes function.
+5. Decision for Martin: `update_followup_status` has no caller in this repo. Either delete it, or keep it as the function `send_followups.py` should be calling (which makes item 4 a one-line change). Not decided on this branch.
+6. Not covered, same hole: `save_mn_api_key` (pastes `email` and `api_key`), `set_ticket_assignee`, `set_member_assignment_override` still interpolate values, and so does `remove_grant_coach` (int only). They were outside the seven the gate named; worth a second task.
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done:
-In flight (file:line):
-Next:
-Traps (with dates):
+Done: slices 1-4 and the guard hardening, all approved by the overseer up to slice 4. Seven writers bind every value; 65 passed with `tests/test_bulk_close.py`.
+In flight: slice 5 (this section, spec proposals), then merge origin/main, `wt-done.sh --check`, queue row, report.
+Next: report to helpdesk-opzichter [434020] (the one on this machine).
+Traps: 2026-10-21 red-proofs must copy the whole tree (tar, exclude .git), mutate there and run pytest from inside with a relative path; PYTHONPATH tricks import the worktree. Check the mutation hit the line meant (`@title, @body,` also sits in `save_standard_reply`).
