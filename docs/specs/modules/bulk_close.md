@@ -280,8 +280,9 @@ to a copy of the list it got back, never mutating the helper's own.
 - The Conversations panel has had **no visual check.** The login gate keeps
   AppTest off it, so R12's `ast` tests prove the wiring and nothing proves the
   rendering; it is hand-checked on the live app after a deploy, as
-  `coach_inbox`'s click-through is. First due after the 2026-10-20 deploy,
-  revision `grant-helpdesk-00078-rmk`.
+  `coach_inbox`'s click-through is. Still owed: it was first due after the
+  2026-10-20 deploy and has not been done, so it is now due on the revision
+  serving today, `grant-helpdesk-00080-2h2` (2026-10-21, the R10 landing).
 - The error view above is read off the absence of a `try` in the panel, not off
   a failure anyone watched. What a coach actually sees is unverified.
 - **R10 is held on this path only.** The same hand-quoting the sweep just lost
