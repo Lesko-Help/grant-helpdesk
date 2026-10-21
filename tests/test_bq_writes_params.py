@@ -120,21 +120,29 @@ def _split_top_level(text: str):
     return parts
 
 
-def _assert_columns_match(sql: str, renames=None, literal_columns=()):
-    """In: the SQL of an UPDATE or INSERT; `renames` {column: parameter name}
-    for the few places the two differ; `literal_columns` the columns the code
-    itself fills with a constant or its own timestamp (the only holes allowed).
+def _assert_columns_match(fake, renames=None, literal_columns=()):
+    """In: the fake after a call (its SQL and parameters); `renames` {column:
+    parameter name} for the few places the two differ; `literal_columns` the
+    columns the code itself fills with a constant or its own timestamp (the
+    only holes allowed).
     Out: nothing; raises unless
       - every `column = @param` (also `column = TIMESTAMP(@param)`) in the
-        statement has param == column, and
+        statement has param == column,
       - in an INSERT, the Nth column of the list takes the Nth value, i.e.
-        `@<that column>`, unless it is a literal column.
+        `@<that column>`, unless it is a literal column, and
+      - EVERY parameter that was sent was matched to a column this way.
     Why: _assert_all_bound cannot see a swap such as VALUES (@email, @full_name)
-    for (full_name, email), which would write every name into the email column."""
+    for (full_name, email), which would write every name into the email column.
+    The last rule is what stops this guard passing blind: if the SQL is reshaped
+    (a trailing `;`, a CAST around a parameter) so the patterns below read
+    nothing, the parameters stay unmatched and the test goes red instead."""
+    sql = fake.sql
     renames = renames or {}
+    matched = set()
     for column, param in re.findall(r"(\w+)\s*=\s*(?:TIMESTAMP\()?@(\w+)", sql):
         assert param == renames.get(column, column), f"{column} = @{param}"
-    insert = re.search(r"INSERT INTO\s+\S+\s*\(([^)]*)\)\s*VALUES\s*\((.*)\)\s*$", sql, re.S)
+        matched.add(param)
+    insert = re.search(r"INSERT INTO\s+\S+\s*\(([^)]*)\)\s*VALUES\s*\((.*)\)\s*;?\s*$", sql, re.S)
     if insert:
         columns = [c.strip() for c in insert.group(1).split(",")]
         values = _split_top_level(insert.group(2))
@@ -144,6 +152,10 @@ def _assert_columns_match(sql: str, renames=None, literal_columns=()):
                 assert "@" not in value, f"{column} should be a code-made literal"
             else:
                 assert value == f"@{renames.get(column, column)}", f"{column} takes {value}"
+                matched.add(renames.get(column, column))
+    sent = set(_params(fake.job_config))
+    assert sent, "no parameters were sent, nothing to check"
+    assert sent <= matched, f"parameters never matched to a column: {sorted(sent - matched)}"
 
 
 # --- update_ticket_meta ------------------------------------------------------
@@ -208,7 +220,7 @@ def test_add_grant_coach_binds_every_value(fake):
               "added_by": _hostile("adder")}
     bq_writes.add_grant_coach(member_id=4242, **values)
     _assert_all_bound(fake, values)
-    _assert_columns_match(fake.sql, literal_columns={"added_at"})
+    _assert_columns_match(fake, literal_columns={"added_at"})
     assert ("INT64", 4242) in _params(fake.job_config).values()
     assert "4242" not in fake.sql
 
@@ -218,7 +230,7 @@ def test_link_coach_login_email_binds_every_value(fake):
     values = {"login_email": _hostile("login")}
     bq_writes.link_coach_login_email(member_id=4242, **values)
     _assert_all_bound(fake, values)
-    _assert_columns_match(fake.sql)
+    _assert_columns_match(fake)
     assert ("INT64", 4242) in _params(fake.job_config).values()
     assert "4242" not in fake.sql
 
@@ -232,7 +244,7 @@ def test_update_followup_status_binds_every_value(fake):
               "skipped_reason": _hostile("why")}
     bq_writes.update_followup_status(**values)
     _assert_all_bound(fake, values)
-    _assert_columns_match(fake.sql, renames={"id": "followup_id"})
+    _assert_columns_match(fake, renames={"id": "followup_id"})
 
 
 def test_update_followup_status_only_sets_what_it_was_given(fake):
@@ -252,7 +264,7 @@ def test_submit_team_feedback_binds_every_value(fake):
               "title": _hostile("title"), "body": _hostile("body")}
     bq_writes.submit_team_feedback(**values)
     _assert_all_bound(fake, values)
-    _assert_columns_match(fake.sql, literal_columns={"status", "created_at"})
+    _assert_columns_match(fake, literal_columns={"status", "created_at"})
 
 
 def test_reply_team_feedback_binds_every_value(fake):
@@ -261,4 +273,4 @@ def test_reply_team_feedback_binds_every_value(fake):
               "replied_by": _hostile("replier"), "new_status": _hostile("newstatus")}
     bq_writes.reply_team_feedback(**values)
     _assert_all_bound(fake, values)
-    _assert_columns_match(fake.sql)
+    _assert_columns_match(fake)
