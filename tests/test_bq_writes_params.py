@@ -1,0 +1,204 @@
+"""
+Offline guard: the single-row bq_writes statements bind every caller value.
+
+Why it exists: these functions used to paste values into the SQL text, with
+`.replace("'", "\\'")` on a few of them. That escapes a quote but not a
+backslash, so a value ending in `\\` escapes the closing quote and breaks or
+extends the statement; and some values (ids, status, assignee, domain,
+submitted_by, feedback_type) were pasted with no escaping at all.
+
+What each case checks, per function, with a hostile value `<label>-O'Brien\\`:
+  1. the SQL text carries none of the caller's values (nor their labels);
+  2. each value reaches BigQuery as a named STRING query parameter, and the
+     SQL refers to every parameter as @name;
+  3. the value in the parameter equals what the caller passed, byte for byte
+     (so O'Brien\\ round-trips; nothing was escaped or dropped).
+
+Nothing here touches BigQuery: a fake client remembers what it was handed.
+Run: PATH=/opt/anaconda3/bin:$PATH python -m pytest tests/test_bq_writes_params.py -q
+(never bare `pytest tests/`, which runs smoke_test.py against live BigQuery).
+"""
+
+import re
+
+import pytest
+
+import bq_writes
+
+
+HOSTILE_TAIL = "-O'Brien\\"
+
+
+def _hostile(label: str) -> str:
+    """In: a short label. Out: a value like `zq_cid-O'Brien\\` that is unique per
+    argument, holds a quote and ends in a backslash. Why: the label lets a test
+    find the value in the SQL text; the tail is the input that broke the old code."""
+    return f"zq_{label}{HOSTILE_TAIL}"
+
+
+class _FakeJob:
+    """Stands in for a BigQuery job: no rows."""
+    num_dml_affected_rows = 0
+
+    def result(self):
+        return []
+
+
+class _FakeClient:
+    """Remembers the last SQL text and job_config passed to query(); runs nothing."""
+
+    def __init__(self):
+        self.sql = None
+        self.job_config = None
+
+    def query(self, sql, job_config=None):
+        self.sql = sql
+        self.job_config = job_config
+        return _FakeJob()
+
+
+def _params(job_config) -> dict:
+    """In: the job_config handed to client.query (or None).
+    Out: {parameter name: (type, value)}. Why: checked on what the client was
+    handed, not on what the function says it did."""
+    return {p.name: (p.type_, p.value)
+            for p in (getattr(job_config, "query_parameters", None) or [])}
+
+
+@pytest.fixture
+def fake(monkeypatch):
+    """In: nothing. Out: the fake client now installed in bq_writes. Why: lets a
+    test call a writer and read the statement it sent. The assignment refresh
+    (an HTTP call after update_ticket_meta) is switched off."""
+    client = _FakeClient()
+    monkeypatch.setattr(bq_writes, "client", client)
+    monkeypatch.setattr(bq_writes, "trigger_assignment_refresh", lambda: None)
+    return client
+
+
+def _assert_all_bound(fake, values: dict, labels=()):
+    """In: the fake after a call, {argument name: hostile value} the caller
+    passed, and the labels that must not leak into SQL.
+    Out: nothing; raises if a value is in the SQL text, is not a STRING
+    parameter, or if some parameter is never referenced as @name.
+    Why: the three promises in the module docstring, in one place."""
+    sql, params = fake.sql, _params(fake.job_config)
+    for arg, value in values.items():
+        assert value not in sql, f"{arg}: value pasted into the SQL text"
+        assert value.split("-")[0] not in sql, f"{arg}: label leaked into the SQL text"
+        matches = [name for name, (type_, v) in params.items() if v == value]
+        assert matches, f"{arg}: no query parameter carries the value unchanged"
+        for name in matches:
+            assert params[name][0] == "STRING", f"{arg}: parameter {name} is not STRING"
+    for name in params:
+        assert re.search(rf"@{name}\b", sql), f"parameter {name} is never used in the SQL"
+
+
+# --- update_ticket_meta ------------------------------------------------------
+
+def test_update_ticket_meta_binds_every_value(fake):
+    """Every string argument becomes a parameter; closed_by is NULL (SQL) when not closing."""
+    values = {"content_id": _hostile("cid"), "status": _hostile("status"),
+              "assigned_to": _hostile("assignee"), "domain": _hostile("domain"),
+              "feedback_reason": _hostile("reason")}
+    bq_writes.update_ticket_meta(**values)
+    _assert_all_bound(fake, values)
+    assert "CAST(NULL AS TIMESTAMP)" in fake.sql and "CAST(NULL AS STRING)" in fake.sql
+
+
+def test_update_ticket_meta_closing_binds_closed_by(fake):
+    """status 'closed' with a closer: closed_by is a parameter, closed_at stays a SQL timestamp."""
+    values = {"content_id": _hostile("cid"), "assigned_to": _hostile("assignee"),
+              "domain": _hostile("domain"), "feedback_reason": _hostile("reason"),
+              "closed_by": _hostile("closer")}
+    bq_writes.update_ticket_meta(status="closed", **values)
+    _assert_all_bound(fake, values)
+    assert "CAST(NULL AS TIMESTAMP)" not in fake.sql
+    assert ("STRING", "closed") in _params(fake.job_config).values()
+
+
+def test_update_ticket_meta_empty_optionals_are_still_bound(fake):
+    """domain/reason left out: the SQL still has no pasted values and sends empty strings."""
+    bq_writes.update_ticket_meta(_hostile("cid"), "open", "")
+    params = _params(fake.job_config)
+    assert _hostile("cid") not in fake.sql
+    assert ("STRING", "") in params.values()
+    assert all(t == "STRING" for t, _ in params.values())
+
+
+# --- set_ticket_lane ---------------------------------------------------------
+
+def test_set_ticket_lane_binds_every_value(fake):
+    """content_id, lane and the reason are parameters."""
+    values = {"content_id": _hostile("cid"), "lane": _hostile("lane"),
+              "feedback_reason": _hostile("reason")}
+    bq_writes.set_ticket_lane(**values)
+    _assert_all_bound(fake, values)
+
+
+def test_set_ticket_lane_without_reason_keeps_typed_null_in_sql(fake):
+    """No reason: no reason parameter at all; the typed NULL stays SQL."""
+    values = {"content_id": _hostile("cid"), "lane": _hostile("lane")}
+    bq_writes.set_ticket_lane(**values)
+    _assert_all_bound(fake, values)
+    assert "CAST(NULL AS STRING)" in fake.sql
+    assert len(_params(fake.job_config)) == 2
+
+
+# --- coaches -----------------------------------------------------------------
+
+def test_add_grant_coach_binds_every_value(fake):
+    """name, email, added_by are STRING parameters; member_id is an INT64 parameter."""
+    values = {"full_name": _hostile("name"), "email": _hostile("email"),
+              "added_by": _hostile("adder")}
+    bq_writes.add_grant_coach(member_id=4242, **values)
+    _assert_all_bound(fake, values)
+    assert ("INT64", 4242) in _params(fake.job_config).values()
+    assert "4242" not in fake.sql
+
+
+def test_link_coach_login_email_binds_every_value(fake):
+    """login_email is a STRING parameter; member_id is an INT64 parameter."""
+    values = {"login_email": _hostile("login")}
+    bq_writes.link_coach_login_email(member_id=4242, **values)
+    _assert_all_bound(fake, values)
+    assert ("INT64", 4242) in _params(fake.job_config).values()
+    assert "4242" not in fake.sql
+
+
+# --- follow-ups --------------------------------------------------------------
+
+def test_update_followup_status_binds_every_value(fake):
+    """id, status, both timestamps and the reason are STRING parameters."""
+    values = {"followup_id": _hostile("fid"), "status": _hostile("status"),
+              "sent_at": _hostile("sent"), "skipped_at": _hostile("skipped"),
+              "skipped_reason": _hostile("why")}
+    bq_writes.update_followup_status(**values)
+    _assert_all_bound(fake, values)
+
+
+def test_update_followup_status_only_sets_what_it_was_given(fake):
+    """Just id and status: no timestamp or reason column is touched."""
+    values = {"followup_id": _hostile("fid"), "status": _hostile("status")}
+    bq_writes.update_followup_status(**values)
+    _assert_all_bound(fake, values)
+    assert "sent_at" not in fake.sql and "skipped" not in fake.sql
+    assert len(_params(fake.job_config)) == 2
+
+
+# --- team feedback -----------------------------------------------------------
+
+def test_submit_team_feedback_binds_every_value(fake):
+    """submitter, type, title and body are parameters; the new id is one too."""
+    values = {"submitted_by": _hostile("by"), "feedback_type": _hostile("type"),
+              "title": _hostile("title"), "body": _hostile("body")}
+    bq_writes.submit_team_feedback(**values)
+    _assert_all_bound(fake, values)
+
+
+def test_reply_team_feedback_binds_every_value(fake):
+    """id, reply text, replier and new status are parameters."""
+    values = {"feedback_id": _hostile("fbid"), "reply_text": _hostile("reply"),
+              "replied_by": _hostile("replier"), "new_status": _hostile("newstatus")}
+    bq_writes.reply_team_feedback(**values)
+    _assert_all_bound(fake, values)
