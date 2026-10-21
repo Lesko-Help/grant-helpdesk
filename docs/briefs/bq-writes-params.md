@@ -82,15 +82,45 @@ by `smoke_test.py`, against live BigQuery. The guard is most of the value.
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass. Landed on Martin's say-so 2026-10-21. Verified by the overseer independently, not from the worker's report: whole offline suite 309 passed (`pytest tests/ --ignore=tests/smoke_test.py`); the column-mapping guard proved red on four separate mutation shapes, each failing only its own case, including an `INSERT ... SELECT` the guard's regex cannot parse at all; every public writer in the file walked with `ast` to confirm which still interpolate.
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+Raised by the overseer at the slice checkpoints, each proved on a scratch copy
+of the tree before it was raised:
+
+1. `_assert_all_bound` proves a parameter is *used*, not that it lands in its
+   own column. `update_ticket_meta` had no other cover for that — its only
+   other tests are live smoke tests that assert "did not raise".
+2. Column mapping was unguarded for the non-MERGE shapes: swapping `@full_name`
+   and `@email` in `add_grant_coach`'s positional INSERT, which writes every new
+   coach's name into the email column, passed all nine then-green tests.
+3. `_assert_columns_match` never asserted it had matched anything. One trailing
+   semicolon after the INSERT, or a `CAST(@x AS ...)` in the UPDATE, made it
+   pass blind on exactly the swap it exists to catch.
+4. Not fixed, outside this gate's scope, carried as proposals 4-6 above: four
+   writers still paste values raw (`save_mn_api_key` pastes an API key and an
+   email with no escaping at all, the worst of them), `jobs/send_followups.py`
+   lines 66-80 duplicates the unescaped pattern on a daily unattended rail, and
+   `update_followup_status` has no caller in this repo.
+
+One method correction belongs here too, because it was the overseer's error and
+it reached the worker as an instruction: the scratch red-proof recipe first
+given (mutate a copy, then run pytest against the worktree's test file by
+absolute path) silently imports the *unmutated* module, so it reports green on
+a sabotaged file. See the trap under State for the method that works.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. `5fa948f` — `_assert_aliased`, every MERGE parameter must be aliased `AS` its
+   own column.
+2. `d6ecd77` — `_assert_columns_match`, `column = @column` for UPDATE and Nth
+   column takes Nth value for INSERT.
+3. `c56b21e` — the same guard now requires every parameter sent to have been
+   matched to a column, and that any were sent at all.
+4. Not fixed — see proposals 4-6. Each needs its own task and its own gate.
+
+The repo's `review:300` subagent pass was still in flight when Martin said to
+land; anything it returns becomes a follow-up task on `main`, not a hold on this
+branch.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
