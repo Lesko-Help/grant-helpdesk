@@ -94,6 +94,16 @@ def _assert_all_bound(fake, values: dict, labels=()):
         assert re.search(rf"@{name}\b", sql), f"parameter {name} is never used in the SQL"
 
 
+def _assert_aliased(sql: str, columns):
+    """In: the SQL a MERGE sent and the parameter/column names it must carry.
+    Out: nothing; raises unless each `@name` is aliased `AS name` (its own column).
+    Why: _assert_all_bound only proves a parameter is used somewhere; swapping
+    `@status AS assigned_to` with `@assigned_to AS status` would pass it and
+    write every status into the assignee column."""
+    for name in columns:
+        assert re.search(rf"@{name}\s+AS\s+{name}\b", sql), f"@{name} is not aliased AS {name}"
+
+
 # --- update_ticket_meta ------------------------------------------------------
 
 def test_update_ticket_meta_binds_every_value(fake):
@@ -103,6 +113,7 @@ def test_update_ticket_meta_binds_every_value(fake):
               "feedback_reason": _hostile("reason")}
     bq_writes.update_ticket_meta(**values)
     _assert_all_bound(fake, values)
+    _assert_aliased(fake.sql, values)
     assert "CAST(NULL AS TIMESTAMP)" in fake.sql and "CAST(NULL AS STRING)" in fake.sql
 
 
@@ -113,6 +124,7 @@ def test_update_ticket_meta_closing_binds_closed_by(fake):
               "closed_by": _hostile("closer")}
     bq_writes.update_ticket_meta(status="closed", **values)
     _assert_all_bound(fake, values)
+    _assert_aliased(fake.sql, values)
     assert "CAST(NULL AS TIMESTAMP)" not in fake.sql
     assert ("STRING", "closed") in _params(fake.job_config).values()
 
@@ -134,6 +146,7 @@ def test_set_ticket_lane_binds_every_value(fake):
               "feedback_reason": _hostile("reason")}
     bq_writes.set_ticket_lane(**values)
     _assert_all_bound(fake, values)
+    _assert_aliased(fake.sql, values)
 
 
 def test_set_ticket_lane_without_reason_keeps_typed_null_in_sql(fake):
