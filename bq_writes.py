@@ -49,26 +49,46 @@ def save_mn_api_key(email: str, api_key: str):
 
 
 def link_coach_login_email(member_id: int, login_email: str):
-    """Save the portal login email for a coach so future logins are recognised."""
-    e = login_email.replace("'", "\\'")
+    """
+    In: the coach's member id (a number) and the email they log in with.
+    Out: nothing; that coach's login_email column is set.
+    Why: so future portal logins are recognised. Both values reach BigQuery as
+    query parameters (INT64 and STRING), never in the SQL text.
+    SQL analogy: UPDATE grant_coaches SET login_email = ? WHERE member_id = ?
+    """
     sql = f"""
         UPDATE `{config.GRANT_COACHES_TABLE}`
-        SET login_email = '{e}'
-        WHERE member_id = {member_id}
+        SET login_email = @login_email
+        WHERE member_id = @member_id
     """
-    client.query(sql).result()
+    params = [
+        bigquery.ScalarQueryParameter("login_email", "STRING", login_email),
+        bigquery.ScalarQueryParameter("member_id", "INT64", member_id),
+    ]
+    client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
 
 
 def add_grant_coach(member_id: int, full_name: str, email: str, added_by: str):
+    """
+    In: the new coach's member id (a number), name, email, and who added them.
+    Out: nothing; one grant_coaches row is inserted, stamped with the time now.
+    Why: lets an admin add a coach. Every value from a person is a query
+    parameter (member_id INT64, the rest STRING); only the code-made timestamp
+    is written into the SQL.
+    SQL analogy: INSERT INTO grant_coaches VALUES (?, ?, ?, now, ?)
+    """
     now = datetime.datetime.utcnow().isoformat()
-    _name     = full_name.replace("'", "\\'")
-    _email    = email.replace("'", "\\'")
-    _added_by = added_by.replace("'", "\\'")
     sql = f"""
         INSERT INTO `{config.GRANT_COACHES_TABLE}` (member_id, full_name, email, added_at, added_by)
-        VALUES ({member_id}, '{_name}', '{_email}', TIMESTAMP '{now}', '{_added_by}')
+        VALUES (@member_id, @full_name, @email, TIMESTAMP '{now}', @added_by)
     """
-    client.query(sql).result()
+    params = [
+        bigquery.ScalarQueryParameter("member_id", "INT64", member_id),
+        bigquery.ScalarQueryParameter("full_name", "STRING", full_name),
+        bigquery.ScalarQueryParameter("email", "STRING", email),
+        bigquery.ScalarQueryParameter("added_by", "STRING", added_by),
+    ]
+    client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
 
 
 def remove_grant_coach(member_id: int):
@@ -126,21 +146,36 @@ def queue_followup(
 
 
 def update_followup_status(followup_id: str, status: str, **kwargs) -> None:
-    """Update a followup_queue row. kwargs: sent_at, skipped_at, skipped_reason."""
-    sets = [f"status = '{status}'"]
+    """
+    In: a followup_queue row id, its new status, and optionally sent_at,
+    skipped_at (timestamps as text) and skipped_reason.
+    Out: nothing; that row's status, and only the extra columns given, change.
+    Why: the follow-up sender and the coach's "skip" button. Every value is a
+    STRING query parameter; the timestamps are cast in the SQL with
+    TIMESTAMP(@x), so the parameter itself stays a STRING.
+    SQL analogy: UPDATE followup_queue SET status = ?, [sent_at = ?, ...] WHERE id = ?
+    """
+    sets = ["status = @status"]
+    params = [
+        bigquery.ScalarQueryParameter("status", "STRING", status),
+        bigquery.ScalarQueryParameter("followup_id", "STRING", followup_id),
+    ]
     if "sent_at" in kwargs:
-        sets.append(f"sent_at = TIMESTAMP '{kwargs['sent_at']}'")
+        sets.append("sent_at = TIMESTAMP(@sent_at)")
+        params.append(bigquery.ScalarQueryParameter("sent_at", "STRING", str(kwargs["sent_at"])))
     if "skipped_at" in kwargs:
-        sets.append(f"skipped_at = TIMESTAMP '{kwargs['skipped_at']}'")
+        sets.append("skipped_at = TIMESTAMP(@skipped_at)")
+        params.append(bigquery.ScalarQueryParameter("skipped_at", "STRING", str(kwargs["skipped_at"])))
     if "skipped_reason" in kwargs:
-        reason = (kwargs["skipped_reason"] or "").replace("'", "\\'")
-        sets.append(f"skipped_reason = '{reason}'")
+        sets.append("skipped_reason = @skipped_reason")
+        params.append(bigquery.ScalarQueryParameter(
+            "skipped_reason", "STRING", kwargs["skipped_reason"] or ""))
     sql = f"""
         UPDATE `{config.FOLLOWUP_QUEUE_TABLE}`
         SET {', '.join(sets)}
-        WHERE id = '{followup_id}'
+        WHERE id = @followup_id
     """
-    client.query(sql).result()
+    client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
 
 
 def execute_bulk_close(
