@@ -2,7 +2,7 @@
 Status: agreed
 Kind: app
 Summary: the one sweep that closes many tickets at once — one lane per sweep, confirmed against a previewed count
-Part of: `docs/specs/INDEX.md` · Deploy: `deploy.sh` (ships inside the app image) · Updated: 2026-10-20
+Part of: `docs/specs/INDEX.md` · Deploy: `deploy.sh` (ships inside the app image) · Updated: 2026-10-21
 Who: a grant coach, on the Tickets tab or the Conversations tab · Where: Streamlit, a "Bulk Close" expander on each
 Reads: `grant_helpdesk.grant_tickets`, `grant_helpdesk.ticket_metadata`, `grant_helpdesk.followup_queue` — only to decide which rows to write
 Writes: `grant_helpdesk.ticket_metadata`
@@ -113,12 +113,23 @@ see the Open check: nobody has watched it fail.
   `test_r9_preview_returns_the_three_filters_it_used`. The second of those is
   the one that catches a widget merely *named* in the confirm branch while all
   three arguments are correct.
-- R10: filter values must reach BigQuery as query parameters. Today all four are
-  interpolated into the SQL with ad-hoc quote stripping — not a safety boundary,
-  and it corrupts rather than refuses: `status_filter`, `before_date` and `lane`
-  drop the quote (`.replace("'", "")`), so a sweep filtered on `O'Brien` runs on
-  a value the coach never typed; `assigned_to` escapes it instead. Held by the
-  `bulk-close-params` worktree, opened 2026-10-20.
+- R10: **filter values reach BigQuery as query parameters.** Five values are
+  bound, never interpolated: `status_filter`, `assigned_to`, `before_date`,
+  `lane` and `closed_by`. `closed_by` is in that list because it is the audit
+  field of the one destructive path, and it was hand-escaped twice in the MERGE.
+  Until 2026-10-21 all five were interpolated with ad-hoc quote stripping, which
+  is not a safety boundary and corrupts rather than refuses: `status_filter`,
+  `before_date` and `lane` dropped the quote (`.replace("'", "")`), so a sweep
+  filtered on `O'Brien` ran on a value the coach never typed, while
+  `assigned_to` and `closed_by` escaped it instead. Built by the
+  `bulk-close-params` worktree, landed 2026-10-21.
+  *Guarded on what the client was handed, not on the SQL text alone:* the three
+  `test_r10_*` tests read the `QueryJobConfig` a fake client recorded — the text
+  carries no filter value anywhere, each parameter holds its value exactly and
+  is typed STRING under the expected name, and preview and execute are handed
+  the identical pair. A guard reading only the text would stay green on a
+  placeholder whose bound value had been mangled, which is the bug this rule is
+  for.
 - R11: **one lane per sweep.** Preview and execute each take a `lane` and
   constrain the selection to it, through the same live-lane expression the lists
   use (`bq_reads._live_lane_expr`: `tm.lane` when set, else `gt.lane`, else
@@ -154,6 +165,14 @@ see the Open check: nobody has watched it fail.
   spans the two presses; and `execute_bulk_close` takes `gt_cols` as a keyword
   whose default `None` means "probe now", with the panel always passing what
   preview returned. Identical by construction, not by two probes agreeing.
+  *Guarded on the bound lane, since R10:* the SQL text reads `t.lane = @lane`
+  for both lanes, so it no longer names which lane is being swept. The tests
+  still assert that predicate is present and `AND`-ed last, but *which* lane a
+  caller constrains to is read off the recorded `@lane` parameter — plus a case
+  asserting the two lanes send byte-identical SQL (clock literals normalised)
+  and differ in that one bound value and nothing else. The old
+  literal-lane-in-the-text check is gone on purpose: after R10 there is no
+  literal left to find.
 - R12: **the panel exists once.** The two tabs' panels are one renderer taking
   the lane, not two copies, and every widget key plus the preview's
   session-state key carries the lane — both tabs render on the same Streamlit
@@ -185,9 +204,9 @@ for all; an ISO date (`YYYY-MM-DD`) or `""` for all dates; the closing coach;
 one statement. No `BTB_ALERT`: this runs behind a coach's click, not on a
 schedule, so a human sees the failure at once.
 
-*Test:* `tests/test_bulk_close.py` guards R2, R3 (in both callers), R4, R9, R11
-and R12, on SQL strings and on `app.py`'s source, with no BigQuery client; R7,
-R8 and R10 are not tested. 44 tests, run with:
+*Test:* `tests/test_bulk_close.py` guards R2, R3 (in both callers), R4, R9, R10,
+R11 and R12, on SQL strings, on recorded query parameters and on `app.py`'s
+source, with no BigQuery client; R7 and R8 are not tested. 54 tests, run with:
 
 ```
 PATH=/opt/anaconda3/bin:$PATH python -m pytest tests/test_bulk_close.py -q
@@ -201,8 +220,14 @@ both functions built *before* the extraction, and compares line multisets for
 four filter sets against both callers, pinning the only differences the
 extraction and the lane work were allowed to have: `'archived'` added, the
 nesting, the `AS lane` column written out literally, the comma it puts on the
-line before, and a per-case WHERE line equal to the fixture's own plus
-`AND t.lane = 'question'`. It stays **exact multiset equality**, not
+line before, a per-case WHERE line derived from the fixture's own by replacing
+each set filter's quoted value with its placeholder and appending
+`AND t.lane = @lane`, and two execute lines where `closed_by` became
+`@closed_by`. Each of those replacements asserts it applied exactly once: one
+that silently matched nothing would leave the line compared with itself and so
+pass over a broken expectation. (The 4th case's text names the escaped
+`o\'brien`, because the fixture is the *before* state.) It stays **exact
+multiset equality**, not
 containment, and the fixture is never regenerated. It bites: one extra column
 on the helper's `base` SELECT, a dropped lane predicate, a sweep ignoring its
 lane argument, or a silent change to the lane expression each turn all eight
@@ -234,9 +259,17 @@ every input the count was built from (R9).
 ### bulk_close_rows_sql(status_filter="answered", assigned_to="", before_date="", *, lane, gt_cols)
 
 *Lives in `bq_reads.py:490`.* The selection both callers share: builds the
-`base` CTE and the filtered SELECT, returns SQL text. Pure — no client, no
-schema probe (R11); `lane` and `gt_cols` are keyword-only with no defaults, so
-a caller cannot forget either one quietly.
+`base` CTE and the filtered SELECT, and returns `(sql, params)` — the text plus
+the list of STRING `ScalarQueryParameter`s that text refers to. The pair travels
+together so no caller can run the SQL without its values (R10). Placeholders:
+`@status_filter`, `@assigned_to` and `@before_date`, each present only when that
+filter is set, and `@lane`, always present. `before_date` is used as
+`DATE(@before_date)` — the cast lives in the SQL, so the parameter itself stays
+a STRING like the others. Pure — no client, no schema probe (R11); `lane` and
+`gt_cols` are keyword-only with no defaults, so a caller cannot forget either
+one quietly. Both callers hand the pair to BigQuery with
+`QueryJobConfig(query_parameters=...)`; `execute_bulk_close` appends `closed_by`
+to a copy of the list it got back, never mutating the helper's own.
 
 ### bulk_close_keys(lane) · render_bulk_close_panel(lane, team_members, current_user)
 
@@ -251,9 +284,29 @@ a caller cannot forget either one quietly.
   revision `grant-helpdesk-00078-rmk`.
 - The error view above is read off the absence of a `try` in the panel, not off
   a failure anyone watched. What a coach actually sees is unverified.
+- **R10 is held on this path only.** The same hand-quoting the sweep just lost
+  is still live elsewhere in the two files it touched: `bq_reads.py:436` and
+  `bq_writes.py` lines 53, 64-66, 136, 215-216, 271-272, 454-455, 470. Same bug
+  class, same corruption rather than refusal, but each belongs to its own spec
+  and its own task — `bulk-close-params` deliberately did not sweep them,
+  because one worktree editing nine unrelated call sites is a diff nobody can
+  review. Not scheduled; listed here so the next reader of this rule does not
+  take it for a repo-wide property.
 
 ## Decisions
 
+- 2026-10-21: R10 built and landed (`724fe17`), with `closed_by` as a fifth
+  parameter rather than the four the gate approved (Martin, asked and answered
+  during review). Why five: `closed_by` is the only value the MERGE *writes*
+  rather than filters on, so a mangled quote there lands in the audit trail of a
+  destructive sweep and is never seen again, whereas a mangled filter at least
+  changes a number a coach is looking at. The review that passed it was the
+  overseer's own verification, not the worker's report: of the worker's three
+  red proofs none actually tested this rule — each kept the placeholder and
+  broke something else — and the missing mutation (placeholder kept,
+  `.replace("'", "")` restored on the parameter *value*) was run by the overseer
+  and went red for both callers. That is why R10's guard is written as "on what
+  the client was handed", above.
 - 2026-10-20: split out of `bq_writes.md` (Martin), which stood at 249 lines
   against STYLE R8's ~150. The seam is the one that file already named: the
   destructive sweep and its panel on one side, the single-row writes on the
