@@ -120,13 +120,17 @@ never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
 
+1. File `docs/specs/modules/bq_writes.md`, Overview, next to the bind-every-value rule: a writer that binds a text value takes only a `str`; anything else (float NaN from the merged frame) is sent as NULL, never `""`, so `COALESCE(tm.assigned_to, gt.assigned_to)` falls through. Guarded by `tests/test_bq_writes_params.py::test_no_writer_binds_a_float`, which also fails if a new binding writer is not in its table.
+2. Same file, `### One ticket at a time` and `### Follow-ups`: `update_ticket_meta` with a NaN `assigned_to` writes NULL and so skips the assignment refresh; `save_standard_reply` with a NaN `reply_id` inserts a new reply (same as None); `update_followup_status` sends a NaN `sent_at`/`skipped_at` as NULL.
+3. Not covered, needs its own task: `set_ticket_assignee` and `set_member_assignment_override` paste values into the SQL, so NaN still becomes the text 'nan' there (app.py:1273 calls the first). They must first bind parameters; only then can the guard apply (None would paste as 'None'). Also `save_mn_api_key`, `queue_followup` (insert_rows_json, no parameters) and int arguments (`member_id` NaN into INT64).
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done:
-In flight (file:line):
-Next:
-Traps (with dates):
+Done: red test (29 failures on main, f-test commit), guard in nine writers, timestamp NaN test, full suite green (341).
+In flight: nothing.
+Next: wt-done.sh --check, queue row update, report to helpdesk-opzichter.
+Traps (with dates): 2026-10-22 set_ticket_assignee and set_member_assignment_override still interpolate; a NaN there writes 'nan'.
