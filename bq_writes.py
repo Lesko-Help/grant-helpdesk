@@ -19,6 +19,29 @@ from bq_reads import bulk_close_rows_sql
 TEAM_FEEDBACK_TABLE = f"{config.PROJECT_ID}.{config.DATASET}.team_feedback"
 
 
+def _text_or_none(value):
+    """
+    In: any value a caller hands a writer for a text column.
+    Out: the value itself when it is a str, otherwise None (SQL NULL).
+    Why: merge_into_tickets fills missing columns with float NaN; bool(nan) is
+    True so `v or ""` lets it through, and a float bound as a STRING parameter
+    is not legal JSON. None is NULL, so COALESCE(tm.assigned_to,
+    gt.assigned_to) falls through to the derived value where "" would shadow it.
+    SQL analogy: NULLIF(value, anything-that-is-not-text).
+    """
+    return value if isinstance(value, str) else None
+
+
+def _timestamp_text(value):
+    """
+    In: a timestamp a caller gave as text or a datetime (or a float NaN).
+    Out: str(value), or None when the value is a float (NaN has no time).
+    Why: update_followup_status binds timestamps as STRING and used str(), which
+    turns NaN into the text 'nan'; TIMESTAMP('nan') would fail the whole UPDATE.
+    """
+    return None if isinstance(value, float) else str(value)
+
+
 def post_comment(content_id: str, author: str, body: str):
     table = client.get_table(config.COMMENTS_TABLE)
     row = [{
@@ -54,8 +77,10 @@ def link_coach_login_email(member_id: int, login_email: str):
     Out: nothing; that coach's login_email column is set.
     Why: so future portal logins are recognised. Both values reach BigQuery as
     query parameters (INT64 and STRING), never in the SQL text.
+    A value that is not text (a float NaN from the merged frame) is sent as NULL.
     SQL analogy: UPDATE grant_coaches SET login_email = ? WHERE member_id = ?
     """
+    login_email = _text_or_none(login_email)
     sql = f"""
         UPDATE `{config.GRANT_COACHES_TABLE}`
         SET login_email = @login_email
@@ -75,8 +100,10 @@ def add_grant_coach(member_id: int, full_name: str, email: str, added_by: str):
     Why: lets an admin add a coach. Every value from a person is a query
     parameter (member_id INT64, the rest STRING); only the code-made timestamp
     is written into the SQL.
+    A value that is not text (a float NaN from the merged frame) is sent as NULL.
     SQL analogy: INSERT INTO grant_coaches VALUES (?, ?, ?, now, ?)
     """
+    full_name, email, added_by = map(_text_or_none, (full_name, email, added_by))
     now = datetime.datetime.utcnow().isoformat()
     sql = f"""
         INSERT INTO `{config.GRANT_COACHES_TABLE}` (member_id, full_name, email, added_at, added_by)
@@ -153,8 +180,10 @@ def update_followup_status(followup_id: str, status: str, **kwargs) -> None:
     Why: the follow-up sender and the coach's "skip" button. Every value is a
     STRING query parameter; the timestamps are cast in the SQL with
     TIMESTAMP(@x), so the parameter itself stays a STRING.
+    A value that is not text (a float NaN from the merged frame) is sent as NULL.
     SQL analogy: UPDATE followup_queue SET status = ?, [sent_at = ?, ...] WHERE id = ?
     """
+    followup_id, status = _text_or_none(followup_id), _text_or_none(status)
     sets = ["status = @status"]
     params = [
         bigquery.ScalarQueryParameter("status", "STRING", status),
@@ -162,14 +191,14 @@ def update_followup_status(followup_id: str, status: str, **kwargs) -> None:
     ]
     if "sent_at" in kwargs:
         sets.append("sent_at = TIMESTAMP(@sent_at)")
-        params.append(bigquery.ScalarQueryParameter("sent_at", "STRING", str(kwargs["sent_at"])))
+        params.append(bigquery.ScalarQueryParameter("sent_at", "STRING", _timestamp_text(kwargs["sent_at"])))
     if "skipped_at" in kwargs:
         sets.append("skipped_at = TIMESTAMP(@skipped_at)")
-        params.append(bigquery.ScalarQueryParameter("skipped_at", "STRING", str(kwargs["skipped_at"])))
+        params.append(bigquery.ScalarQueryParameter("skipped_at", "STRING", _timestamp_text(kwargs["skipped_at"])))
     if "skipped_reason" in kwargs:
         sets.append("skipped_reason = @skipped_reason")
         params.append(bigquery.ScalarQueryParameter(
-            "skipped_reason", "STRING", kwargs["skipped_reason"] or ""))
+            "skipped_reason", "STRING", _text_or_none(kwargs["skipped_reason"]) or ""))
     sql = f"""
         UPDATE `{config.FOLLOWUP_QUEUE_TABLE}`
         SET {', '.join(sets)}
@@ -253,10 +282,12 @@ def update_ticket_meta(
     (id, status, assignee, domain, reason, closer) reaches BigQuery as a named
     STRING query parameter, never in the SQL text, so a quote or a trailing
     backslash cannot change the statement. Only values the code makes itself
-    (the timestamp, the typed NULLs) are written into the SQL.
+    (the timestamp, the typed NULLs) are written into the SQL. A value that is not text (a float NaN from the merged frame) is sent as NULL.
     SQL analogy: MERGE ticket_metadata USING one literal row ON content_id,
     update on match, insert otherwise.
     """
+    content_id, status, assigned_to, domain, feedback_reason, closed_by = map(
+        _text_or_none, (content_id, status, assigned_to, domain, feedback_reason, closed_by))
     now        = datetime.datetime.utcnow().isoformat()
     params = [
         bigquery.ScalarQueryParameter("content_id", "STRING", content_id),
@@ -326,8 +357,9 @@ def set_ticket_lane(content_id: str, lane: str, feedback_reason: str = None):
     Out: nothing; one ticket_metadata row is updated or inserted.
     Id, lane and reason reach BigQuery as named STRING query parameters, never
     in the SQL text. With no reason the typed NULL stays in the SQL (it is not
-    a caller value) and no reason parameter is sent.
+    a caller value) and no reason parameter is sent. A value that is not text (a float NaN from the merged frame) is sent as NULL.
     """
+    content_id, lane, feedback_reason = map(_text_or_none, (content_id, lane, feedback_reason))
     now         = datetime.datetime.utcnow().isoformat()
     params = [
         bigquery.ScalarQueryParameter("content_id", "STRING", content_id),
@@ -474,9 +506,15 @@ def set_member_assignment_override(member_id: int, assigned_to: str, updated_by:
 def save_standard_reply(reply_id, title: str, body: str, saved_by: str) -> str:
     """Insert (reply_id=None) or update a standard reply. Returns the reply_id.
 
+    In: the reply id (None = new), title, body and who saved it.
+    Out: the reply's id (a new uuid when inserting).
+    A value that is not text, a float NaN included, is sent as NULL; a NaN
+    reply_id therefore inserts a new reply, like None.
+
     Uses query parameters (not string interpolation) because bodies are
     multi-line — raw newlines are not allowed inside BQ string literals.
     """
+    reply_id, title, body, saved_by = map(_text_or_none, (reply_id, title, body, saved_by))
     params = [
         bigquery.ScalarQueryParameter("title", "STRING", title),
         bigquery.ScalarQueryParameter("body", "STRING", body),
@@ -503,7 +541,14 @@ def save_standard_reply(reply_id, title: str, body: str, saved_by: str) -> str:
 
 
 def archive_standard_reply(reply_id: str) -> None:
-    """Hide a standard reply everywhere (soft delete — row is kept)."""
+    """
+    In: a standard reply's id.
+    Out: nothing; that row's is_active is set to FALSE and updated_at to now.
+    Why: hides the reply everywhere but keeps the row (soft delete). A non-text
+    id (float NaN) is sent as NULL and matches no row.
+    SQL analogy: UPDATE standard_replies SET is_active = FALSE WHERE reply_id = ?
+    """
+    reply_id = _text_or_none(reply_id)
     sql = f"""
         UPDATE `{config.STANDARD_REPLIES_TABLE}`
         SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP()
@@ -522,9 +567,11 @@ def submit_team_feedback(submitted_by: str, feedback_type: str, title: str, body
     new id, stamped with the time now.
     Why: the coaches' feedback form. Every value from a person (and the new
     id) is a STRING query parameter, never in the SQL text; only the constant
-    'open' and the code-made timestamp are written into the SQL.
+    'open' and the code-made timestamp are written into the SQL. A value that is not text (a float NaN from the merged frame) is sent as NULL.
     SQL analogy: INSERT INTO team_feedback VALUES (?, ?, ?, ?, ?, 'open', now)
     """
+    submitted_by, feedback_type, title, body = map(
+        _text_or_none, (submitted_by, feedback_type, title, body))
     now = datetime.datetime.utcnow().isoformat()
     sql = f"""
         INSERT INTO `{TEAM_FEEDBACK_TABLE}`
@@ -549,9 +596,11 @@ def reply_team_feedback(feedback_id: str, reply_text: str, replied_by: str, new_
     Out: nothing; that row gets the reply, the replier, the time now and the status.
     Why: an admin answers a piece of team feedback. All four values are STRING
     query parameters (the new status is bound as `status`, the column it
-    fills); only the code-made timestamp is written into the SQL.
+    fills); only the code-made timestamp is written into the SQL. A value that is not text (a float NaN from the merged frame) is sent as NULL.
     SQL analogy: UPDATE team_feedback SET reply_text = ?, ... WHERE feedback_id = ?
     """
+    feedback_id, reply_text, replied_by, new_status = map(
+        _text_or_none, (feedback_id, reply_text, replied_by, new_status))
     now = datetime.datetime.utcnow().isoformat()
     sql = f"""
         UPDATE `{TEAM_FEEDBACK_TABLE}`

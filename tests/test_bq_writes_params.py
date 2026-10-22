@@ -335,3 +335,11 @@ def test_nan_case_table_covers_every_binding_writer():
                if fn.__module__ == "bq_writes" and "ScalarQueryParameter" in inspect.getsource(fn)}
     binding -= {"execute_bulk_close"}  # owned by bulk_close.md
     assert binding <= set(_STRING_WRITERS), sorted(binding - set(_STRING_WRITERS))
+
+
+@pytest.mark.parametrize("arg", ["sent_at", "skipped_at"])
+def test_followup_timestamp_nan_is_not_turned_into_text(fake, arg):
+    """str(nan) is the text 'nan', which TIMESTAMP() rejects; NaN must go as NULL."""
+    bq_writes.update_followup_status("f1", "sent", **{arg: _NAN})
+    assert ("STRING", None) in _params(fake.job_config).values()
+    assert "nan" not in [v for _, v in _params(fake.job_config).values()]
