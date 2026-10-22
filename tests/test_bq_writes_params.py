@@ -274,3 +274,64 @@ def test_reply_team_feedback_binds_every_value(fake):
     bq_writes.reply_team_feedback(**values)
     _assert_all_bound(fake, values)
     _assert_columns_match(fake)
+
+
+# --- NaN guard ---------------------------------------------------------------
+# merge_into_tickets fills the columns the questions frame lacks with float NaN.
+# bool(nan) is True, so `v or ""` passes it on, and a float bound as a STRING
+# parameter is not legal JSON (revision 00081) or is written as 'nan' (00080).
+
+_NAN = float("nan")
+
+# writer -> (arguments that are fine, the string arguments a caller may hand NaN)
+_STRING_WRITERS = {
+    "update_ticket_meta": (
+        dict(content_id="c1", status="closed", assigned_to="a@x", domain="d",
+             feedback_reason="r", closed_by="b@x"),
+        ["content_id", "status", "assigned_to", "domain", "feedback_reason", "closed_by"]),
+    "set_ticket_lane": (
+        dict(content_id="c1", lane="question", feedback_reason="r"),
+        ["content_id", "lane", "feedback_reason"]),
+    "add_grant_coach": (
+        dict(member_id=1, full_name="n", email="e", added_by="b"),
+        ["full_name", "email", "added_by"]),
+    "link_coach_login_email": (
+        dict(member_id=1, login_email="e"), ["login_email"]),
+    "update_followup_status": (
+        dict(followup_id="f1", status="skipped", skipped_reason="why"),
+        ["followup_id", "status", "skipped_reason"]),
+    "submit_team_feedback": (
+        dict(submitted_by="b", feedback_type="t", title="ti", body="bo"),
+        ["submitted_by", "feedback_type", "title", "body"]),
+    "reply_team_feedback": (
+        dict(feedback_id="f1", reply_text="r", replied_by="b", new_status="s"),
+        ["feedback_id", "reply_text", "replied_by", "new_status"]),
+    "save_standard_reply": (
+        dict(reply_id="r1", title="t", body="b", saved_by="s"),
+        ["reply_id", "title", "body", "saved_by"]),
+    "archive_standard_reply": (dict(reply_id="r1"), ["reply_id"]),
+}
+
+_NAN_CASES = [(writer, arg) for writer, (_, args) in _STRING_WRITERS.items() for arg in args]
+
+
+@pytest.mark.parametrize("writer,arg", _NAN_CASES)
+def test_no_writer_binds_a_float(fake, writer, arg):
+    """A float NaN in any one string argument never reaches BigQuery as a bound
+    value; it arrives as None (SQL NULL), so COALESCE falls through to the
+    derived value instead of 'nan' shadowing it."""
+    kwargs = dict(_STRING_WRITERS[writer][0])
+    kwargs[arg] = _NAN
+    getattr(bq_writes, writer)(**kwargs)
+    for name, (_, value) in _params(fake.job_config).items():
+        assert not isinstance(value, float), f"{writer}({arg}=NaN) bound {name}={value!r}"
+
+
+def test_nan_case_table_covers_every_binding_writer():
+    """Every public writer that builds ScalarQueryParameter is in the table
+    above, so a new writer cannot skip the NaN test."""
+    import inspect
+    binding = {name for name, fn in inspect.getmembers(bq_writes, inspect.isfunction)
+               if fn.__module__ == "bq_writes" and "ScalarQueryParameter" in inspect.getsource(fn)}
+    binding -= {"execute_bulk_close"}  # owned by bulk_close.md
+    assert binding <= set(_STRING_WRITERS), sorted(binding - set(_STRING_WRITERS))
