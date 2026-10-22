@@ -42,7 +42,35 @@ def _timestamp_text(value):
     return None if isinstance(value, float) else str(value)
 
 
+def _integer_or_none(value):
+    """
+    In: any value a caller hands a writer for an INTEGER column.
+    Out: the value, or None when it is a float NaN.
+    Why: a bare NaN in the JSON row is a 400 from BigQuery; None is NULL.
+    """
+    return None if isinstance(value, float) and value != value else value
+
+
+def _member_id_text(member_id):
+    """
+    In: a member id (text or number) or a float NaN.
+    Out: str(member_id), or "" when it is empty or NaN.
+    Why: str(nan) is the text 'nan', and bool(nan) is True so the old
+    `if member_id` let it through. "" is what an empty id already became.
+    """
+    if isinstance(member_id, float) and member_id != member_id:
+        return ""
+    return str(member_id) if member_id else ""
+
+
 def post_comment(content_id: str, author: str, body: str):
+    """
+    In: ids and text for one comment; any may be a float NaN.
+    Out: one row inserted into the comments table; a non-text argument is NULL.
+    Why: insert_rows_json sanitises nothing, so NaN is coerced before the row exists.
+    SQL analogy: INSERT INTO comments VALUES (...) with NULLIF(x, non-text).
+    """
+    content_id, author, body = map(_text_or_none, (content_id, author, body))
     table = client.get_table(config.COMMENTS_TABLE)
     row = [{
         "comment_id": str(uuid.uuid4()),
@@ -127,12 +155,19 @@ def remove_grant_coach(member_id: int):
 
 
 def log_rsvp(content_id: str, event_id: int, member_id: str, rsvped_by: str) -> None:
-    """Log an RSVP action to BQ."""
+    """
+    In: content id, event id, member id, who RSVPed; any may be a float NaN.
+    Out: one row in rsvp_log; NaN text becomes NULL (rsvped_by: ""), NaN member_id "".
+    Why: see post_comment. SQL analogy: INSERT INTO rsvp_log VALUES (...).
+    """
+    content_id = _text_or_none(content_id)
+    event_id = _integer_or_none(event_id)
+    rsvped_by = _text_or_none(rsvped_by)
     row = [{
         "id":         str(uuid.uuid4()),
         "content_id": content_id,
         "event_id":   event_id,
-        "member_id":  str(member_id),
+        "member_id":  _member_id_text(member_id),
         "rsvped_by":  rsvped_by or "",
         "rsvped_at":  datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }]
@@ -151,7 +186,16 @@ def queue_followup(
     days: int,
     scheduled_by: str,
 ) -> None:
-    """Insert a pending follow-up into the followup_queue table."""
+    """
+    In: the follow-up's ids, text, delay in days and who scheduled it; text
+    arguments may be a float NaN (days must be a real number).
+    Out: one pending row in followup_queue; NaN text becomes NULL
+    (member_name: "", member_id: "").
+    Why: see post_comment. SQL analogy: INSERT INTO followup_queue VALUES (...).
+    """
+    ticket_id, content_id, content_type, message, scheduled_by = map(
+        _text_or_none, (ticket_id, content_id, content_type, message, scheduled_by))
+    member_name = _text_or_none(member_name)
     now = datetime.datetime.utcnow()
     send_after = now + datetime.timedelta(days=int(days))
     row = [{
@@ -159,7 +203,7 @@ def queue_followup(
         "ticket_id":     ticket_id,
         "content_id":    content_id,
         "content_type":  content_type,
-        "member_id":     str(member_id) if member_id else "",
+        "member_id":     _member_id_text(member_id),
         "member_name":   member_name or "",
         "message":       message,
         "send_after":    send_after.isoformat(),
