@@ -121,13 +121,17 @@ never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
 
+- File `docs/specs/modules/bq_writes.md`, sections "One ticket at a time", "Follow-ups", "Settings and events" (stubs). Proposed text for `post_comment`, `log_rsvp`, `queue_followup`: each writer hands a row dict to `insert_rows_json`, which sanitises nothing. Invariant: no value in that row is a float or the text `nan`. A text argument that is not a str becomes NULL (via `_text_or_none`); `rsvped_by` and `member_name` keep `""`; `member_id` NaN becomes `""`; `event_id` NaN becomes NULL. Why: NaN comes from `merge_into_tickets`. Guard: `tests/test_bq_writes_inserts.py`.
+- Two small helpers were added next to `_text_or_none`: `_integer_or_none` (INTEGER column) and `_member_id_text` (id wrapped in `str()`); `_text_or_none` cannot serve either.
+- Same hole remains in `bq_base.py` (swallowed there), out of scope.
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done:
-In flight (file:line):
-Next:
+Done: red test, fix, full suite green (356).
+In flight (file:line): none
+Next: merge origin/main, wt-done --check, report.
 Traps (with dates):
