@@ -77,15 +77,46 @@ to the client. Wrapped in `str()`, the same NaN becomes the text 'nan'.
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass. Verified by the overseer independently, not from the worker's report: red-first reproduced on a scratch tree built from `git archive origin/main` carrying only the new test file (14 failed, 1 passed, both new helpers confirmed absent, the completeness guard green so it is not what carries the red); green 15 passed on the branch and 356 passed on `tests/ --ignore=tests/smoke_test.py` (341 + 15). Five of the overseer's own mutations, each red and each only in its own cases: `_text_or_none` to pass-through 11 failed (not the two `member_id` cases nor `event_id`, which other helpers own), `_integer_or_none` to pass-through exactly 1 failed and it is `log_rsvp-event_id`, `_member_id_text` back to raw `str()` exactly 2 failed and both are `member_id`, `post_comment`'s coercion line deleted exactly 3 failed and all three are `post_comment-*`, a newly appended unguarded `insert_rows_json` writer red on `test_every_insert_writer_is_in_the_table` alone. Scope checked too: three files, nothing in `app.py`, `bq_base.py`, `jobs/*` or `docs/specs/`. Landing is Martin's call.
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+1. Gate deviation, judged justified: slice 2 said "Reuse `_text_or_none`; no second helper" and
+   two were added. `event_id` is an INTEGER column, so `_text_or_none` would turn a valid `7` into
+   NULL and break every real RSVP; `member_id` arrives as a number from MemberNova and was already
+   wrapped in `str()`, so a text-only helper would null a valid id. The gate's instruction was
+   wrong for these two columns and the worker was right to say so rather than follow it.
+2. `app.py:846` launders the NaN before the guard can see it: the caller passes
+   `member_id=str(_mem_id) if _mem_id else ""`, and `_mem_id = ticket.get("member_id")` comes from
+   the frame `merge_into_tickets` fills with NaN. `bool(nan)` is True, so the call site hands
+   `queue_followup` the finished text `'nan'` and `_member_id_text('nan')` returns it unchanged.
+   The writer's invariant holds; the screen path for that one field still writes `'nan'`. The test
+   cannot see it because it calls the writer directly. Belongs to the NaN-at-source task
+   (`WT_MODULE=coach_inbox`), not here — the gate forbade touching `app.py`.
+3. Behaviour change beyond NaN in `log_rsvp`, against the gate's "keep each field's present
+   empty-value behaviour": `member_id` of `None` used to write the text `'None'` and now writes
+   `""` (an improvement), and `0` used to write `'0'` and now writes `""` (a loss, if an id can
+   ever be 0 — no MemberNova id is, and `queue_followup` already had this falsiness bug, so the
+   helper spread an existing quirk rather than inventing one). Accepted, recorded.
+4. `_integer_or_none` tests for NaN only (`value != value`), so `float("inf")` still passes through
+   and `json.dumps` writes bare `Infinity` — the same invalid-JSON 400 as NaN. Out of the gate's
+   scope (NaN), and no path produces an infinity today. Own line in the next spec pass.
+5. `test_every_insert_writer_is_in_the_table` walks `ast.FunctionDef` only, so a nested or `async
+   def` writer would escape the completeness guard. No such writer exists in `bq_writes.py`.
+6. `bq_base.log_event` still has the same hole with every exception swallowed, and no spec owns
+   `bq_base.py` (global rule 7). Correctly out of scope; needs a spec before it can have a task.
+   The three `jobs/*` `insert_rows_json` call sites likewise.
+7. Misty's actual 400 is fixed on the path that caused it: `queue_followup(member_name=NaN)` now
+   gives `""` rather than a bare `NaN` in the row. Confirmed by reading `app.py:768`, which passes
+   that field through untouched.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. Not a defect — the deviation is accepted as landed in `24dd662`; the gate was wrong, not the code.
+2. Not fixed — see report. Needs `app.py`, which this gate forbade; queued on the NaN-at-source task.
+3. Not fixed — accepted as landed in `24dd662`; recorded so the next reader knows it was seen.
+4. Not fixed — see report. Infinity is outside this gate's scope; carried to the spec pass.
+5. Not fixed — see report. No nested or async writer exists to escape it today.
+6. Not fixed — see report. `bq_base.py` needs an owning spec first; `jobs/*` is its own task.
+7. Nothing to fix — this one is the confirmation that the task did what it was for.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
