@@ -76,15 +76,46 @@ needs no Streamlit to test. `merge_into_tickets` is a separate task under
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass. Landed on Martin's say-so 2026-10-22. Verified by the overseer independently, not from the worker's report: red-first reproduced on a scratch tree built from `git archive origin/main` carrying only the new test file (31 failed, 1 passed, `_text_or_none` confirmed absent); green 43 passed on the branch and 341 passed on `tests/ --ignore=tests/smoke_test.py`; three mutations each red and each only in its own case — helper to pass-through 29 failed, `update_ticket_meta`'s single call site wrapped in `(lambda v: v)` exactly 6 failed and all of them `update_ticket_meta-*`, a newly appended unguarded binding writer red on `test_nan_case_table_covers_every_binding_writer`. Scope checked too: three files, nothing in `app.py`, `coach_inbox.py`, `docs/specs/` or Dataform.
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+Raised by the overseer at review, each checked against the branch before it was
+raised. None of them is a rework request; all four are follow-up tasks.
+
+1. `bq_writes.py:200-201` — `_text_or_none(kwargs["skipped_reason"]) or ""`
+   turns the guard's `None` straight back into `""`, against this task's own
+   "NULL, not `''`" rule. Harmless, because `skipped_reason` is not COALESCEd
+   by any read, but inconsistent with the invariant the branch argues for.
+2. `queue_followup`, `post_comment` and `log_rsvp` write through
+   `client.insert_rows_json`. A float NaN breaks their JSON by exactly the
+   mechanism this task fixes, while they bind no query parameter at all — so an
+   invariant worded about *bound parameters* does not reach them, and the new
+   test's writer table cannot see them either.
+3. `execute_bulk_close` binds `closed_by or ""` with no guard, leaving it the
+   one parameter-binding writer in the file still exposed. Owned by
+   `docs/specs/modules/bulk_close.md`, so correctly outside this gate.
+4. The worker's own declared gaps, confirmed accurate rather than accepted:
+   `set_ticket_assignee` (`app.py:1273`) and `set_member_assignment_override`
+   interpolate and bind nothing, so a NaN there writes the literal text `'nan'`
+   — the old silent bug, not a 400 — and they need parameters *before* a guard,
+   as the worker said. `save_mn_api_key` and a NaN arriving as an int
+   `member_id` are likewise uncovered.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. Not fixed — see report. One line (`bq_writes.py:201`), but it is a decision
+   about what `skipped_reason` should hold, which belongs with the follow-up
+   spec proposals rather than with a landing.
+2. Not fixed — its own task. The gate's invariant does not cover
+   `insert_rows_json`, so widening it here would be work nobody reviewed.
+3. Not fixed — `bulk_close` owns it, so a task touching it names `bulk_close`
+   as its `WT_MODULE`, not `bq_writes`.
+4. Not fixed, by design: these writers must bind parameters first. A guard
+   without parameters would paste the text `None` into the SQL, which is worse
+   than the `'nan'` they write today.
+
+No finding blocked the landing: the branch fixes the 400 a coach actually hit,
+and the overseer confirmed a redeploy cannot reproduce that 400 through the two
+unguarded writers, because neither binds anything.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
