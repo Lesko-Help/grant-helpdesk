@@ -708,3 +708,63 @@ def test_member_other_threads_matches_across_int_and_string_member_id():
 def test_member_other_threads_on_empty_questions_returns_empty():
     result = coach_inbox.member_other_threads(pd.DataFrame(), 42, exclude_content_id="pc:t1")
     assert result.empty
+
+
+# ── merge_into_tickets: no float NaN introduced (brief merge-nan-fill) ──────
+
+def _float_nan_cells(frame):
+    """Input: a frame. Output: a list of (row position, column) pairs whose
+    cell is a float NaN. Why: NaN is truthy, `.get(k, default)` keeps it and
+    str() turns it into the text 'nan', so none may appear where a frame never
+    had the column."""
+    return [
+        (position, column)
+        for column in frame.columns
+        for position, value in enumerate(frame[column].tolist())
+        if isinstance(value, float) and value != value
+    ]
+
+
+def _one_sided_columns(tickets, questions):
+    """Input: the two frames handed to the merge. Output: the columns only
+    one side carries (the symmetric difference of the column sets, ignoring
+    the `source` and `last_activity_at` the merge adds itself). Why: the
+    no-NaN test is only meaningful if such columns really existed."""
+    added_by_merge = {"source", "last_activity_at"}
+    return (set(tickets.columns) ^ set(questions.columns)) - added_by_merge
+
+
+def test_merge_into_tickets_introduces_no_float_nan_with_real_column_sets():
+    # Invariant: a column a row's own frame never had reads as None, not NaN
+    # — in both directions (ticket rows gain topic/subject/messages/status,
+    # question rows gain thread_id/urgency/ticket_status).
+    tickets, questions = _realistic_fixture_frames()
+    assert _one_sided_columns(tickets, questions), "fixture has no one-sided column"
+    merged = coach_inbox.merge_into_tickets(tickets, questions)
+    assert _float_nan_cells(merged) == []
+    ticket_row = merged[merged["content_id"] == "t1"].iloc[0]
+    question_row = merged[merged["source"] == "member_question"].iloc[0]
+    assert ticket_row["status"] is None
+    assert question_row["urgency"] is None
+
+
+def test_merge_into_tickets_introduces_no_float_nan_with_an_empty_questions_frame():
+    # The empty frame still carries _QUESTION_COLUMNS, so the ticket rows used
+    # to gain NaN topic/subject/messages/status even with zero questions.
+    tickets, _ = _realistic_fixture_frames()
+    questions = pd.DataFrame(columns=coach_inbox._QUESTION_COLUMNS)
+    assert _one_sided_columns(tickets, questions), "fixture has no one-sided column"
+    merged = coach_inbox.merge_into_tickets(tickets, questions)
+    assert len(merged) == len(tickets)
+    assert _float_nan_cells(merged) == []
+
+
+def test_merge_into_tickets_keeps_a_real_none_and_a_numeric_nan():
+    # What the frames carried stands: a ticket's own None stays None, and a
+    # numeric column's NaN is not rewritten.
+    tickets, questions = _realistic_fixture_frames()
+    tickets["score"] = [1.5, float("nan")]
+    merged = coach_inbox.merge_into_tickets(tickets, questions)
+    assert merged[merged["content_id"] == "t2"].iloc[0]["thread_id"] is None
+    t2_score = merged[merged["content_id"] == "t2"].iloc[0]["score"]
+    assert t2_score != t2_score
