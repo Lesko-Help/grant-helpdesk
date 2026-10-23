@@ -714,8 +714,8 @@ def test_member_other_threads_on_empty_questions_returns_empty():
 
 def _gap_cells(merged, tickets, questions):
     """Input: the merged frame and the two frames that went into the merge.
-    Output: a list of (row position, column) pairs where the cell is null
-    (pd.isna: NaN or NaT alike) in a column the row's OWN frame never carried.
+    Output: a list of (row position, column) pairs where the cell is a NaN or
+    NaT (pd.isna but not None) in a column the row's OWN frame never carried.
     Why: those are the cells the concat invented. A null in a column the row's
     own frame did carry is that row's own data and is not flagged. NaN and NaT
     are both truthy and both turn into text ('nan' / 'NaT'), so neither may
@@ -730,6 +730,7 @@ def _gap_cells(merged, tickets, questions):
         for column in merged.columns
         if column not in own_columns[source]
         and column not in ("source", "last_activity_at")
+        and merged[column].iloc[position] is not None
         and pd.isna(merged[column].iloc[position])
     ]
 
