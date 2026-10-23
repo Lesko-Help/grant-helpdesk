@@ -521,6 +521,22 @@ def merge_into_tickets(tickets: pd.DataFrame, questions: pd.DataFrame) -> pd.Dat
         return tickets
 
     combined = pd.concat([tickets, questions], ignore_index=True, sort=False)
+
+    # concat fills a column one side never had with NaN (NaT for datetimes),
+    # which is truthy and prints as text. Put None there instead — only in the
+    # rows of the frame that lacked the column; what a frame carried stands.
+    # A datetime64 column refuses None (it hands back NaT), so just those
+    # one-sided columns are cast to object first; columns both sides had keep
+    # their dtype.
+    ticket_rows = combined.index < len(tickets)
+    for frame_rows, own_columns in (
+        (ticket_rows, tickets.columns),
+        (~ticket_rows, questions.columns),
+    ):
+        for column in combined.columns.difference(own_columns):
+            combined[column] = combined[column].astype(object)
+            combined.loc[frame_rows, column] = None
+
     combined["_activity_at"] = pd.to_datetime(combined["last_activity_at"])
 
     is_waiting_question = (combined["source"] == "member_question") & (
