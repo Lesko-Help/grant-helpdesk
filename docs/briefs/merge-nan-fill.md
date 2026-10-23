@@ -124,13 +124,23 @@ never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
 module's spec goes here instead: what the spec says now, what it should say,
 and why. The overseer applies what it agrees with on main.
 
+Proposal for `docs/specs/modules/coach_inbox.md`, section `### merge_into_tickets(tickets, questions)`:
+
+Add to *What it does*: `R5: a column that only one of the two frames carries reads as None (never float NaN or NaT) in the rows of the frame that lacks it, so \`x or ""\`, \`.get(k, default)\` and \`str()\` behave on a merged row; what a frame itself carried (a real None, a numeric column's own NaN) is left as it was. Columns only one side has become object dtype (a datetime64 column cannot hold None); columns both sides have, and \`last_activity_at\`, keep their dtype.`
+
+Add to *Examples*: `a ticket-only column (thread_id) on a member-question row -> None; a question-only column (topic) on a ticket row -> None, also when the questions frame is empty but still has its columns.`
+
+Add to *Test*: `the merged frame has no NaN/NaT in a column the row's own frame never carried (a real datetime64 column on each side included), and a ticket's own NaN in a numeric column stays NaN; red first against \`origin/main\`.`
+
+Why: the module's own failure mode was found by measuring (2026-10-23): pd.concat invents NaN/NaT for one-sided columns, both are truthy and stringify to text, and the seven grant_tickets datetime columns not in the questions columns would have filled with NaT live.
+
 ## State
 
 Replaced in full each time the context guard asks you to save — never append another checkpoint.
 About 60 lines max. Old traps stay (they are short and worth keeping); everything else gets
 overwritten with the current picture.
 
-Done:
-In flight (file:line):
-Next:
-Traps (with dates):
+Done: slices 1-4 (tests, fix in coach_inbox.py merge_into_tickets, non-vacuity asserts, spec proposals). Suites green.
+In flight: none.
+Next: merge origin/main, wt-done.sh --check, werk.queue update built, report.
+Traps (with dates): 2026-10-23 a datetime64 column refuses None (hands back NaT); cast one-sided columns to object first. A test helper that uses pd.isna also flags None - exclude it.
