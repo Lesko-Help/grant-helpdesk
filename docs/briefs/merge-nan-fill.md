@@ -80,7 +80,41 @@ branch, commit range, red-then-green proof, spec proposals.
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass — reviewed by independent verification, not by accepting the report.
+
+Findings (overseer, 2026-10-23):
+1. Scope clean: coach_inbox.py, tests/test_coach_inbox.py and this brief only;
+   nothing uncommitted after `git add -N .`; no app.py, bq_writes or docs/specs.
+2. Red reproduced here, not taken on trust: the branch's final tests against
+   `origin/main:coach_inbox.py` in a scratch copy give 3 failed, 37 passed,
+   failing on the gap assertion after the one-sided-column assert had passed.
+3. The preservation half can go red. I swapped the fix for the over-broad one
+   a careless slice 2 would have written
+   (`combined.astype(object).where(combined.notna(), None)`), which wipes a
+   row's own deliberate None and its own numeric NaN: exactly one test caught
+   it, test_merge_into_tickets_keeps_a_row_s_own_none_and_nan. So "what the
+   frames carried stands" is a real guard, not decoration.
+4. Green confirmed in the worktree: tests/test_coach_inbox.py 40 passed;
+   tests/ --ignore=tests/smoke_test.py 359 passed; the R1-R4 ordering tests
+   green.
+5. Checked at production shape, since the fixture is a stand-in: the real
+   36-column grant_tickets frame built from the live INFORMATION_SCHEMA, with
+   TIMESTAMP/DATE columns given their real dtype, merged against a questions
+   frame — 35 one-sided columns exercised, 0 invented NaN/NaT cells, the seven
+   ticket-only date columns (closed_at, first_engagement_at, join_date,
+   last_member_activity_at, last_visited_network, ticket_updated_at,
+   updated_at) all read None on the question row, and a ticket's own closed_at
+   is still a real Timestamp.
+6. The one-sided cast is correctly bounded: `source` and `last_activity_at`
+   are added to both frames at coach_inbox.py:511-518, so they are never
+   one-sided and keep their dtype, which is why the test helper excluding them
+   is sound rather than a fudge.
+
+Noted, not blocking: slices 2-4 were committed without stopping at the
+checkpoints the gate asked for. The output is right and each slice is its own
+commit, so there is nothing to redo — but the chance to re-steer mid-fix was
+skipped, and the dtype question in slice 2 was exactly the kind that should
+have come back before the fix was written, not with it.
 
 ### Findings
 What the overseer's review subagent flagged — style, bugs, security —
