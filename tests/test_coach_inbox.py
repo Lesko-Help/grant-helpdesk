@@ -710,18 +710,27 @@ def test_member_other_threads_on_empty_questions_returns_empty():
     assert result.empty
 
 
-# ── merge_into_tickets: no float NaN introduced (brief merge-nan-fill) ──────
+# ── merge_into_tickets: no NaN/NaT introduced (brief merge-nan-fill) ────────
 
-def _float_nan_cells(frame):
-    """Input: a frame. Output: a list of (row position, column) pairs whose
-    cell is a float NaN. Why: NaN is truthy, `.get(k, default)` keeps it and
-    str() turns it into the text 'nan', so none may appear where a frame never
-    had the column."""
+def _gap_cells(merged, tickets, questions):
+    """Input: the merged frame and the two frames that went into the merge.
+    Output: a list of (row position, column) pairs where the cell is null
+    (pd.isna: NaN or NaT alike) in a column the row's OWN frame never carried.
+    Why: those are the cells the concat invented. A null in a column the row's
+    own frame did carry is that row's own data and is not flagged. NaN and NaT
+    are both truthy and both turn into text ('nan' / 'NaT'), so neither may
+    appear where the answer is 'this row has no such column'."""
+    own_columns = {
+        "ticket": set(tickets.columns),
+        "member_question": set(questions.columns),
+    }
     return [
         (position, column)
-        for column in frame.columns
-        for position, value in enumerate(frame[column].tolist())
-        if isinstance(value, float) and value != value
+        for position, source in enumerate(merged["source"].tolist())
+        for column in merged.columns
+        if column not in own_columns[source]
+        and column not in ("source", "last_activity_at")
+        and pd.isna(merged[column].iloc[position])
     ]
 
 
@@ -729,42 +738,62 @@ def _one_sided_columns(tickets, questions):
     """Input: the two frames handed to the merge. Output: the columns only
     one side carries (the symmetric difference of the column sets, ignoring
     the `source` and `last_activity_at` the merge adds itself). Why: the
-    no-NaN test is only meaningful if such columns really existed."""
+    no-gap test is only meaningful if such columns really existed."""
     added_by_merge = {"source", "last_activity_at"}
     return (set(tickets.columns) ^ set(questions.columns)) - added_by_merge
 
 
-def test_merge_into_tickets_introduces_no_float_nan_with_real_column_sets():
-    # Invariant: a column a row's own frame never had reads as None, not NaN
-    # — in both directions (ticket rows gain topic/subject/messages/status,
-    # question rows gain thread_id/urgency/ticket_status).
+def _frames_with_real_datetime_columns():
+    """Input: none. Output: the realistic ticket/question frames plus one
+    genuinely datetime64[UTC] column on each side only (`closed_at` on
+    tickets, `answered_at` on questions) — the dtype BigQuery really hands
+    back, where a gap fills with NaT, which a float check cannot see."""
     tickets, questions = _realistic_fixture_frames()
-    assert _one_sided_columns(tickets, questions), "fixture has no one-sided column"
+    tickets["closed_at"] = pd.to_datetime(
+        ["2026-09-21T10:00:00Z", "2026-09-24T10:00:00Z"], utc=True)
+    questions["answered_at"] = pd.to_datetime(
+        ["2026-09-22T13:00:00Z", "2026-09-21T16:00:00Z"], utc=True)
+    assert str(tickets["closed_at"].dtype).startswith("datetime64")
+    return tickets, questions
+
+
+def test_merge_into_tickets_introduces_no_null_with_real_column_sets():
+    # Invariant: a column a row's own frame never had reads as None, not
+    # NaN/NaT — in both directions (ticket rows gain topic/subject/messages/
+    # status, question rows gain thread_id/urgency/ticket_status), including
+    # real datetime64 columns that only one side has.
+    tickets, questions = _frames_with_real_datetime_columns()
+    assert {"closed_at", "answered_at", "thread_id", "status"} <= _one_sided_columns(tickets, questions)
     merged = coach_inbox.merge_into_tickets(tickets, questions)
-    assert _float_nan_cells(merged) == []
+    assert _gap_cells(merged, tickets, questions) == []
     ticket_row = merged[merged["content_id"] == "t1"].iloc[0]
     question_row = merged[merged["source"] == "member_question"].iloc[0]
     assert ticket_row["status"] is None
+    assert ticket_row["answered_at"] is None
     assert question_row["urgency"] is None
+    assert question_row["closed_at"] is None
 
 
-def test_merge_into_tickets_introduces_no_float_nan_with_an_empty_questions_frame():
+def test_merge_into_tickets_introduces_no_null_with_an_empty_questions_frame():
     # The empty frame still carries _QUESTION_COLUMNS, so the ticket rows used
     # to gain NaN topic/subject/messages/status even with zero questions.
-    tickets, _ = _realistic_fixture_frames()
+    tickets, _ = _frames_with_real_datetime_columns()
     questions = pd.DataFrame(columns=coach_inbox._QUESTION_COLUMNS)
     assert _one_sided_columns(tickets, questions), "fixture has no one-sided column"
     merged = coach_inbox.merge_into_tickets(tickets, questions)
     assert len(merged) == len(tickets)
-    assert _float_nan_cells(merged) == []
+    assert _gap_cells(merged, tickets, questions) == []
 
 
-def test_merge_into_tickets_keeps_a_real_none_and_a_numeric_nan():
+def test_merge_into_tickets_keeps_a_row_s_own_none_and_nan():
     # What the frames carried stands: a ticket's own None stays None, and a
-    # numeric column's NaN is not rewritten.
-    tickets, questions = _realistic_fixture_frames()
+    # ticket's own NaN in a numeric column is not rewritten — while a question
+    # row, whose frame never had that column, reads None there.
+    tickets, questions = _frames_with_real_datetime_columns()
     tickets["score"] = [1.5, float("nan")]
     merged = coach_inbox.merge_into_tickets(tickets, questions)
-    assert merged[merged["content_id"] == "t2"].iloc[0]["thread_id"] is None
-    t2_score = merged[merged["content_id"] == "t2"].iloc[0]["score"]
-    assert t2_score != t2_score
+    t2 = merged[merged["content_id"] == "t2"].iloc[0]
+    assert t2["thread_id"] is None
+    assert pd.isna(t2["score"]) and isinstance(t2["score"], float)
+    assert _gap_cells(merged, tickets, questions) == []
+    assert merged[merged["source"] == "member_question"].iloc[0]["score"] is None
