@@ -111,14 +111,17 @@ Module `bq_writes`. Files: `bq_writes.py` (only `set_ticket_assignee`) and `test
 
 ## Context
 
-2026-10-24: the overseer's memory message had not arrived when this brief was committed; add its content here once it comes. Source facts are in the Gate section above (verified by the overseer). Harness: `_hostile`, `_FakeClient`, `_params` in `tests/test_bq_writes_params.py`. Never run bare `pytest tests/`: it writes live ticket_metadata.
+2026-10-24: no memory message arrived from the overseer, who confirmed there was none to send. Source facts are in the Gate section above (verified by the overseer). Harness: `_hostile`, `_FakeClient`, `_params` in `tests/test_bq_writes_params.py`. Never run bare `pytest tests/`: it writes live ticket_metadata.
 
 ## Spec proposals
 
-Specs belong to the overseer (DECISION BY MARTIN 2026-09-24) — this worktree
-never edits docs/specs/ itself. Anything found missing, unclear or wrong in a
-module's spec goes here instead: what the spec says now, what it should say,
-and why. The overseer applies what it agrees with on main.
+Specs belong to the overseer (DECISION BY MARTIN 2026-09-24) — this worktree never edits docs/specs/ itself. The proposals below are for `docs/specs/modules/bq_writes.md`, section `### One ticket at a time`, still a `<!-- spec:stub -->`.
+
+Proposal 1, text for the `set_ticket_assignee` entry of that section: `set_ticket_assignee(content_id, assigned_to)` takes a ticket id and a coach name ("" means unassigned) and upserts only `assigned_to` and `updated_at` in the metadata table, then calls `trigger_assignment_refresh()`. Both values reach BigQuery as named STRING parameters, byte for byte, referred to as `@content_id` and `@assigned_to`; only the code-made timestamp is in the SQL text. `assigned_to` goes through `_text_or_none`, so "" stays "" (unassigned) and a non-text value such as NaN is sent as NULL. Pinned by `test_set_ticket_assignee_binds_every_value` and `test_set_ticket_assignee_unassign_stays_empty_text`. Why: a coach name with an apostrophe (O'Brien) used to end the SQL string early.
+
+Proposal 2, a spec gap to rule on, not acted on in this branch: the writers map `_text_or_none` over `content_id` (four of them), `set_ticket_assignee` does not. With the guard, a NaN id becomes NULL, `ON T.content_id = S.content_id` never matches NULL, and WHEN NOT MATCHED inserts a junk row with a NULL id. Without it a NaN raises, because a float is not legal JSON for a STRING parameter: a loud crash instead of a silent bad row. Suggested spec wording: a key column used in a MERGE `ON` is never passed through `_text_or_none`, so a missing id fails loudly. Whether the other four writers should change is a separate task after Martin rules.
+
+Proposal 3, open question for Martin, also not acted on: unassigning binds "" (not NULL), so `COALESCE(tm.assigned_to, gt.assigned_to)` does not fall through to the derived coach. The spec should state which one is intended.
 
 ## State
 
