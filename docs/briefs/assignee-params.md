@@ -76,15 +76,43 @@ ticket_metadata. Report branch, commit range, red-then-green proof.
 ## Agentic review
 
 ### Verdict
-Verdict: `<fill in — pass, or changes requested>`
+Verdict: pass. Verified by the overseer on 2026-10-24 independently of the
+worker's report, by archiving the branch into a scratch copy, confirming
+`bq_writes.py` byte-identical to `origin/main` before the fix (so the red was
+the test catching real code, not a mutation), then mutating only the scratch
+copy four ways. Red-then-green holds: on `origin/main` the new test fails and
+prints the defect verbatim — `'zq_cid-O'Brien\'    AS content_id,` — the
+apostrophe ending the SQL string early, with no BigQuery call. After the fix,
+`tests/test_bq_writes_params.py` is 46 passed, and the whole suite in the
+worktree is green. Each guard was proven able to go red: crossing the aliases
+(`@assigned_to AS content_id`) fails 1; pasting `content_id` back into the SQL
+text while leaving `assigned_to` bound fails 1, so a half-fix cannot pass;
+appending `or None` to `_text_or_none(assigned_to)` fails the unassign test.
+The slice-4 commit touches the brief only — no late change to `bq_writes.py`
+or the tests.
 
 ### Findings
-What the overseer's review subagent flagged — style, bugs, security —
-one line each. A trimmer before Martin's read, not a replacement for it.
+1. The worker first wrote `_text_or_none(assigned_to) or None`, which would make
+   unassigning write SQL NULL instead of `""`. NULL lets
+   `COALESCE(tm.assigned_to, gt.assigned_to)` fall through to the derived coach,
+   where `""` shadows it — a behaviour change, not this task's call.
+2. The worker left `content_id` outside `_text_or_none`, deviating from the house
+   pattern at `bq_writes.py:73, 134, 406, 561`. Reviewed and kept deliberately:
+   the guard turns a NaN into None, None binds as SQL NULL, and
+   `ON T.content_id = S.content_id` never matches NULL, so WHEN NOT MATCHED
+   inserts a junk row with a null id. Bare, a NaN raises instead — a loud crash
+   beats a silent bad row. The overseer's gate wording invited the deviation.
+3. The other four writers have the NULL-merge-key hole described in 2. Out of
+   scope here; raised to Martin as spec proposal 2, needs his ruling first.
 
 ### Fixed in
-Which commit fixed each finding, or "not fixed — see report" — one line
-each.
+1. Fixed in `aedfd0f` (the `or None` dropped) and locked by `271d68f`, which adds
+   `test_set_ticket_assignee_unassign_stays_empty_text`; the overseer proved that
+   test goes red by re-adding `or None` in a scratch copy.
+2. Not a defect — kept as written in `aedfd0f`, by the overseer's ruling. The
+   worker was told not to "fix" it and `_STRING_WRITERS` deliberately lists
+   `assigned_to` only.
+3. Not fixed — its own task, after Martin rules on proposal 2.
 
 This section is filled last, after the overseer runs its review subagent
 and sends the findings back — never by the worker reviewing its own
