@@ -214,6 +214,14 @@ def test_set_ticket_lane_without_reason_keeps_typed_null_in_sql(fake):
 
 # --- set_ticket_assignee -----------------------------------------------------
 
+def test_set_ticket_assignee_unassign_stays_empty_text(fake):
+    """In: "" (the app's "unassigned" choice). Out: a STRING parameter holding
+    "" - not NULL. Why: NULL would let COALESCE fall through to the derived
+    coach; changing what unassigning means is not this task's call."""
+    bq_writes.set_ticket_assignee("c1", "")
+    assert _params(fake.job_config)["assigned_to"] == ("STRING", "")
+
+
 def test_set_ticket_assignee_binds_every_value(fake):
     """In: a hostile content_id and coach name (quote, trailing backslash).
     Out: nothing; raises if either value is in the SQL text instead of a
@@ -304,6 +312,8 @@ _STRING_WRITERS = {
     "set_ticket_lane": (
         dict(content_id="c1", lane="question", feedback_reason="r"),
         ["content_id", "lane", "feedback_reason"]),
+    "set_ticket_assignee": (
+        dict(content_id="c1", assigned_to="a@x"), ["assigned_to"]),
     "add_grant_coach": (
         dict(member_id=1, full_name="n", email="e", added_by="b"),
         ["full_name", "email", "added_by"]),
