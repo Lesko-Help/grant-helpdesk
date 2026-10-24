@@ -212,6 +212,18 @@ def test_set_ticket_lane_without_reason_keeps_typed_null_in_sql(fake):
     assert len(_params(fake.job_config)) == 2
 
 
+# --- set_ticket_assignee -----------------------------------------------------
+
+def test_set_ticket_assignee_binds_every_value(fake):
+    """In: a hostile content_id and coach name (quote, trailing backslash).
+    Out: nothing; raises if either value is in the SQL text instead of a
+    STRING parameter. Why: a coach called O'Brien must not end the SQL string."""
+    values = {"content_id": _hostile("cid"), "assigned_to": _hostile("assignee")}
+    bq_writes.set_ticket_assignee(**values)
+    _assert_all_bound(fake, values)
+    _assert_aliased(fake.sql, values)
+
+
 # --- coaches -----------------------------------------------------------------
 
 def test_add_grant_coach_binds_every_value(fake):
