@@ -499,14 +499,25 @@ def trigger_assignment_refresh():
 
 
 def set_ticket_assignee(content_id: str, assigned_to: str):
-    """Update only the assigned_to field on a ticket without touching any other metadata."""
+    """
+    In: a ticket's content_id and the coach name to assign it to ("" unassigns).
+    Out: nothing; that ticket's assigned_to and updated_at are set in the
+    metadata table (row created if missing), then the assignment refresh runs.
+    Why: lets a coach hand a ticket over without touching any other metadata.
+    Both values are query parameters (STRING), never pasted into the SQL, so a
+    name like O'Brien cannot end the SQL string early. Only the code-made
+    timestamp is written into the SQL. "" stays "" (unassigned); a value that is
+    not text (a float NaN from the merged frame) is sent as NULL.
+    SQL analogy: INSERT ... ON DUPLICATE KEY UPDATE assigned_to = ? (an upsert).
+    """
+    assigned_to = _text_or_none(assigned_to)
     now = datetime.datetime.utcnow().isoformat()
     sql = f"""
         MERGE `{config.META_TABLE}` T
         USING (
             SELECT
-                '{content_id}'    AS content_id,
-                '{assigned_to}'   AS assigned_to,
+                @content_id       AS content_id,
+                @assigned_to      AS assigned_to,
                 TIMESTAMP '{now}' AS updated_at
         ) S
         ON T.content_id = S.content_id
@@ -518,7 +529,11 @@ def set_ticket_assignee(content_id: str, assigned_to: str):
         VALUES
             (S.content_id, S.assigned_to, S.updated_at)
     """
-    client.query(sql).result()
+    params = [
+        bigquery.ScalarQueryParameter("content_id", "STRING", content_id),
+        bigquery.ScalarQueryParameter("assigned_to", "STRING", assigned_to),
+    ]
+    client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
     trigger_assignment_refresh()
 
 
